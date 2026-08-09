@@ -56,11 +56,11 @@ org.anarres.cpp.InternalException: Bad token [³@278,0]:"³"
 
 ---
 
-# 备忘：阳光 GI 移植关键点（2026-08-09）
+# 备忘：阳光 GI 实现关键点（2026-08-09）
 
 ## 阳光阴影判定（VoxelSunShadow.glsl）
 
-移植自参考实现的 `ShadowTracing.glsl`（SimpleShadow + SimpleShadowTracing），两个函数：
+`SimpleShadow` / `SimpleShadowTracing` 两个函数：
 
 - `VoxelSunShadowMap(camRelPos, normal)`：实时阴影贴图判定。**命中点必须传连续命中点（`origin + dir * rayLength`），不能传整数体素格坐标**——整数格坐标对体素化数据的逐帧更新极敏感，相机移动时 sunVis 会在 0/1 间跳变 → 阳光散射时有时无（实测踩坑）。
 - `VoxelSunShadowTracing(voxelPos, sunDir)`：从命中体素向太阳走 3 格做 DDA，捕捉阴影贴图外的网格内小遮挡（屋檐/树冠/墙角）。
@@ -80,12 +80,12 @@ org.anarres.cpp.InternalException: Bad token [³@278,0]:"³"
 
 未做：水吸收分支（当前光影水数据走 shadowcolor1，shadowcolor0 无水）。
 
-## 移植过程中的两个编译坑
+## 实现过程中的两个编译坑
 
 - **include 顺序**：共享文件必须在它依赖的声明之后 include。VoxelSunShadow.glsl 依赖 `DistortShadowSpace`（shadow/Common.glsl）和 `shadowtex1` 声明——VoxelGI.frag 里曾放在它们之前 → `C1503 undefined variable`。
 - **sampler2DShadow 的 textureLod**：`shadowtex1` 声明为 sampler2DShadow 时，`textureLod` 要传 **vec3（xy + 参考深度）**，返回就是硬件比较结果（0/1），不要再 step；普通 sampler2D（shadowtex0）才用 `textureLod(vec2).x` 手动 step → 传 vec2 给 sampler2DShadow 会报 `C1115 unable to find compatible overloaded function`。
 
 ## 经验
 
-- 移植参考实现时尽量照抄其坐标/参数语义（连续命中点、参考深度），不要自作主张简化成整数格或省掉转换。
+- 尽量沿用原有坐标/参数语义（连续命中点、参考深度），不要自作主张简化成整数格或省掉转换。
 - 改 shadow 缓冲输出格式前，先确认目标缓冲有没有对应通道（vec3 → vec4 需要缓冲支持 alpha）。

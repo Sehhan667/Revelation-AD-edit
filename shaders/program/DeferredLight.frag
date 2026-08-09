@@ -511,7 +511,14 @@ void main() {
         sceneOut += material.emissiveness * dot(albedo, vec3(0.75));
     #endif
     #if EMISSIVE_MODE < 2
-        vec4 emissive = HardCodeEmissive(materialID, albedo, worldPos, blocklightColor);
+        // [2026-08-09] 自发光基色与玩家方块光颜色解耦：blocklightColor 在光追开启时
+        // 被置 0（屏蔽原版方块光），但发光方块自身的表面自发光（萤石/菌光体/火把等）
+        // 必须保留——用默认白 × 亮度作基色，不受玩家红绿蓝设置影响。
+        vec3 emissiveBaseColor = blocklightColor;
+        #ifdef VOXEL_GI_ENABLED
+            emissiveBaseColor = vec3(1.0) * BLOCKLIGHT_BRIGHTNESS;
+        #endif
+        vec4 emissive = HardCodeEmissive(materialID, albedo, worldPos, emissiveBaseColor);
         #ifndef SSILVB_ENABLED
             if (emissive.a * lightmap.x > EPS) {
                 lightmap.x = CalculateBlocklightFalloff(lightmap.x);
@@ -596,8 +603,8 @@ void main() {
             vec4 rad = FetchVoxelRadiance(ivec3(VOXEL_RADIUS));
             sceneOut = vec3(rad.r * 0.15, 0.0, rad.a * 0.6);
         #else
-                // 主 GI = 每像素漫反射追踪（阶段④，对齐 参考实现：Soild_FS 正常模式 GI =
-                // colortex1 追踪输出，IRC 仅作内部数据——注入循环 + 追踪命中自反弹种子）。
+                // 主 GI = 每像素漫反射追踪（阶段④：追踪输出，IRC 仅作内部数据——
+                // 注入循环 + 追踪命中自反弹种子）。
                 // 追踪已迁到 DiffuseIndirect.comp：棋盘半分辨率每帧 1 SPP（1/4 像素），
                 // 经 SVGF 时域累积 + 边缘保持滤波后在此读回；此处补乘 albedo×强度，
                 // 与旧全分辨率路径（VoxelTracePixel × albedo × STRENGTH）视觉语义一致。
