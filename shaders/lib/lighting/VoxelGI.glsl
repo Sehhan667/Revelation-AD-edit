@@ -35,14 +35,9 @@ vec4 FetchVoxelRadiance(ivec3 c) {
 
 // 级联版 IRC 读取（ADR-0001）：cascade 0=near 1=mid 2=far
 vec4 FetchVoxelRadianceC(ivec3 c, int cascade) {
-    if (cascade == 0)
-        return ((frameCounter & 1) == 0)
-            ? texelFetch(voxelRadiance2NearSampler, c, 0)
-            : texelFetch(voxelRadianceNearSampler, c, 0);
-    if (cascade == 2)
-        return ((frameCounter & 1) == 0)
-            ? texelFetch(voxelRadiance2FarSampler, c, 0)
-            : texelFetch(voxelRadianceFarSampler, c, 0);
+    // 节流级联（near/far）为单缓冲,不做乒乓（乒乓另一侧从未写入会读到黑）
+    if (cascade == 0) return texelFetch(voxelRadianceNearSampler, c, 0);
+    if (cascade == 2) return texelFetch(voxelRadianceFarSampler, c, 0);
     return ((frameCounter & 1) == 0)
         ? texelFetch(voxelRadiance2Sampler, c, 0)
         : texelFetch(voxelRadianceSampler, c, 0);

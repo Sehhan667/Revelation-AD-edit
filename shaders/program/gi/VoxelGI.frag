@@ -124,25 +124,22 @@ vec4 FetchCascadeLight(ivec3 c, int cascade) {
 
 vec3 FetchPrevRadianceC(ivec3 c, int cascade) {
     if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, ivec3(VOXEL_AREA)))) return vec3(0.0);
+    // 节流级联（near 隔帧 / far 每4帧）不做乒乓：永远写/读单一缓冲
+    if (cascade == 0) return texelFetch(voxelRadianceNearSampler, c, 0).rgb * 0.01;
+    if (cascade == 2) return texelFetch(voxelRadianceFarSampler, c, 0).rgb * 0.01;
     vec4 r = (frameCounter & 1) == 0
-        ? (cascade == 0 ? texelFetch(voxelRadiance2NearSampler, c, 0)
-                        : cascade == 2 ? texelFetch(voxelRadiance2FarSampler, c, 0)
-                                       : texelFetch(voxelRadiance2Sampler, c, 0))
-        : (cascade == 0 ? texelFetch(voxelRadianceNearSampler, c, 0)
-                        : cascade == 2 ? texelFetch(voxelRadianceFarSampler, c, 0)
-                                       : texelFetch(voxelRadianceSampler, c, 0));
+        ? texelFetch(voxelRadiance2Sampler, c, 0)
+        : texelFetch(voxelRadianceSampler, c, 0);
     return r.rgb * 0.01;
 }
 
 float FetchPrevExposureC(ivec3 c, int cascade) {
     if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, ivec3(VOXEL_AREA)))) return 0.0;
+    if (cascade == 0) return texelFetch(voxelRadianceNearSampler, c, 0).a;
+    if (cascade == 2) return texelFetch(voxelRadianceFarSampler, c, 0).a;
     return ((frameCounter & 1) == 0
-        ? (cascade == 0 ? texelFetch(voxelRadiance2NearSampler, c, 0)
-                        : cascade == 2 ? texelFetch(voxelRadiance2FarSampler, c, 0)
-                                       : texelFetch(voxelRadiance2Sampler, c, 0))
-        : (cascade == 0 ? texelFetch(voxelRadianceNearSampler, c, 0)
-                        : cascade == 2 ? texelFetch(voxelRadianceFarSampler, c, 0)
-                                       : texelFetch(voxelRadianceSampler, c, 0))).a;
+        ? texelFetch(voxelRadiance2Sampler, c, 0)
+        : texelFetch(voxelRadianceSampler, c, 0)).a;
 }
 
 // 简化 SimpleShadow（2026-08-06）：命中体素是否被太阳照亮（阴影贴图判定）。
@@ -428,11 +425,9 @@ void IrcInject(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
     // ---- 写入 ×100（alpha 复用为天空曝光度）----
     vec4 o = vec4(nRC * 100.0, nExp);
     if (cascade == 0) {
-        if ((frameCounter & 1) == 0) imageStore(voxelRadianceNear, c, o);
-        else imageStore(voxelRadiance2Near, c, o);
+        imageStore(voxelRadianceNear, c, o);   // 节流级联: 单缓冲,不做乒乓
     } else if (cascade == 2) {
-        if ((frameCounter & 1) == 0) imageStore(voxelRadianceFar, c, o);
-        else imageStore(voxelRadiance2Far, c, o);
+        imageStore(voxelRadianceFar, c, o);
     } else {
         if ((frameCounter & 1) == 0) imageStore(voxelRadiance, c, o);
         else imageStore(voxelRadiance2, c, o);
