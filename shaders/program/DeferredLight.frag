@@ -480,9 +480,10 @@ void main() {
     // 体素 GI 开启时：网格内由光追天光（skyMapTex 方向辐射）提供环境光，
     // 屏蔽原版 SH 平涂天光，避免方向性天光被环境光盖掉；体素外仍走非光追样式。
     #ifdef VOXEL_GI_ENABLED
-        vec3 ambientVoxelCoord = camRelPos + cameraPositionFract + float(VOXEL_RADIUS);
-        bool ambientInVoxelGrid = all(greaterThanEqual(ambientVoxelCoord, vec3(0.0)))
-                               && all(lessThan(ambientVoxelCoord, vec3(float(VOXEL_AREA))));
+        // [2026-08-16] 体素覆盖已扩到 far 级联（±64m）：球谐光只在 far 范围外渲染，
+        // 避免 32–64m 区域被球谐光盖住 far GI。
+        vec3 ambientVoxelCoord = camRelPos + cameraPositionFract;
+        bool ambientInVoxelGrid = all(lessThan(abs(ambientVoxelCoord), vec3(VOXEL_CASCADE_RADIUS_2)));
         // 网格内完全交给 GI（含最小环境光底）：否则平铺底光会把
         // 窗口逸散/遮挡 AO 的梯度盖成“死板固定亮度”（用户实测反馈）。
         // 仅保留夜视底光，避免夜视失效。
