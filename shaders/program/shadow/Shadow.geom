@@ -22,7 +22,7 @@
 //======// Layout //================================================================================//
 
 layout(triangles) in;
-layout(triangle_strip, max_vertices = 6) out;
+layout(triangle_strip, max_vertices = 12) out;
 
 //======// Input //================================================================================//
 
@@ -50,6 +50,7 @@ flat out uint isWaterOut;
 
 #ifdef ENABLE_VOXELIZATION
 flat out vec3 v_voxelCoord;   // 体素格坐标（FSH 直接 imageStore 到 3D image）
+flat out float v_cascade;     // 级联索引：0=near 1=mid 2=far（FSH 选 image 目标）
 flat out float v_voxelID;     // 正=固体 / 负=透明（与 gbuffers 时代一致的编码）
 flat out float v_emissive;    // 发光量（材料 ID 硬编码 [20,31]）
 flat out float v_skylight;    // 天空光 lightmap（0-1）
@@ -94,11 +95,16 @@ void main() {
             EndPrimitive();
         }
 
-        // ---- 体素分支：质心网格坐标 → Y 型平铺左条带（去纹素对齐）----
-        vec3 voxelCoord = floor(g_voxelCoord[0] * 0.33333333 + g_voxelCoord[1] * 0.33333333 + g_voxelCoord[2] * 0.33333333);
+        // ---- 体素分支：质心网格坐标 → 三级联 Y 型平铺左条带（ADR-0001）----
+        // 各级联 cell 尺寸不同（near 0.5m / mid 1.0m / far 2.0m），
+        // 由同一世界相对坐标 baseRel 换算：coord = baseRel / cell + VOXEL_RADIUS。
+        vec3 baseCentroid = g_voxelCoord[0] * 0.33333333 + g_voxelCoord[1] * 0.33333333 + g_voxelCoord[2] * 0.33333333;
+        vec3 baseRel = baseCentroid - vec3(float(VOXEL_RADIUS));
+        vec3 voxelCoordNear = floor(baseRel * (1.0 / VOXEL_CASCADE_CELL_0) + vec3(float(VOXEL_RADIUS)));
+        vec3 voxelCoord     = floor(baseCentroid);   // mid = 原 64³@1m 语义
+        vec3 voxelCoordFar  = floor(baseRel * (1.0 / VOXEL_CASCADE_CELL_2) + vec3(float(VOXEL_RADIUS)));
 
         if (all(bvec3(
-            clamp(voxelCoord, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoord,
             g_notInVoxel[0] + g_notInVoxel[1] + g_notInVoxel[2] < 0.5,
             // [FIX 2026-08-06] 发光地衣（materialID=32）是 CUTOUT 渲染阶段，原分支
             // （SOLID/TRANSLUCENT）会把它排除在体素外 → 地衣没有体素数据 → 不照亮周围。
@@ -132,25 +138,39 @@ void main() {
             float skylight = g_mcLightLevel[0].y * 0.33333333 + g_mcLightLevel[1].y * 0.33333333 + g_mcLightLevel[2].y * 0.33333333;
             float blocklight = g_mcLightLevel[0].x * 0.33333333 + g_mcLightLevel[1].x * 0.33333333 + g_mcLightLevel[2].x * 0.33333333;
 
-            vec2 voxelTexel = VoxelTexel_From_VoxelCoord(voxelCoord);
             const vec2[3] vertexOffset = vec2[3](vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.5, 1.0));
 
-            for (int i = 0; i < 3; i++) {
-                gl_Position = vec4((voxelTexel + vertexOffset[i]) * (2.0 / VOXEL_SHADOW_RES) - 1.0, -0.75, 1.0);
+            // 三级联各自 bounds check 后发射（公共数据 midCoord/voxelID/emissive 等只算一次）
+            #define EMIT_VOXEL_CASCADE(CC, TY, CIDX) \
+                { \
+                    vec2 voxelTexel = VoxelTexel_From_VoxelCoord(CC); \
+                    voxelTexel.y += TY; \
+                    for (int i = 0; i < 3; i++) { \
+                        gl_Position = vec4((voxelTexel + vertexOffset[i]) * (2.0 / VOXEL_SHADOW_RES) - 1.0, -0.75, 1.0); \
+                        texCoordOut = texCoord[i]; \
+                        vectorDataOut = vectorData[i]; \
+                        isWaterOut = isWater[i]; \
+                        v_voxelCoord = CC; \
+                        v_cascade = CIDX; \
+                        v_voxelID = voxelID; \
+                        v_emissive = emissive; \
+                        v_skylight = skylight; \
+                        v_blocklight = blocklight; \
+                        v_midCoord = midCoord; \
+                        v_isVoxel = 1.0; \
+                        EmitVertex(); \
+                    } \
+                    EndPrimitive(); \
+                }
 
-                texCoordOut = texCoord[i];
-                vectorDataOut = vectorData[i];
-                isWaterOut = isWater[i];
-                v_voxelCoord = voxelCoord;
-                v_voxelID = voxelID;
-                v_emissive = emissive;
-                v_skylight = skylight;
-                v_blocklight = blocklight;
-                v_midCoord = midCoord;
-                v_isVoxel = 1.0;
-                EmitVertex();
-            }
-            EndPrimitive();
+            if (all(bvec3(clamp(voxelCoordNear, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordNear)))
+                EMIT_VOXEL_CASCADE(voxelCoordNear, VOXEL_TILE_Y_0, 0.0);
+            if (all(bvec3(clamp(voxelCoord, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoord)))
+                EMIT_VOXEL_CASCADE(voxelCoord, VOXEL_TILE_Y_1, 1.0);
+            if (all(bvec3(clamp(voxelCoordFar, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordFar)))
+                EMIT_VOXEL_CASCADE(voxelCoordFar, VOXEL_TILE_Y_2, 2.0);
+
+            #undef EMIT_VOXEL_CASCADE
         }
 
     #else

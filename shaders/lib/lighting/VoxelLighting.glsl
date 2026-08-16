@@ -27,21 +27,29 @@
 // ------ Shadow Map 平铺布局 ------
 // 体素化迁到 shadow pass（2026-08-04）：阴影贴图拆成两块——
 //   - 真阴影：右上区（宽 VOXEL_SHADOW_WIDTH = RES - TILE_WIDTH）
-//   - 体素三角形：左条带（宽 VOXEL_TILE_WIDTH，Y 型平铺 64³ = 256×1024 texel）
+//   - 体素三角形：左条带（宽 VOXEL_TILE_WIDTH，Y 型平铺 64³ = 512×512 texel）
+//     三级联（ADR-0001）竖向堆叠：near y∈[0,512) / mid y∈[512,1024) / far y∈[1024,1536)
 // 太阳方向固定 → 体素化内容不随相机转动（根治 gbuffers 时代"转头/移动重播种闪烁"）。
-// 布局常量跟随 shadowMapResolution（settings.glsl 滑条），要求 shadowMapResolution ≥ 1024
-// （tile 高 1024 硬需求；改小会溢出挤掉真阴影）。真阴影 Shift 由 shadow GS 与
+// 布局常量跟随 shadowMapResolution（settings.glsl 滑条），要求 shadowMapResolution ≥ 1536
+// （三级联 strip 总高 1536 硬需求；改小会溢出挤掉真阴影）。真阴影 Shift 由 shadow GS 与
 // Render.glsl 的 WorldToShadowScreenSpace 同步应用，两侧必须一致。
 #ifndef VOXEL_SHADOW_RES
     #define VOXEL_SHADOW_RES float(shadowMapResolution)   // 阴影贴图总宽/高（跟随滑条）
 #endif
 #ifndef VOXEL_TILE_WIDTH
-    #define VOXEL_TILE_WIDTH 256.0                         // 体素条带宽度（64 格 × 4 层/行）
+    #define VOXEL_TILE_WIDTH 512.0                         // 体素条带宽度（64 格 × 8 层/行，三级联共用）
 #endif
 #ifndef VOXEL_TILE_HEIGHT
-    // 64³ = 262144 texel；Y 型平铺：每行 4 层 × 64 格，16 行 → 高 1024
+    // 64³ = 262144 texel；Y 型平铺：每行 8 层 × 64 格，8 行 → 高 512
     #define VOXEL_TILE_HEIGHT (float(VOXEL_AREA) * float(VOXEL_AREA) * float(VOXEL_AREA) / VOXEL_TILE_WIDTH)
 #endif
+// 三级联 tile 的纵向偏移（ADR-0001；strip 总高 = 3 × 512，要求 shadowMapResolution ≥ 1536）
+#ifndef VOXEL_TILE_LAYER_HEIGHT
+    #define VOXEL_TILE_LAYER_HEIGHT VOXEL_TILE_HEIGHT   // 每个级联 tile 的高 = 64³/512 = 512
+#endif
+#define VOXEL_TILE_Y_0 0.0
+#define VOXEL_TILE_Y_1 VOXEL_TILE_LAYER_HEIGHT
+#define VOXEL_TILE_Y_2 (2.0 * VOXEL_TILE_LAYER_HEIGHT)
 #define VOXEL_SHADOW_WIDTH (VOXEL_SHADOW_RES - VOXEL_TILE_WIDTH)
 #define VOXEL_SHADOW_RATIO (VOXEL_SHADOW_WIDTH / VOXEL_SHADOW_RES)
 
