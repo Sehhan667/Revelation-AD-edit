@@ -284,7 +284,13 @@ void main() {
     #endif
 
     // --- Optimized Direct Light & Shadow Calculation ---
-    float sunlightFactor = saturate(lightmap.y * 1e6 + float(isEyeInWater));
+    // 白天：天光按 lightmap 平滑门控（0.02 → 0.2），修复半透光室内主阴影/SSS 泄漏；
+    // 夜晚：保留原逻辑（月亮阴影依赖原判定，不受影响）。
+    float sunlightFactor = mix(
+        saturate(lightmap.y * 1e6 + float(isEyeInWater)),
+        saturate(smoothstep(0.02, 0.2, lightmap.y) + float(isEyeInWater)),
+        step(0.0, worldSunDir.y)
+    );
     vec3 sunlightBase = vec3(0.0);
     float cloudShadow = 1.0;
 
