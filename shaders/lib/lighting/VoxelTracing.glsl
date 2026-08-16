@@ -332,9 +332,9 @@ vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float 
     bool hitSolid = false;
     float totalWorldLen = 0.0;
 
-    // A/B 诊断: SKIP_NEAR=1 跳过 near; SKIP_FAR=1 跳过 far(当前两者皆 1 = 仅 mid)
+    // 级联查询配置: SKIP_NEAR=1(mid 起) SKIP_FAR=0(mid+far)
     #define VOXEL_QUERY_SKIP_NEAR 1
-    #define VOXEL_QUERY_SKIP_FAR 1
+    #define VOXEL_QUERY_SKIP_FAR 0
     for (int cascade = VOXEL_QUERY_SKIP_NEAR; cascade < VOXEL_CASCADE_COUNT - VOXEL_QUERY_SKIP_FAR; ++cascade) {
         float cell = cascade == 0 ? VOXEL_CASCADE_CELL_0
                    : cascade == 1 ? VOXEL_CASCADE_CELL_1

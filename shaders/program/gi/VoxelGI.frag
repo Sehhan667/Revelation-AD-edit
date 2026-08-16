@@ -514,10 +514,10 @@ void main() {
         else
             imageStore(voxelRadiance2, c, o);
 
-        // A/B 二分: 关闭 near/far 注入,隔离增量3对 mid 天光的影响（查询端仍用旧函数）
-        #define VOXEL_INJECT_CASCADES 0
-        if (VOXEL_INJECT_CASCADES == 1 && (frameCounter & 1) == 0) IrcInject(c, cDi, 0, VOXEL_CASCADE_CELL_0);
-        if (VOXEL_INJECT_CASCADES == 1 && (frameCounter & 3) == 0) IrcInject(c, cDi, 2, VOXEL_CASCADE_CELL_2);
+        // 级联注入配置: 2 = 仅 far(每 4 帧); near 暂挂起
+        #define VOXEL_INJECT_CASCADES 2
+        if (VOXEL_INJECT_CASCADES >= 1 && (frameCounter & 1) == 0) IrcInject(c, cDi, 0, VOXEL_CASCADE_CELL_0);
+        if (VOXEL_INJECT_CASCADES >= 2 && (frameCounter & 3) == 0) IrcInject(c, cDi, 2, VOXEL_CASCADE_CELL_2);
 
         #endif
     }
