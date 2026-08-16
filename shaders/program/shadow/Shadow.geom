@@ -174,9 +174,10 @@ void main() {
                     EndPrimitive(); \
                 }
 
-            // near 级联（0.5m）：完整方块三角形覆盖多个格,按 AABB + 法线主轴投影
-            // 点内测试填满覆盖格（只写质心格会留下 1/4 稀疏棋盘 → 近景整齐暗纹/锯齿）。
-            // 形状块（ID>1）维持质心格（子盒求交在查询端处理,避免误填空隙）。
+            // near 级联（0.5m）：只处理完整方块（ID==1）——三角形覆盖多个格,按 AABB
+            // + 法线主轴投影点内测试填满覆盖格（只写质心格会留下 1/4 稀疏棋盘）。
+            // 形状/透明块不进 near：IsHitBlock 子盒判定按 1m 整块坐标系设计,塞进
+            // 0.5m 格会错配 → 命中/穿透交替成 0.5m 锯齿（实测）；由 mid 级联按原语义处理。
             if (all(bvec3(clamp(voxelCoordNear, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordNear))) {
                 if (voxelID == 1.0) {
                     vec3 n0 = (g_voxelCoordBase[0] - float(VOXEL_RADIUS)) / VOXEL_CASCADE_CELL_0 + float(VOXEL_RADIUS);
@@ -205,12 +206,8 @@ void main() {
                             if (PointInTri2D(p, a2, b2, c2) && dot(cc - n0, nrm) < 0.0)
                                 EMIT_VOXEL_CASCADE(vec3(ix, iy, iz), VOXEL_TILE_Y_0, 0.0);
                         }
-                    } else {
-                        EMIT_VOXEL_CASCADE(voxelCoordNear, VOXEL_TILE_Y_0, 0.0);
-                    }
-                } else {
-                    EMIT_VOXEL_CASCADE(voxelCoordNear, VOXEL_TILE_Y_0, 0.0);
                 }
+            }
             }
             if (all(bvec3(clamp(voxelCoord, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoord)))
                 EMIT_VOXEL_CASCADE(voxelCoord, VOXEL_TILE_Y_1, 1.0);
