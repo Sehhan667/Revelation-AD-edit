@@ -249,9 +249,8 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
     // - NOLIGHT 兜底：出界路径专有（NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)）
     // 射程用尽：仅返回发射光球形累积 + 底光。主底光仍由 IRC 阳光扩散提供。
     if (exitGrid) {
-        // 出界 → 方向天空光 + NOLIGHT 兜底：skyMapTex 方向辐射（内含地平线衰减
-        // 与线性漏光门控）。洞穴（skyLightmap≈0）无天光，半遮挡按比例保留。
-        contrib += VoxelSkyColor(dir, skyLightmap) * VOXEL_GI_TRACE_SKY_STRENGTH * absorption;
+        // [2026-08-16 临时] 光追天光从未正常工作 → 移除出界天空光，
+        // 天空照明由 DeferredLight 的球谐光（SH）接管。
         // [2026-08-09] 出界不再返回原版方块光底光：光追开启时体素网格内的原版方块光
         // （lightmap 光晕）应被屏蔽，由体素 GI 的方块光（命中/IRC 注入，lD.y 驱动）
         // 接管。保留此项会把 DeferredLight 已屏蔽的原版方块光又加回来（火把光晕
@@ -451,7 +450,7 @@ vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float 
 
     // 未命中 → 方向天空光 + NOLIGHT 兜底（同单级联版出界路径）
     if (!hitSolid) {
-        contrib += VoxelSkyColor(dir, skyLightmap) * VOXEL_GI_TRACE_SKY_STRENGTH * absorption;
+        // [2026-08-16 临时] 光追天光停用（球谐光接管）
         contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS * saturate(totalWorldLen * 0.2) * absorption;
     }
     return contrib * weight;
