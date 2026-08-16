@@ -262,3 +262,173 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
     contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS * saturate(rayLength * 0.2) * absorption;
     return contrib * weight;
 }
+
+//================================================================================================//
+// 级联漫反射追踪（ADR-0001）
+//
+// 跨级联连续追踪：从最细级联（near）开始，射线出界/射程用尽后按世界坐标进入下一级联
+// 继续；命中即返回。near（0.5m）负责近景精细 GI，mid（1.0m）中景，far（2.0m）把覆盖
+// 扩到 ±64m（原单 64³ 只有 ±32m）。像素起点超出 far 覆盖仍返回 0（非光追路径接管）。
+// 简化：VoxelSunShadowTracing（3 格短程遮挡）仅 mid 级联启用；near/far 依赖阴影贴图判定。
+//================================================================================================//
+
+// 查询端级联取数（near/far 数据与方块光；mid 用 VoxelGI.glsl 已声明的 mid sampler）
+uniform sampler3D voxelDataNearSampler;
+uniform usampler3D voxelLightNearSampler;
+uniform sampler3D voxelDataFarSampler;
+uniform usampler3D voxelLightFarSampler;
+
+vec4 FetchCascadeDataT(ivec3 c, int cascade) {
+    if (cascade == 0) return texelFetch(voxelDataNearSampler, c, 0);
+    if (cascade == 2) return texelFetch(voxelDataFarSampler, c, 0);
+    return texelFetch(voxelDataSampler, c, 0);
+}
+
+vec4 FetchCascadeLightT(ivec3 c, int cascade) {
+    if (cascade == 0) return unpackUnorm4x8(texelFetch(voxelLightNearSampler, c, 0).r);
+    if (cascade == 2) return unpackUnorm4x8(texelFetch(voxelLightFarSampler, c, 0).r);
+    return unpackUnorm4x8(texelFetch(voxelLightSampler, c, 0).r);
+}
+
+vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist, float skyLightmap, float blockLightmap, inout uint seed) {
+    // 自交偏移（世界米，与单级联版一致）
+    origin += vertexNormal * (viewDist * 0.0003);
+
+    // 均匀半球采样 + 几何法线回落 + 余弦权重（同单级联版）
+    vec3 dir = VoxelHemisphereUnitVector(normal, seed);
+    if (dot(dir, vertexNormal) <= 0.0)
+        dir = VoxelHemisphereUnitVector(vertexNormal, seed);
+    float weight = saturate(dot(dir, normal)) * 2.0;
+
+    // 世界对齐相对坐标（W - floor(C)），与体素化/注入端一致
+    vec3 worldRel = origin + cameraPositionFract;
+    // 超出 far 级联覆盖（±64m）→ 非光追路径接管（同原"网格外返回 0"语义）
+    if (any(greaterThanEqual(abs(worldRel), vec3(VOXEL_CASCADE_RADIUS_2))))
+        return vec3(0.0);
+
+    vec3 contrib = vec3(0.0);
+    vec3 absorption = vec3(1.0);
+    bool traceTranslucent = true;
+    bool hitSolid = false;
+    float totalWorldLen = 0.0;
+
+    for (int cascade = 0; cascade < VOXEL_CASCADE_COUNT; ++cascade) {
+        float cell = cascade == 0 ? VOXEL_CASCADE_CELL_0
+                   : cascade == 1 ? VOXEL_CASCADE_CELL_1
+                                  : VOXEL_CASCADE_CELL_2;
+
+        // 网格坐标（[0,VOXEL_AREA)）；起点不在本级联覆盖内时首步即出界 → 自动进下一级联
+        vec3 gridOrigin = worldRel / cell + float(VOXEL_RADIUS);
+        vec3 voxelCoord = floor(gridOrigin);
+        vec3 sdir = sign(dir);
+        vec3 rdir = cell / max(abs(dir), vec3(1e-8));
+        vec3 totalStep = (sdir * (voxelCoord - gridOrigin + 0.5) + 0.5) * rdir;
+        float rayLen = 0.0;
+        bool exitGrid = false;
+
+        // 起点格自发光（同单级联版；贴光源面像素的起点会被法线偏移推进光源格）
+        ivec3 startVc = ivec3(voxelCoord);
+        if (all(greaterThanEqual(startVc, ivec3(0))) && all(lessThan(startVc, ivec3(VOXEL_AREA)))) {
+            vec4 svd = FetchCascadeDataT(startVc, cascade);
+            if (svd.z > 0.5) {
+                vec3 slD = FetchCascadeLightT(startVc, cascade).rgb;
+                if (slD.z > VOXEL_GI_EMISSIVE_THRESHOLD) {
+                    contrib += VoxelHitLightSphere(gridOrigin, dir, vec3(startVc), VoxelLightColor(abs(svd.z)))
+                             * absorption * VOXEL_GI_TRACE_LIGHT_STRENGTH;
+                }
+            }
+        }
+
+        for (int i = 0; i < VOXEL_TRACE_DISTANCE; ++i) {
+            rayLen = VoxelMin3(totalStep);
+            vec3 tracingNext = step(totalStep, vec3(rayLen));
+            voxelCoord += tracingNext * sdir;
+            totalStep += tracingNext * rdir;
+            if (rayLen > float(VOXEL_TRACE_DISTANCE)) { exitGrid = true; break; }
+            if (any(lessThan(voxelCoord, vec3(0.0))) || any(greaterThanEqual(voxelCoord, vec3(float(VOXEL_AREA))))) {
+                exitGrid = true;
+                break;
+            }
+
+            ivec3 vc = ivec3(voxelCoord);
+            vec4 hvd = FetchCascadeDataT(vc, cascade);
+            // 判空：voxelID 原值整数（>0 即固体，0=空气；半精度浮点整数精确）
+            if (hvd.z <= 0.5) {
+                if (traceTranslucent && VoxelIsTranslucentAbsorb(abs(hvd.z))) {
+                    vec4 tc = texture(atlas2D, hvd.xy);
+                    absorption *= VoxelAlbedoToAbsorption(tc.rgb, tc.a);
+                    traceTranslucent = false;
+                }
+                continue;
+            }
+
+            vec3 lD = FetchCascadeLightT(vc, cascade).rgb;
+            if (lD.z > VOXEL_GI_EMISSIVE_THRESHOLD) {
+                vec3 albE = VoxelLightColor(abs(hvd.z));
+                contrib += VoxelHitLightSphere(gridOrigin, dir, vec3(vc), albE) * absorption * VOXEL_GI_TRACE_LIGHT_STRENGTH;
+                continue;
+            }
+
+            // 普通固体命中：形状求交（IsHitBlock 桥接）
+            VoxelRay vray;
+            vray.ori = gridOrigin;
+            vray.dir = dir;
+            vray.rdir = rdir;
+            vray.sdir = sdir;
+            vec3 hitNormal;
+            if (!IsHitBlock(vray, totalStep, tracingNext, voxelCoord, abs(hvd.z), rayLen, hitNormal))
+                continue;
+
+            vec3 alb = vec3(hvd.r, hvd.g, VoxelUnpack2xU8X(hvd.w));
+
+            // 方块光兜底（同单级联版）
+            if (lD.y > 0.01)
+                contrib += max(alb, vec3(VOXEL_GI_BLOCK_MIN_ALBEDO)) * blocklightColor * lD.y * VOXEL_GI_BLOCK_STRENGTH * absorption;
+
+            // 真阳光弹射（同单级联版：本地重算直射辐照度 + sunVis 阴影判定）
+            vec3 sunDir = mat3(shadowModelViewInverse) * vec3(0.0, 0.0, 1.0);
+            float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
+            vec3 sunIlluminance = sunIrradiance * AtmosphereTransmittanceToSun(atmosphereViewPos, worldSunDir);
+            vec3 moonIlluminance = sunIrradiance * AtmosphereTransmittanceToSun(atmosphereViewPos, -worldSunDir) * moonlightMult;
+            vec3 directIlluminance = (sunIlluminance + moonIlluminance) * 128.0;
+            directIlluminance *= smoothstep(0.0, 0.01, worldLightDir.y);
+            if (max(max(global.directIlluminance.r, global.directIlluminance.g), global.directIlluminance.b) > 1e-4)
+                directIlluminance = global.directIlluminance;
+            if (max(max(directIlluminance.r, directIlluminance.g), directIlluminance.b) < 1e-4 && worldLightDir.y > 0.01)
+                directIlluminance = vec3(128.0);
+            float sunLighting = saturate(dot(sunDir, hitNormal)) * saturate(max(hitSkylight, skyLightmap) * 444.0);
+            // 连续命中点（网格单位）→ 世界相对坐标（×cell 换算回米）
+            vec3 hitVoxelPos = gridOrigin + dir * rayLen;
+            vec3 hitWorldPos = (hitVoxelPos - float(VOXEL_RADIUS)) * cell - cameraPositionFract;
+            vec3 sunVis = VoxelSunShadowMap(hitWorldPos, hitNormal);
+            if (cascade == 1)
+                sunVis *= VoxelSunShadowTracing(hitVoxelPos, sunDir);
+
+            contrib += alb * (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
+                     * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * absorption;
+            // 间接光：命中级联的 IRC 前帧缓存（相机重投影，同单级联版）
+            ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
+            if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA))))
+                contrib += alb * FetchVoxelRadianceC(ircHit, cascade).rgb * 0.01 * VOXEL_GI_SELF_BOUNCE * absorption;
+            hitSolid = true;
+            break;
+        }
+
+        if (hitSolid) break;
+
+        // 出界：累计世界距离后进入下一级联；射程用尽则直接走天空
+        totalWorldLen += rayLen * cell;
+        if (exitGrid && rayLen <= float(VOXEL_TRACE_DISTANCE)) {
+            worldRel += dir * (rayLen * cell);
+            continue;
+        }
+        break;
+    }
+
+    // 未命中 → 方向天空光 + NOLIGHT 兜底（同单级联版出界路径）
+    if (!hitSolid) {
+        contrib += VoxelSkyColor(dir, skyLightmap) * VOXEL_GI_TRACE_SKY_STRENGTH * absorption;
+        contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS * saturate(totalWorldLen * 0.2) * absorption;
+    }
+    return contrib * weight;
+}
