@@ -477,12 +477,21 @@ void main() {
     // 环境光累积
     vec3 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
 
-    // [2026-08-16 临时] 光追天光停用 → 移除"体素网格内屏蔽球谐光"限制，
-    // 球谐光全范围接管天空照明；洞穴漏光仍由下方 lightmap 门控拦截。
+    // 体素 GI 开启时：网格内由光追天光（skyMapTex 方向辐射）提供环境光，
+    // 屏蔽原版 SH 平涂天光，避免方向性天光被环境光盖掉；体素外仍走非光追样式。
     #ifdef VOXEL_GI_ENABLED
-        bool ambientInVoxelGrid = false;
-        // 洞穴/封闭室内不吃平铺底光（lightmap≈0 → 0），防大洞穴远处被均匀点亮
-        ambientAccum *= smoothstep(0.10, 0.25, lightmap.y);
+        vec3 ambientVoxelCoord = camRelPos + cameraPositionFract + float(VOXEL_RADIUS);
+        bool ambientInVoxelGrid = all(greaterThanEqual(ambientVoxelCoord, vec3(0.0)))
+                               && all(lessThan(ambientVoxelCoord, vec3(float(VOXEL_AREA))));
+        // 网格内完全交给 GI（含最小环境光底）：否则平铺底光会把
+        // 窗口逸散/遮挡 AO 的梯度盖成“死板固定亮度”（用户实测反馈）。
+        // 仅保留夜视底光，避免夜视失效。
+        if (ambientInVoxelGrid)
+            ambientAccum = vec3(5e-3 * nightVision);
+        else
+            // 网格外：洞穴/封闭室内不吃平铺底光（lightmap≈0 → 0），
+            // 否则大洞穴远处的网格外墙壁会被均匀点亮（洞穴漏光根因之一）。
+            ambientAccum *= smoothstep(0.10, 0.25, lightmap.y);
     #else
         bool ambientInVoxelGrid = false;
     #endif
