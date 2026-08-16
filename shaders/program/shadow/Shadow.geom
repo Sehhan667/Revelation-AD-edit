@@ -22,7 +22,7 @@
 //======// Layout //================================================================================//
 
 layout(triangles) in;
-layout(triangle_strip, max_vertices = 12) out;
+layout(triangle_strip, max_vertices = 45) out;
 
 //======// Input //================================================================================//
 
@@ -41,6 +41,17 @@ in float g_posInvalid[]; // 每顶点（非 flat）：1=顶点偏离整数网格
 uniform mat4 shadowProjection;
 uniform int renderStage;
 #endif
+
+// 2D 点在三角形内（重心坐标；用于 near 级联格覆盖判定）
+bool PointInTri2D(vec2 p, vec2 a, vec2 b, vec2 c) {
+    vec2 v0 = b - a, v1 = c - a, v2 = p - a;
+    float d00 = dot(v0, v0), d01 = dot(v0, v1), d11 = dot(v1, v1);
+    float d20 = dot(v2, v0), d21 = dot(v2, v1);
+    float inv = 1.0 / (d00 * d11 - d01 * d01);
+    float v = (d11 * d20 - d01 * d21) * inv;
+    float w = (d00 * d21 - d01 * d20) * inv;
+    return v >= -1e-4 && w >= -1e-4 && (v + w) <= 1.0 + 1e-4;
+}
 
 //======// Output //================================================================================//
 
@@ -163,8 +174,42 @@ void main() {
                     EndPrimitive(); \
                 }
 
-            if (all(bvec3(clamp(voxelCoordNear, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordNear)))
-                EMIT_VOXEL_CASCADE(voxelCoordNear, VOXEL_TILE_Y_0, 0.0);
+            // near 级联（0.5m）：完整方块三角形覆盖多个格,按 AABB + 法线主轴投影
+            // 点内测试填满覆盖格（只写质心格会留下 1/4 稀疏棋盘 → 近景整齐暗纹/锯齿）。
+            // 形状块（ID>1）维持质心格（子盒求交在查询端处理,避免误填空隙）。
+            if (all(bvec3(clamp(voxelCoordNear, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordNear))) {
+                if (voxelID == 1.0) {
+                    vec3 n0 = (g_voxelCoordBase[0] - float(VOXEL_RADIUS)) / VOXEL_CASCADE_CELL_0 + float(VOXEL_RADIUS);
+                    vec3 n1 = (g_voxelCoordBase[1] - float(VOXEL_RADIUS)) / VOXEL_CASCADE_CELL_0 + float(VOXEL_RADIUS);
+                    vec3 n2 = (g_voxelCoordBase[2] - float(VOXEL_RADIUS)) / VOXEL_CASCADE_CELL_0 + float(VOXEL_RADIUS);
+                    vec3 nrm = cross(n1 - n0, n2 - n0);
+                    vec3 an = abs(nrm);
+                    bool projX = an.x >= an.y && an.x >= an.z;
+                    bool projY = an.y >= an.z;
+                    vec3 lo = min(min(n0, n1), n2);
+                    vec3 hi = max(max(n0, n1), n2);
+                    ivec3 iLo = ivec3(clamp(floor(lo), vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)));
+                    ivec3 iHi = ivec3(clamp(ceil(hi), vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)));
+                    int cellCount = (iHi.x - iLo.x + 1) * (iHi.y - iLo.y + 1) * (iHi.z - iLo.z + 1);
+                    if (cellCount <= 12) {
+                        for (int ix = iLo.x; ix <= iHi.x; ++ix)
+                        for (int iy = iLo.y; iy <= iHi.y; ++iy)
+                        for (int iz = iLo.z; iz <= iHi.z; ++iz) {
+                            vec3 cc = vec3(ix, iy, iz) + 0.5;
+                            vec2 p  = projX ? cc.zy : projY ? cc.xz : cc.xy;
+                            vec2 a2 = projX ? n0.zy : projY ? n0.xz : n0.xy;
+                            vec2 b2 = projX ? n1.zy : projY ? n1.xz : n1.xy;
+                            vec2 c2 = projX ? n2.zy : projY ? n2.xz : n2.xy;
+                            if (PointInTri2D(p, a2, b2, c2))
+                                EMIT_VOXEL_CASCADE(vec3(ix, iy, iz), VOXEL_TILE_Y_0, 0.0);
+                        }
+                    } else {
+                        EMIT_VOXEL_CASCADE(voxelCoordNear, VOXEL_TILE_Y_0, 0.0);
+                    }
+                } else {
+                    EMIT_VOXEL_CASCADE(voxelCoordNear, VOXEL_TILE_Y_0, 0.0);
+                }
+            }
             if (all(bvec3(clamp(voxelCoord, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoord)))
                 EMIT_VOXEL_CASCADE(voxelCoord, VOXEL_TILE_Y_1, 1.0);
             if (all(bvec3(clamp(voxelCoordFar, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordFar)))
