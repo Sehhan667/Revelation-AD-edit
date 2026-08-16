@@ -104,7 +104,7 @@ void main() {
 			// 种子：全分辨率像素索引哈希 + 帧计数（每帧不同方向，棋盘 offset 轮转 4 帧全覆盖）
 			uint traceSeed = triple32(uint(renderTexel.x + renderTexel.y * int(viewWidth)) * 0x9E3779B1u
 			                          + uint(frameCounter + 1) * 0x85EBCA77u);
-			result = vec4(VoxelTracePixel(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
+			result = vec4(VoxelTracePixelCascaded(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
 			                              -viewPos.z, lightmap.y, lightmap.x, traceSeed)
 			             * VOXEL_GI_TRACE_STRENGTH, 1.0);
 		#else
