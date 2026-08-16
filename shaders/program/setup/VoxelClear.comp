@@ -35,9 +35,18 @@ layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 // 格式限定符必须保留：voxelData 为 rgba16f，voxelLightData 为 r32ui。
 layout (rgba16f) writeonly uniform image3D voxelData;
 layout (r32ui) writeonly uniform uimage3D voxelLightData;
+// 级联缓存（ADR-0001）：near/far 与 mid 同尺寸,体素化写入端在后续增量接入
+layout (rgba16f) writeonly uniform image3D voxelDataNear;
+layout (r32ui) writeonly uniform uimage3D voxelLightDataNear;
+layout (rgba16f) writeonly uniform image3D voxelDataFar;
+layout (r32ui) writeonly uniform uimage3D voxelLightDataFar;
 
 void main() {
 	ivec3 c = ivec3(gl_GlobalInvocationID.xyz);
 	imageStore(voxelData, c, vec4(0.0));          // z=voxelID=0 即空体素（gbuffers 只写命中格，必须清空防跨帧残留）
 	imageStore(voxelLightData, c, uvec4(0u));
+	imageStore(voxelDataNear, c, vec4(0.0));
+	imageStore(voxelLightDataNear, c, uvec4(0u));
+	imageStore(voxelDataFar, c, vec4(0.0));
+	imageStore(voxelLightDataFar, c, uvec4(0u));
 }
