@@ -18,9 +18,7 @@ uniform sampler3D voxelRadianceSampler;
 uniform sampler3D voxelRadiance2Sampler;
 // 级联缓存（ADR-0001）：near/far 与 mid 同格式
 uniform sampler3D voxelRadianceNearSampler;
-uniform sampler3D voxelRadiance2NearSampler;
 uniform sampler3D voxelRadianceFarSampler;
-uniform sampler3D voxelRadiance2FarSampler;
 // 体素化光数据（r32ui 打包：x=emissive y=sky z=block），DEBUG_VOXEL_GI 判断光源体素用
 uniform usampler3D voxelLightSampler;
 // 体素数据（rgba16f：z=voxelID 原值），仅 DEBUG_VOXEL_RADIANCE 诊断用

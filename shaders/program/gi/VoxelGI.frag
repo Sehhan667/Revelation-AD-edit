@@ -55,17 +55,13 @@ uniform sampler2D atlas2D;
 // 级联缓存（ADR-0001）：near/far 与 mid 同格式，查询/写入按级联索引选择
 uniform sampler3D voxelDataNearSampler;
 uniform sampler3D voxelRadianceNearSampler;
-uniform sampler3D voxelRadiance2NearSampler;
 uniform usampler3D voxelLightNearSampler;
 uniform sampler3D voxelDataFarSampler;
 uniform sampler3D voxelRadianceFarSampler;
-uniform sampler3D voxelRadiance2FarSampler;
 uniform usampler3D voxelLightFarSampler;
 
 layout (rgba16f) writeonly uniform image3D voxelRadianceNear;
-layout (rgba16f) writeonly uniform image3D voxelRadiance2Near;
 layout (rgba16f) writeonly uniform image3D voxelRadianceFar;
-layout (rgba16f) writeonly uniform image3D voxelRadiance2Far;
 
 // 体素化缓冲（voxelData / voxelLightData）每帧由 begin1（VoxelClear.comp）
 // 在 shadow pass 前清空，体素化已迁到 shadow pass（太阳固定，不随相机转动），
