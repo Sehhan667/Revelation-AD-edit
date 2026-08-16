@@ -200,7 +200,9 @@ void main() {
                             vec2 a2 = projX ? n0.zy : projY ? n0.xz : n0.xy;
                             vec2 b2 = projX ? n1.zy : projY ? n1.xz : n1.xy;
                             vec2 c2 = projX ? n2.zy : projY ? n2.xz : n2.xy;
-                            if (PointInTri2D(p, a2, b2, c2))
+                            // 只写面"固体侧"的格层: 面落在格边界时两侧格心都投影在面内,
+                            // 不加此判定会把近网格墙写厚 1 倍 → 命中位置偏移出暗纹
+                            if (PointInTri2D(p, a2, b2, c2) && dot(cc - n0, nrm) < 0.0)
                                 EMIT_VOXEL_CASCADE(vec3(ix, iy, iz), VOXEL_TILE_Y_0, 0.0);
                         }
                     } else {

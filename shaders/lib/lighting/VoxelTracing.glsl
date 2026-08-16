@@ -290,6 +290,27 @@ vec4 FetchCascadeLightT(ivec3 c, int cascade) {
     return unpackUnorm4x8(texelFetch(voxelLightSampler, c, 0).r);
 }
 
+// 手动三线性采样级联 IRC（返回解码后 0-1 尺度）：
+// 硬 texelFetch 会把相邻格辐射度跳变暴露成格边界暗纹（near 0.5m → 半块边长锯齿）。
+// mid 维持原硬取语义（既有画面不变）；near/far 用平滑采样。
+vec3 FetchVoxelRadianceSmoothed(ivec3 c, int cascade) {
+    if (cascade == 1)
+        return FetchVoxelRadianceC(c, cascade).rgb * 0.01;
+    vec3 f = vec3(c) + 0.5;
+    ivec3 i = ivec3(floor(f));
+    vec3 t = f - vec3(i);
+    vec3 acc = vec3(0.0);
+    for (int k = 0; k < 8; ++k) {
+        ivec3 off = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+        ivec3 p = clamp(i + off, ivec3(0), ivec3(VOXEL_AREA - 1));
+        float w = (off.x == 0 ? 1.0 - t.x : t.x)
+                * (off.y == 0 ? 1.0 - t.y : t.y)
+                * (off.z == 0 ? 1.0 - t.z : t.z);
+        acc += FetchVoxelRadianceC(p, cascade).rgb * w;
+    }
+    return acc * 0.01;
+}
+
 vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist, float skyLightmap, float blockLightmap, inout uint seed) {
     // 自交偏移（世界米，与单级联版一致）
     origin += vertexNormal * (viewDist * 0.0003);
@@ -409,7 +430,7 @@ vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float 
             // 间接光：命中级联的 IRC 前帧缓存（相机重投影，同单级联版）
             ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
             if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA))))
-                contrib += alb * FetchVoxelRadianceC(ircHit, cascade).rgb * 0.01 * VOXEL_GI_SELF_BOUNCE * absorption;
+                contrib += alb * FetchVoxelRadianceSmoothed(ircHit, cascade) * VOXEL_GI_SELF_BOUNCE * absorption;
             hitSolid = true;
             break;
         }
