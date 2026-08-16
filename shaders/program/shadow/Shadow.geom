@@ -104,7 +104,7 @@ void main() {
         vec3 voxelCoord     = floor(baseCentroid);   // mid = 原 64³@1m 语义
         vec3 voxelCoordFar  = floor(baseRel * (1.0 / VOXEL_CASCADE_CELL_2) + vec3(float(VOXEL_RADIUS)));
 
-        if (all(bvec3(
+        if (all(bvec2(
             g_notInVoxel[0] + g_notInVoxel[1] + g_notInVoxel[2] < 0.5,
             // [FIX 2026-08-06] 发光地衣（materialID=32）是 CUTOUT 渲染阶段，原分支
             // （SOLID/TRANSLUCENT）会把它排除在体素外 → 地衣没有体素数据 → 不照亮周围。
