@@ -51,6 +51,10 @@ layout (location = 1) out vec3 encodedNormalDepth;
     #define SSILVB_HOLD_UP_SPEED 3.0     // [0.1 0.5 1.0 2.0 3.0 5.0]
 #endif
 
+#ifdef TAA_ENABLED
+    #define SHOULD_APPLY_JITTER
+#endif
+
 void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
 	vec3 viewPos = ScreenToViewPos(screenPos);
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
@@ -59,19 +63,17 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
     vec3 prevViewPos = transMAD(gbufferPreviousModelView, prevWorldPos); // To previous frame's view space
 	vec3 prevNDCPos = projMAD(gbufferPreviousProjection, prevViewPos) * rcp(-prevViewPos.z); // To previous frame's NDC space
 
-    #ifdef TAA_ENABLED
-        prevNDCPos.xy += taaJitter;
+    #ifdef SHOULD_APPLY_JITTER
+        prevNDCPos.xy += taaJitterPrev;
     #endif
     vec2 prevCoord = prevNDCPos.xy * 0.5 + 0.5;
-    prevCoord += (taaJitterPrev - taaJitter) * 0.25;
 
     vec2 currCoord = texelToUv(texelPos);
-    encodedNormalDepth = vec3(OctEncodeSnorm(worldNormal), length(viewPos));
+    encodedNormalDepth = vec3(OctEncodeSnorm(worldNormal), viewPos.z);
 
-    if (saturate(prevCoord) == prevCoord && !worldTimeChanged) {
+    if (saturate(prevCoord) == prevCoord && !historyReset) {
         vec4 prevDiffuse = vec4(0.0);
         float sumWeight = 0.0;
-        float confidence = 0.0;
 
         // Custom bilinear filter
         vec2 prevTexel = (prevCoord * viewSize
@@ -88,22 +90,16 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
             fractTexel.x      * fractTexel.y
         };
 
-        ivec2 texelEnd = ivec2(halfViewSize) - 1;
-
-        vec3 worldDir = normalize(worldPos - gbufferModelViewInverse[3].xyz);
-		float NdotV = abs(dot(worldNormal, worldDir));
+        float invThresholdZ = 8.0 / encodedNormalDepth.z;
 
         for (uint i = 0u; i < 4u; ++i) {
             ivec2 sampleTexel = floorTexel + offset2x2[i];
-            if (clamp(sampleTexel, ivec2(0), texelEnd) == sampleTexel) {
+            if (clamp(sampleTexel, ivec2(0), ivec2(halfViewSize) - 1) == sampleTexel) {
 			    vec3 sampleAux = texelFetch(colortex14, sampleTexel, 0).xyz;
                 vec4 sampleIrradiance = texelFetch(colortex2, sampleTexel, 0);
 
-                float weight = -distance(encodedNormalDepth.z, sampleAux.z) * NdotV;
-                weight += log2(saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
-                weight = exp2(weight * sampleIrradiance.a * (8.0 / SSILVB_MAX_ACCUM_FRAMES));
-
-                confidence = max(confidence, weight);
+                float weight = saturate(fma(distance(encodedNormalDepth.z, sampleAux.z), invThresholdZ, 1.0));
+                weight *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
                 weight *= bilinearWeight[i];
 
                 prevDiffuse += sampleIrradiance * weight;
@@ -115,10 +111,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
             sumWeight = 1.0 / sumWeight;
             prevDiffuse *= sumWeight;
 
-            integratedDiffuse.a = min(prevDiffuse.a * confidence + 1.0, SSILVB_MAX_ACCUM_FRAMES);
+            integratedDiffuse.a = min(prevDiffuse.a + 1.0, SSILVB_MAX_ACCUM_FRAMES);
 
-            float mipLevel = 3.0 * saturate(1.0 - integratedDiffuse.a * rcp(12.0));
-            integratedDiffuse.rgb = textureLod(colortex3, currCoord, mipLevel).rgb;
+            if (integratedDiffuse.a < 8.0) {
+                float mipLevel = 3.0 * saturate(1.0 - integratedDiffuse.a * rcp(8.0));
+                integratedDiffuse.rgb = textureLod(colortex3, currCoord, mipLevel).rgb;
+            } else {
+                integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
+            }
 
             float alpha = rcp(integratedDiffuse.a);
 

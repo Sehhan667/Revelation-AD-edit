@@ -89,3 +89,79 @@ org.anarres.cpp.InternalException: Bad token [³@278,0]:"³"
 
 - 尽量沿用原有坐标/参数语义（连续命中点、参考深度），不要自作主张简化成整数格或省掉转换。
 - 改 shadow 缓冲输出格式前，先确认目标缓冲有没有对应通道（vec3 → vec4 需要缓冲支持 alpha）。
+
+---
+
+# 备忘：SVGF 同步与分辨率缩放（2026-08-09）
+
+- 官方 SVGF 使用 `scaledViewSize` / `scaledTexelSize` 等 uniform，这些值由 shaders.properties 里的 `RENDER_SCALE` 体系提供。
+- 本包没有这套渲染缩放体系；uniform 未赋值时 Iris 默认 0，`texelToUvScaled` 会把 UV 全乘成 0 → 表现为“分辨率缩放出错、画面错位/花掉”。
+- 处理：SVGF 四道 pass 全部改回本包的 `viewSize` / `texelToUv` 坐标体系，删除 scaled uniform 与宏，保证无残留。
+- 新增自定义 uniform（如 `historyReset`）时，必须在 shaders.properties 里同步赋值，否则恒为默认值，功能形同虚设。
+
+---
+
+# 备忘：天光 GI 方向化（2026-08-09）
+
+- 天空光不再用标量 skyColor 平涂，改为采样 skyMapTex（OctEncodeUnorm 方向→UV），
+  天然带天顶/地平线/太阳暖色/云影的方向信息。
+- skyMapTex 是物理尺度（白天顶光 ≈110-130），除以 VOXEL_SKY_REFERENCE（300）
+  换算到 0-1 尺度；调大变暗、调小变亮。
+- 三条接入点：IRC 命中面（法线方向采样）、IRC/追踪出界（光线方向采样 × 上半球权重）、
+  新暴露体素播种（天顶辐射 × EDGE_SEED）。
+- 天光可见度门控 lightmap 0.02-0.24：洞穴无天光、户外全开、树冠缝隙半遮挡。
+- 体素网格内屏蔽原版 SH 平涂环境光，避免方向性天光被盖掉；网格外保持非光追样式。
+- 若 GI pass 里 skyMapTex 采样为 0（未绑定/尚未生成），VoxelSkyColor 退回
+  skyColor；若该 uniform 也为 0，再按太阳高度给天蓝色下限，保证正午必有可见天光。
+  map 正常时仍以 map 方向辐射为准。
+- IRC 出界路径的天光同样乘 VOXEL_GI_SKY_STRENGTH（曾漏乘，导致该滑条只影响命中面）。
+- DEBUG_VOXEL_SKY 实测：暗处泛红 = 天光路径已通，只是实际值偏弱被环境光盖住；
+  对策是放宽门控中段（0.01-0.18）并提高兜底倍率（0.5→0.8）。深洞穴（lightmap=0）仍拦截。
+- 阴影仍黑：IRC 命中面的天光可见度改用
+  max(lightmap 门控, 上一帧天空曝光度 alpha)——能看见天空的阴影体素不再被 lightmap 压低；
+  滑条上限同步放宽（注入 8.0 / 追踪 16.0）方便拉亮阴影。
+- 读回端硬补解析天光会制造“阳光/天光分界线”并盖掉自然 AO（用户实测反馈）。
+  正确做法：天光与阳光走同一条追踪/IRC 链路自然混合；IRC 自反弹提到 1.0
+  （表面命中全强度），让天光沿遮挡逐级衰减，阴影形成自然 AO 梯度。
+- 追踪信号链路里加解析天光填充（进 YCoCg/SVGF 前）：按法线方向 × lightmap 门控
+  × 上一帧 IRC 天空曝光度（AO）平滑补光——暗处有蓝色天光、遮挡处更暗、与阳光同链路无分界线。
+- 用户反馈亮度仍偏暗：新增 `VOXEL_GI_SKY_FILL`（暗处填充额外倍率）与
+  `VOXEL_GI_SUN_TINT_RATIO`（天光阳光染色，同普通环境光思路，正午暖阳色、夜晚关闭），
+  都已注册进 GUI 滑条与双语 lang。
+- 室内“死板固定亮度”根因：体素网格内残留的最小环境光底（0.15）把窗口逸散/AO 梯度盖掉。
+  改为网格内环境光底置零（仅夜视底），室内亮度完全由 GI 传播决定——窗边亮、深处暗。
+- itrp 的 AO 不是静态 SSAO：是“光致 AO”——填充色/强度跟随天空（昼夜/天气/云影），
+  可见度（IRC 曝光 alpha）只决定几何遮挡强弱。因此移除 SSAO 乘法，避免固定灰黑压暗。
+- 洞穴漏天光根因：曝光 alpha 原先“向上逃逸就计数”，洞穴里也会高 → IRC 命中面/填充
+  误判为可见天空；且新进入网格的洞穴体素会被天顶种子点亮。修正：曝光与种子都乘
+  lightmap 门控，洞穴（≈0）完全不计数、不播种。
+- 网格外的大洞穴远处墙壁：环境光底同样乘 lightmap 门控（洞穴≈0 → 不吃平铺底光）。
+
+---
+
+# 备忘：天光重构为物理天空采样结构（2026-08-10，最新）
+
+- 彻底移除解析填充/曝光 hack/平铺兜底；天光只由“追踪出界 + IRC 出界”传播。
+- `VoxelSkyColor(dir, lightmap)` = AtmosphereSkyView/基准 × 地平线衰减
+  （saturate(dir.y*25+0.5)）× 线性漏光门控（saturate(lightmap*4.44)）。
+- IRC 命中面不再单独注入天光；自反弹 1.0 负责把天光传入阴影/室内，形成自然 AO。
+- 移除 `VOXEL_GI_SKY_FILL` / `VOXEL_GI_SUN_TINT_RATIO` 及其 GUI/lang 条目。
+- 疑点确认：skyMapTex 在 GI pass 可能采样恒 0（之前天光全靠平铺兜底撑）。已改为
+  直接调用 AtmosphereSkyView（大气 LUT，与可见天空同源），不再依赖 skyMapTex 绑定。
+- Iris 选项解析坑：VoxelSkyLight.glsl 里不能放条件 include（会把 DEBUG_VOXEL_SKY 等
+  选项搞成 “Unable to resolve”）；大气 include 移到 VoxelGI.frag/DiffuseIndirect 调用方。
+  VoxelSkyColor 保留 skyColor×fade×gate 的方向性兜底，LUT 未绑定时也不会全黑。
+- DEBUG_VOXEL_SKY 锚点改纯净格式（`//#define DEBUG_VOXEL_SKY`，说明注释另起一行），
+  带斜杠的中文注释疑似干扰 Iris 布尔选项解析。
+- 真正根因：重写 VoxelSkyLight.glsl 时把 `#ifdef DEBUG_VOXEL_SKY` 调试分支弄丢了，
+  宏无任何使用点 → Iris 判定选项无效不显示。已补回 VoxelSkyColor 顶部的红色诊断分支。
+- DEBUG_VOXEL_SKY 改为“门控放行才红”：洞穴 lightmap≈0 不显示红色，
+  用于区分路径命中被拦截与真实吃到天光。
+- 调试再升级：直接放大显示真实天光值（×8）——黑=值 0，亮=值正常。
+- 洞穴普遍泛蓝：线性门控 lightmap×4.44 在低天空值太松。改为 smoothstep(0.10, 0.25)；
+  新体素播种再加 step(0.15, skylight) 硬门槛，防写胜污染把洞穴整体点亮。
+- 隐藏诊断开关 `DEBUG_VOXEL_SKY`（settings.glsl 取消注释）：天光路径命中时返回红色，
+  用于区分“路径没跑通/门控放行”和“值太小看不到”。
+- 新增宏要暴露到 GUI 必须三处同步：1) VoxelLighting.glsl 定义处带 `// [值列表]`；
+  2) shaders.properties 的 `screen.voxel` 与 `sliders`；3) lang/zh_CN.lang + en_US.lang。
+  properties 保持纯 ASCII（中文会崩预处理，skyMap 白块的根因）。

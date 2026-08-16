@@ -19,7 +19,7 @@
     - 起点自发光：发射体素先把自己的球形光加进结果，
       否则火把格自身 IRC 为暗 → 追踪端反弹火把格得暗值 → "光源周围黑印"
     - 发射色 = VoxelLightColor 材料 ID 固定色表（火把暖黄），不用暗色纹理 albedo
-    - 出界：方向天空光（方向色 × 方向权重 × lightmap 门控，防洞穴漏光）
+    - 出界：skyMapTex 方向天空辐射 × 上半球权重 × lightmap 门控（防洞穴漏光）
     - ×100 内部存储 / ×0.01 外部采样（voxelRadiance / voxelRadiance2 ping-pong）
     - 时间混合：IRC 是随机采样，靠时域累积降噪（VOXEL_GI_BLEND=0.99）
     - 相机移动时前帧坐标重投影（cDi = cameraPositionInt - previousCameraPositionInt）
@@ -67,6 +67,8 @@ uniform sampler2D atlas2D;
 
 // 共享体素追踪工具（Ray/DDA/半球采样/GetAtlasCoord）
 #include "/lib/lighting/VoxelData.glsl"
+// 大气公共函数（AtmosphereSkyView 等）——必须在 VoxelSkyLight 之前包含
+#include "/lib/atmosphere/Common.glsl"
 // GI 方向天空光（原创）
 #include "/lib/lighting/VoxelSkyLight.glsl"
 
@@ -287,7 +289,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // [FIX 2026-08-06 阳光色] 阳光项用暖阳色 sunLight（sunIrradiance 暖白
             // ×128×rcp(300) 归一化到 0-1，白天≈0.43，与注入端 sunLight/黑体色温一致 + 追踪端
             // directIlluminance），不再是天空蓝 VoxelSkyColor——蓝天空色导致阳光反弹偏蓝且暗，
-            // 是阴影不亮的关键 bug 之一。天空光（天光）单独用 skyColor 保留。
+            // 是阴影不亮的关键 bug 之一。天空光（天光）单独由 skyMapTex 方向辐射提供。
             vec3 sunLight = sunIrradiance * 128.0 * rcp(VOXEL_SUN_REFERENCE);
             // [FIX 2026-08-06 SimpleShadow] 命中体素真被太阳照亮才注入阳光
             //（阴影贴图判定）：洞穴/背阴体素 sunVis=0 → 不注入 → 洞穴白天不再因阳光反弹而亮
@@ -302,11 +304,8 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // [2026-08-09 恢复] 阳光注入已恢复（删除临时 *0.0）。sunVis 阴影贴图判定
             // 保证只有真被太阳直射的体素才注入阳光，洞穴/背阴体素 sunVis=0，不会漏光。
             contrib += alb * sunLight * sunLighting * sunVis * VOXEL_GI_SUN_STRENGTH * absorption;
-            // 天空光注入：方向色 × 命中面朝上加权 × 天光可见度门控
-            //（洞穴 hitSkylight≈0 → 无天光；户外朝上面最亮，水平/朝下面递减）
-            // [2026-08-09 天光已禁用（整段注释，完全不运行）] 恢复时取消注释
-            // contrib += alb * VoxelSkyColor(dir) * VoxelSkyNdotU(hitNormal)
-            //          * VoxelSkyLeakGate(hitSkylight) * VOXEL_GI_SKY_STRENGTH * absorption;
+            // 天空光不在此注入：与参考实现一致，天光只经“出界射线 + IRC 自反弹”
+            // 进入缓存，才能自然衰减并产生 AO。命中面只处理方块光/阳光/自反弹。
             // 自反弹：前帧 IRC 在命中点的值（相机重投影；FetchPrevRadiance 内含 ×0.01 解码）
             contrib += alb * FetchPrevRadiance(hit + cDi) * VOXEL_GI_SELF_BOUNCE * absorption;
             hitSolid = true;
@@ -314,17 +313,17 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
         }
 
         if (!hitSolid) {
-            // 出界 → 方向天空光 + NOLIGHT 兜底：方向色 × 方向权重 × 天光可见度门控。
-            // 洞穴（hitSkylight≈0）无天光，树冠缝隙等半遮挡按 lightmap 比例保留。
-            // [2026-08-09 天光已禁用（整段注释，完全不运行）] 恢复时取消注释
-            // contrib += VoxelSkyColor(dir) * VoxelSkyDirWeight(dir)
-            //          * VoxelSkyLeakGate(hitSkylight) * absorption;
+            // 出界 → 方向天空光 + NOLIGHT 兜底：skyMapTex 方向辐射（内含地平线衰减
+            // 与线性漏光门控）。洞穴 hitSkylight≈0 → 无天光。
+            contrib += VoxelSkyColor(dir, hitSkylight) * VOXEL_GI_SKY_STRENGTH * absorption;
             // NOLIGHT 底光（出界路径专有：NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)；
             // 命中路径无此项，闭塞处底光由自反弹/方块光链路提供）
             contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS
                      * saturate(rayLen * 0.2) * absorption;
-            // Phase 1：该样本向上出界（dir.y>0.1）→ 该体素可见天空，计入曝光度
-            if (dir.y > 0.1) exposure += 1.0;
+            // Phase 1：该样本向上出界且门控放行（真能看到天空）才计入曝光度。
+            // 洞穴里射线即使从 64³ 网格顶逃逸，lightmap≈0 也不计曝光——否则
+            // 曝光 alpha 被当作“可见天空”，天光会漏进洞穴（用户实测反馈）。
+            if (dir.y > 0.1) exposure += VoxelSkyLeakGate(hitSkylight);
         }
         result += contrib * rcpPdf;
     }
@@ -394,16 +393,17 @@ void main() {
         // 直接采用本帧采样值（等价 bw=0），等下一帧旧帧有数据后再恢复时间混合。
         ivec3 prevC = c + cDi;
         bool pValid = all(greaterThanEqual(prevC, ivec3(0))) && all(lessThan(prevC, ivec3(VOXEL_AREA)));
-        // 新暴露的**固体**格用平滑天空值播种（见
-        // VoxelLighting.glsl VOXEL_IRC_EDGE_SEED），而不是裸 1-SPP 随机样本——
-        // 裸样本每帧随机（亮/暗乱跳）且 0.99 混合要 ~100 帧才收敛 = "移动噪声前沿"，
-        // 播种天空值让前缘格从一开始就稳定；空气格保持 0（不写入无用值）。
-        // [2026-08-09 天光已禁用] 新暴露固体格直接采用本帧采样值（天空播种已移除；
-        // 恢复时改回带 VoxelSkyColor 播种的写法）
-        vec3 pRC = pValid ? FetchPrevRadiance(prevC) : nRC;
-        // Phase 1：上一帧天空曝光度（新暴露固体格播种 VOXEL_IRC_EDGE_SEED，避免移动前缘闪）
-        // [2026-08-09 天光已禁用] 曝光度播种同样移除，直接用本帧采样值
-        float pExp = pValid ? FetchPrevExposure(prevC) : nExp;
+        // 新暴露固体格用平滑天空值播种（天顶方向辐射 × EDGE_SEED；函数内含门控），
+        // 避免前缘格每帧裸随机样本闪烁；空气格保持 0（不写入无用值）。
+        float edgeSky = VoxelUnpack2xU8Y(vd.w);
+        // 播种只给真正户外（skylight≥0.15）的体素，防止洞穴体素被写胜的
+        // 中低 skylight 污染后整体点亮。
+        float edgeSeedGate = step(0.15, edgeSky);
+        vec3 pRC = pValid ? FetchPrevRadiance(prevC)
+                          : (sld ? VoxelSkyColor(vec3(0.0, 1.0, 0.0), edgeSky) * VOXEL_IRC_EDGE_SEED * edgeSeedGate : nRC);
+        // Phase 1：上一帧天空曝光度（新暴露固体格播种，同样乘门控）
+        float pExp = pValid ? FetchPrevExposure(prevC)
+                            : (sld ? VOXEL_IRC_EDGE_SEED * edgeSeedGate : nExp);
 
         // 旧帧全黑（冷启动 / 相机大幅移动新暴露）→ 直接写本帧值（等价 bw=0）。
         // 0.99 混合下每帧仅接受 1% 新值，若无此播种首次进入场景会黑屏 100+ 帧

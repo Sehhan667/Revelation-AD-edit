@@ -152,6 +152,7 @@ uniform vec2 viewSize;
 uniform vec2 viewPixelSize;
 uniform vec2 halfViewSize;
 uniform vec2 halfViewEnd;
+uniform bool historyReset;  // 世界时间变化/维度切换时 true（时域累积重置信号）
 uniform vec2 taaJitter;
 uniform vec2 taaJitterPrev;
 

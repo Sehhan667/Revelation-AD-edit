@@ -484,6 +484,8 @@ option.DEBUG_RESHADING=DEBUG_RESHADING
 option.DEBUG_SKY_MAP=DEBUG_SKY_MAP
 option.DEBUG_VOXEL_GI=体素 GI 调试可视化
 option.DEBUG_VOXEL_GI.comment=压暗其余光照并放大体素 GI 贡献，直观查看 GI 生效区域（火把光晕、天空渗入、岩浆泛光等）
+option.DEBUG_VOXEL_SKY=天光路径调试
+option.DEBUG_VOXEL_SKY.comment=天光路径命中时把表面染成红色，用于排查“路径没跑通”还是“值太小看不到”
 option.DEBUG_VOXEL_RADIANCE=体素辐照度可视化
 option.DEBUG_VOXEL_RADIANCE.comment=直接显示传播后的体素辐照度，用于验证"体素化+传播"链路是否通
 
@@ -618,6 +620,15 @@ option.VOXEL_TRACE_DISTANCE.comment=追踪光线最大步进体素数；越大�
 
 option.VOXEL_GI_LIGHT_FALLOFF=光源衰减
 option.VOXEL_GI_LIGHT_FALLOFF.comment=发射光距离衰减系数；越小光源照亮范围越大
+
+option.VOXEL_GI_SKY_STRENGTH=天光注入强度
+option.VOXEL_GI_SKY_STRENGTH.comment=体素 GI 命中面的天空光注入倍率；调大让户外天光更明显
+
+option.VOXEL_GI_TRACE_SKY_STRENGTH=追踪天光强度
+option.VOXEL_GI_TRACE_SKY_STRENGTH.comment=每像素漫反射追踪出界时的方向天光倍率
+
+option.VOXEL_SKY_REFERENCE=天空辐射基准
+option.VOXEL_SKY_REFERENCE.comment=天空辐射贴图换算到 0-1 光照尺度的除数；调大天光变暗、调小变亮
 
 option.VOXEL_GI_RAYS=射线数量上限
 option.VOXEL_GI_RAYS.comment=每个发光体素发射的最大射线数（控制性能上限）

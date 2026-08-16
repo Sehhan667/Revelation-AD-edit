@@ -63,7 +63,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #endif
 
 // ------ 传播配置（风格 IRC 随机注入）------
-#define VOXEL_GI_SELF_BOUNCE 0.5       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8] 自反弹衰减比（光线命中点取前帧 IRC）
+#define VOXEL_GI_SELF_BOUNCE 1.0       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 自反弹衰减比（光线命中点取前帧 IRC；1.0=表面命中全强度）
 #define VOXEL_GI_EMISSIVE_THRESHOLD 0.1 // [0.0 0.01 0.02 0.05 0.1 0.2] 发射度阈值（LabPBR 发射贴图，太低会把矿物误判为发光体）
 #define VOXEL_GI_BOOST 1.5              // [0.5 1.0 1.5 2.0 3.0 4.0] 发射体素能量倍率
 // 发射光球形光距离衰减（语义的补充，2026-08-04 #8）：远场（16 格外）偶发
@@ -96,23 +96,26 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 新暴露格天空播种倍率：相机移动时 64³ 前缘
 // 新进入网格的固体格 pValid=false，旧实现直接用裸 1-SPP 随机样本当初值 → 移动时
 // 前缘一圈格子每帧随机闪（且 0.99 混合要 ~100 帧才收敛）。播种平滑天空值消除该闪烁。
-#define VOXEL_IRC_EDGE_SEED 0.35        // 0-1 尺度（× skyColor；白天 ≈ 0.1 级注入，等效合理环境光）
+#define VOXEL_IRC_EDGE_SEED 0.35        // 0-1 尺度（× skyMapTex 天顶辐射；白天 ≈ 0.1 级注入，等效合理环境光）
 
 // ------ 注入内部系数（随 VOXEL_GI_STRENGTH 整体缩放，不单独暴露滑条）------
-// 天空光用 0-1 尺度的 skyColor，系数即注入上限（白天暴露面 ≈ 0.1×albedo）。
+// 天空光用 0-1 尺度的 skyMapTex 方向辐射，系数即注入上限（白天暴露面 ≈ 0.1×albedo）。
 // 量级链路：注入 nRC → ×100 存储 → 查询 ×0.01 解码，最终 ≈ 注入值 × albedo × STRENGTH
 // 2026-08-04 真阳光改造（思路）：阳光注入主体改为"阴影贴图判定直射"（sunVis），
 // vanilla 天空光 lightmap 降级为弱环境底，保留洞穴渐变。
 #define VOXEL_GI_SUN_STRENGTH 0.5      // 真阳光直射注入倍率（× sunLight 暖阳色，2026-08-06 阳光色改为暖阳色后提亮，让阳光反弹传播到阴影）
-#define VOXEL_GI_SKY_STRENGTH 0.5    // 环境天空注入倍率（× 方向天空色 × 朝上加权 × lightmap 门控；调大让天光更明显）
+#define VOXEL_GI_SKY_STRENGTH 2.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显）
 #define VOXEL_GI_BLOCK_STRENGTH 0.8    // 方块光注入倍率（× blocklightColor，火把等光源）
+// 天空辐射贴图 → 0-1 尺度换算基准（skyViewTex 白天顶光 ≈110-130；与阳光基准同量级，
+// 调大=天光变暗、调小=天光变亮）。定义在 VoxelSkyLight.glsl 之前（VoxelLighting 先 include）
+#define VOXEL_SKY_REFERENCE 300.0   // [100.0 150.0 200.0 250.0 300.0 350.0 400.0 500.0 600.0 800.0 1000.0] 天空辐射贴图→0-1 尺度换算基准
 // [FIX 2026-08-06] 方块光反弹的最小 albedo 底：薄片/流体光源（发光地衣、岩浆）的
 // voxelData 中心色 midCoord 采样可能为 0/很暗（贴图大部分透明黑）→ albedo 乘进
 // blocklight 后趋 0 → 光源不发光。给 blocklight 反弹一个不依赖采样色的最小 albedo。
 #define VOXEL_GI_BLOCK_MIN_ALBEDO 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 方块光反弹最小 albedo 底
 // NOLIGHT 兜底（NOLIGHT_BRIGHTNESS 思路）：命中固体/出界外的闭塞处底光，
 // 洞穴深处不黑死。默认 7e-6 是物理尺度（白天物理辐照度 ~300），
-// 本项目 0-1 尺度（skyColor 白天 ~0.1 级注入），等效底光取 0.0005（可调）。
+// 本项目 0-1 尺度（skyMapTex 归一化后白天 ~0.1 级注入），等效底光取 0.0005（可调）。
 #define VOXEL_NOLIGHT_BRIGHTNESS 0.0005
 
 // ------ 每像素漫反射追踪参数（阶段③，随 VOXEL_GI_TRACE 开关生效）------
@@ -133,10 +136,10 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 8.0 让阳光反弹 ≈ 0.4×cosθ×albedo×8 达到可见量级（过亮可调回 2-5）。
 // 已暴露为 GUI 滑条（shaders.properties sliders），可在光影设置里直接调。
 #define VOXEL_TRACE_SUN_STRENGTH 8.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
-// 追踪端出界天空（原创方向天光：skyColor 方向色 × 方向权重 × lightmap 门控）。
+// 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；
 // 洞穴/室内（skyLightmap≈0）无天光，不会过量。若整体过亮用 VOXEL_GI_TRACE_STRENGTH 旋钮。
-#define VOXEL_GI_TRACE_SKY_STRENGTH 1.0
+#define VOXEL_GI_TRACE_SKY_STRENGTH 4.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0] 追踪端出界方向天光倍率
 // （新增环境光控制宏已移除 2026-08-06：环境光还原旧版纯 skySH 行为）
 
 #endif // VOXEL_GI_LIGHTING_INCLUDED
