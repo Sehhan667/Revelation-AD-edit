@@ -326,14 +326,12 @@ vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float 
     if (any(greaterThanEqual(abs(worldRel), vec3(VOXEL_CASCADE_RADIUS_2))))
         return vec3(0.0);
 
-    // [DEBUG-far-grid] 临时探针: 显示 far 网格固体数据存在性(绿=该格有数据)
-    #define VOXEL_DEBUG_FAR_GRID 1
-    if (VOXEL_DEBUG_FAR_GRID == 1) {
-        vec3 farProbe = worldRel * (1.0 / VOXEL_CASCADE_CELL_2) + float(VOXEL_RADIUS);
-        if (all(greaterThanEqual(farProbe, vec3(0.0))) && all(lessThan(farProbe, vec3(float(VOXEL_AREA))))) {
-            if (texelFetch(voxelDataFarSampler, ivec3(farProbe), 0).z > 0.5)
-                return vec3(0.0, 3.0, 0.0);
-        }
+    // [DEBUG-distant-pixel] 临时探针: 32-64m 像素直接输出绿色,确认查询是否覆盖远处
+    #define VOXEL_DEBUG_DISTANT_PIXEL 1
+    if (VOXEL_DEBUG_DISTANT_PIXEL == 1) {
+        if (any(greaterThanEqual(abs(worldRel), vec3(VOXEL_CASCADE_RADIUS_1)))
+         && any(lessThan(abs(worldRel), vec3(VOXEL_CASCADE_RADIUS_2))))
+            return vec3(0.0, 3.0, 0.0);
     }
 
     vec3 contrib = vec3(0.0);
