@@ -52,6 +52,21 @@ uniform sampler3D voxelDataSampler;
 // 方块图集（shaders.properties customTexture.atlas2D = blocks.png，与 gbuffers 的 tex 同图集）
 uniform sampler2D atlas2D;
 
+// 级联缓存（ADR-0001）：near/far 与 mid 同格式，查询/写入按级联索引选择
+uniform sampler3D voxelDataNearSampler;
+uniform sampler3D voxelRadianceNearSampler;
+uniform sampler3D voxelRadiance2NearSampler;
+uniform usampler3D voxelLightNearSampler;
+uniform sampler3D voxelDataFarSampler;
+uniform sampler3D voxelRadianceFarSampler;
+uniform sampler3D voxelRadiance2FarSampler;
+uniform usampler3D voxelLightFarSampler;
+
+layout (rgba16f) writeonly uniform image3D voxelRadianceNear;
+layout (rgba16f) writeonly uniform image3D voxelRadiance2Near;
+layout (rgba16f) writeonly uniform image3D voxelRadianceFar;
+layout (rgba16f) writeonly uniform image3D voxelRadiance2Far;
+
 // 体素化缓冲（voxelData / voxelLightData）每帧由 begin1（VoxelClear.comp）
 // 在 shadow pass 前清空，体素化已迁到 shadow pass（太阳固定，不随相机转动），
 // 传播 pass 只读不写，稳定读到本帧完整数据
@@ -94,6 +109,42 @@ float FetchPrevExposure(ivec3 c) {
         : texelFetch(voxelRadianceSampler, c, 0)).a;
 }
 
+// ------ 级联取数助手（ADR-0001）------
+vec4 FetchCascadeData(ivec3 c, int cascade) {
+    if (cascade == 0) return texelFetch(voxelDataNearSampler, c, 0);
+    if (cascade == 2) return texelFetch(voxelDataFarSampler, c, 0);
+    return texelFetch(voxelDataSampler, c, 0);
+}
+
+vec4 FetchCascadeLight(ivec3 c, int cascade) {
+    if (cascade == 0) return unpackUnorm4x8(texelFetch(voxelLightNearSampler, c, 0).r);
+    if (cascade == 2) return unpackUnorm4x8(texelFetch(voxelLightFarSampler, c, 0).r);
+    return unpackUnorm4x8(texelFetch(voxelLightSampler, c, 0).r);
+}
+
+vec3 FetchPrevRadianceC(ivec3 c, int cascade) {
+    if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, ivec3(VOXEL_AREA)))) return vec3(0.0);
+    vec4 r = (frameCounter & 1) == 0
+        ? (cascade == 0 ? texelFetch(voxelRadiance2NearSampler, c, 0)
+                        : cascade == 2 ? texelFetch(voxelRadiance2FarSampler, c, 0)
+                                       : texelFetch(voxelRadiance2Sampler, c, 0))
+        : (cascade == 0 ? texelFetch(voxelRadianceNearSampler, c, 0)
+                        : cascade == 2 ? texelFetch(voxelRadianceFarSampler, c, 0)
+                                       : texelFetch(voxelRadianceSampler, c, 0));
+    return r.rgb * 0.01;
+}
+
+float FetchPrevExposureC(ivec3 c, int cascade) {
+    if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, ivec3(VOXEL_AREA)))) return 0.0;
+    return ((frameCounter & 1) == 0
+        ? (cascade == 0 ? texelFetch(voxelRadiance2NearSampler, c, 0)
+                        : cascade == 2 ? texelFetch(voxelRadiance2FarSampler, c, 0)
+                                       : texelFetch(voxelRadiance2Sampler, c, 0))
+        : (cascade == 0 ? texelFetch(voxelRadianceNearSampler, c, 0)
+                        : cascade == 2 ? texelFetch(voxelRadianceFarSampler, c, 0)
+                                       : texelFetch(voxelRadianceSampler, c, 0))).a;
+}
+
 // 简化 SimpleShadow（2026-08-06）：命中体素是否被太阳照亮（阴影贴图判定）。
 // 用户发现"洞穴白天亮度受阳光反弹控制"的根因：阳光注入只靠 hitSkylight（原版 lightmap），
 // 洞穴口 hitSkylight 不为 0 → 阳光漏入洞穴。加阴影贴图判定后，洞穴/背阴体素 sunVis=0
@@ -131,10 +182,11 @@ float VoxelGI_SunVisible(vec3 camRelPos) {
 // - 透明体素（负 ID）自动穿透（DDA 判空 z>0.5 只挡正 ID 固体）
 // c = 当前体素坐标；cDi = 相机重投影；返回 0-1 空间累计值（未 ×100、未时间混合）。
 // 返回 vec4：rgb = 辐照度（0-1），a = 天空曝光度（0-1，Phase 1：向上出界样本占比）
-vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
+vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
     // 每帧换种子（triple32 为完美整数哈希；frameCounter+1 避免第 0 帧全 0 种子）
     uint seed = triple32(uint(c.x + c.y * VOXEL_AREA + c.z * VOXEL_AREA * VOXEL_AREA) * 0x9E3779B1u
-                         + uint(frameCounter + 1) * 0x85EBCA77u);
+                         + uint(frameCounter + 1) * 0x85EBCA77u
+                         + uint(cascade) * 0x27D4EB2Fu);   // 级联间种子去相关
 
     vec3 result = vec3(0.0);
     float exposure = 0.0; // Phase 1：该体素的天空曝光累积（向上出界样本数）
@@ -150,7 +202,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
     for (int i = 0; i < 6; ++i) {
         ivec3 nc = c + VOXEL_DIRS[i];
         if (any(lessThan(nc, ivec3(0))) || any(greaterThanEqual(nc, ivec3(VOXEL_AREA)))) continue;
-        if (texelFetch(voxelDataSampler, nc, 0).z <= 0.5) {
+        if (FetchCascadeData(nc, cascade).z <= 0.5) {
             ++emptyCount;
             sampleOffset += vec3(VOXEL_DIRS[i]);
         }
@@ -160,7 +212,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
     // 本项目普通实心块 = ID 1（block.properties 未列出的方块均归一）；特殊方块
     //（岩浆 7 / 光源 20-31 等正 ID≠1）→ 半球采样；透明块（负 ID）不进入本函数
     //（main 的 sld 判定已排除）。
-    vec4 currVoxelData = texelFetch(voxelDataSampler, c, 0);
+    vec4 currVoxelData = FetchCascadeData(c, cascade);
     float currID = currVoxelData.z;
     bool sampleHemisphere = emptyCount == 1 && abs(currID) > 1.0;
     // ：sampleOffset 累加指向 ordinary(close) 邻居，hitNormal=-sampleOffset 即
@@ -175,7 +227,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
     // 当前体素光数据（curEmissive = 起点本身是发射体素 → 起点自发光贡献；
     // hitSkylight = SUNLIGHT_LEAK_FIX 的泄漏衰减用值：本项目 DDA 对透明体素
     // 直接穿透、无中间命中记录，出界衰减用起点体素自己的天空光即可）
-    vec4 curLight = unpackUnorm4x8(texelFetch(voxelLightSampler, c, 0).r);
+    vec4 curLight = FetchCascadeLight(c, cascade);
     // hitSkylight 改从 voxelData.w 解（Unpack2xU8_Y_from_U16，VoxelData.glsl）：
     // voxelData.w = Pack2xU8(texRes, skylight)（Shadow.frag 打包），imageStore 写胜语义
     // ——修 voxelLightData.R 的 atomicMax max 合并：洞内格被缝隙面抬高的 sky 会让泄漏
@@ -231,7 +283,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             }
 
             ivec3 hc = ivec3(hvoxel);
-            vec4 hvd = texelFetch(voxelDataSampler, hc, 0);
+            vec4 hvd = FetchCascadeData(hc, cascade);
             // 判空：voxelID 原值整数（>0 即固体，0=空气/负 ID 透明）
             if (hvd.z <= 0.5) {
                 // 透明体素：水/玻璃/树叶单层吸收着色（isTranslucent，只吸收一次；
@@ -244,7 +296,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
                 continue;
             }
 
-            vec3 lD = unpackUnorm4x8(texelFetch(voxelLightSampler, hc, 0).r).rgb;
+            vec3 lD = FetchCascadeLight(hc, cascade).rgb;
 
             if (lD.z > VOXEL_GI_EMISSIVE_THRESHOLD) {  // 新字节序：B=emissive
                 // 发射光体素：球形光源平滑贡献（光线对准球心才强，擦边平滑衰减——
@@ -297,7 +349,8 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // [2026-08-09] 用连续命中点（对应 SimpleShadow 的 hitVoxelPos 语义），
             // 避免整数格坐标对体素化逐帧更新敏感导致 sunVis 跳变。
             vec3 hitVoxelPos = voxelPos + dir * rayLen;
-            vec3 hitWorldPos = hitVoxelPos - cameraPositionFract - float(VOXEL_RADIUS);
+            // 级联：网格坐标 × cellSize 换算回世界米（mid cell=1.0 与原式等价）
+            vec3 hitWorldPos = (hitVoxelPos - float(VOXEL_RADIUS)) * cellSize - cameraPositionFract;
             // 用带法线偏移的实时阴影贴图判定，避免体素命中面自阴影导致 sunVis 恒 0。
             // 彩色阴影：实心挡=0，直射=1，穿玻璃=玻璃吸收色（注入光线染色）
             vec3 sunVis = VoxelSunShadowMap(hitWorldPos, hitNormal);
@@ -307,7 +360,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // 天空光不在此注入：与参考实现一致，天光只经“出界射线 + IRC 自反弹”
             // 进入缓存，才能自然衰减并产生 AO。命中面只处理方块光/阳光/自反弹。
             // 自反弹：前帧 IRC 在命中点的值（相机重投影；FetchPrevRadiance 内含 ×0.01 解码）
-            contrib += alb * FetchPrevRadiance(hit + cDi) * VOXEL_GI_SELF_BOUNCE * absorption;
+            contrib += alb * FetchPrevRadianceC(hit + cDi, cascade) * VOXEL_GI_SELF_BOUNCE * absorption;
             hitSolid = true;
             break;
         }
@@ -335,6 +388,56 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
 
 /* RENDERTARGETS: 15 */
 out vec4 dummyOut;
+
+// 单级联单体素的 IRC 注入（ADR-0001）：mid 由下方原逻辑负责（等价 cascade=1）；
+// 本函数供 near/far 使用，取数/写入按 cascade 选择、世界换算按 cellSize。
+void IrcInject(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
+    // ---- 当前帧体素数据（begin1 已在 shadow 前清空，shadow pass 写入本帧数据）----
+    vec4 vd = FetchCascadeData(c, cascade);
+    bool sld = vd.z > 0.5; // voxelID 原值（>0 即固体，0=空气）
+
+    // ---- IRC 随机注入（：只对非空气体素注入）----
+    vec4 irc = IrcTraceVoxel(c, cDi, cascade, cellSize);
+    vec3 nRC = irc.rgb;
+    float nExp = irc.a; // Phase 1：本帧天空曝光度
+
+    // ---- 上一帧辐照度（带相机重投影）----
+    ivec3 prevC = c + cDi;
+    bool pValid = all(greaterThanEqual(prevC, ivec3(0))) && all(lessThan(prevC, ivec3(VOXEL_AREA)));
+    float edgeSky = VoxelUnpack2xU8Y(vd.w);
+    float edgeSeedGate = step(0.15, edgeSky);
+    vec3 pRC = pValid ? FetchPrevRadianceC(prevC, cascade)
+                      : (sld ? VoxelSkyColor(vec3(0.0, 1.0, 0.0), edgeSky) * VOXEL_IRC_EDGE_SEED * edgeSeedGate : nRC);
+    float pExp = pValid ? FetchPrevExposureC(prevC, cascade)
+                        : (sld ? VOXEL_IRC_EDGE_SEED * edgeSeedGate : nExp);
+
+    // 时间混合权重（IRC 随机采样靠时域累积降噪）
+    float bw = 1.0 - (1.0 - VOXEL_GI_BLEND) * saturate(frameTime / 0.01666667);
+    if (frameCounter < 2) bw = 0.0;
+    float localBw = bw;
+    if (pValid && max(max(pRC.r, pRC.g), pRC.b) < 1e-4) localBw = 0.0;
+
+    // ---- 时间混合（实体/空体素统一）----
+    nRC = max(mix(nRC, pRC, localBw), 1e-7);
+    nExp = mix(nExp, pExp, localBw);
+
+    // ---- 保色压缩：任一分量 >1.0 时按最大分量整体缩放，保持色相不漂白 ----
+    float maxC = max(max(nRC.r, nRC.g), nRC.b);
+    if (maxC > 1.0) nRC *= 1.0 / maxC;
+
+    // ---- 写入 ×100（alpha 复用为天空曝光度）----
+    vec4 o = vec4(nRC * 100.0, nExp);
+    if (cascade == 0) {
+        if ((frameCounter & 1) == 0) imageStore(voxelRadianceNear, c, o);
+        else imageStore(voxelRadiance2Near, c, o);
+    } else if (cascade == 2) {
+        if ((frameCounter & 1) == 0) imageStore(voxelRadianceFar, c, o);
+        else imageStore(voxelRadiance2Far, c, o);
+    } else {
+        if ((frameCounter & 1) == 0) imageStore(voxelRadiance, c, o);
+        else imageStore(voxelRadiance2, c, o);
+    }
+}
 
 void main() {
     ivec2 pix = ivec2(gl_FragCoord.xy);
@@ -382,7 +485,7 @@ void main() {
         vec3 nRC = vec3(0.0);
         float nExp = 0.0; // Phase 1：本帧天空曝光度
         if (sld) {
-            vec4 irc = IrcTraceVoxel(c, cDi);
+            vec4 irc = IrcTraceVoxel(c, cDi, 1, VOXEL_CASCADE_CELL_1);
             nRC = irc.rgb;
             nExp = irc.a;
         }
@@ -425,6 +528,10 @@ void main() {
             imageStore(voxelRadiance, c, o);
         else
             imageStore(voxelRadiance2, c, o);
+
+        // 近/远级联注入（ADR-0001）：near 隔帧、far 每 4 帧节流；mid 由上方原逻辑负责
+        if ((frameCounter & 1) == 0) IrcInject(c, cDi, 0, VOXEL_CASCADE_CELL_0);
+        if ((frameCounter & 3) == 0) IrcInject(c, cDi, 2, VOXEL_CASCADE_CELL_2);
 
         #endif
     }
