@@ -433,6 +433,9 @@ vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float 
             ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
             if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA))))
                 contrib += alb * FetchVoxelRadianceSmoothed(ircHit, cascade) * VOXEL_GI_SELF_BOUNCE * absorption;
+            // [DEBUG-far-hit] 临时探针: far 级联命中时叠加亮红,用于确认 far 网格数据与查询是否工作
+            #define VOXEL_DEBUG_FAR_HIT 1
+            if (VOXEL_DEBUG_FAR_HIT == 1 && cascade == 2) contrib += vec3(3.0, 0.0, 0.0);
             hitSolid = true;
             break;
         }
