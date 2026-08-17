@@ -187,8 +187,12 @@ Phase1 曝光计数），`VoxelSkyColor` 变死函数、4 个天光滑条零使�
   VOXEL_GI_TRACE_STRENGTH 补值列表并进 GUI（screen.voxel/sliders/lang 三处同步）
 - DEBUG_VOXEL_SKY 改染红（门控放行且有值才红，洞穴黑）；DeferredLight 左上角灰阶读数 HUD
 - 网格内最小环境光底 = skyColor×lightmap.y×0.04（洞穴≈0 保持黑）
-- 朝下表面天光下限（借鉴 itrp SimpleSkyLighting）：追踪输出补
-  `VoxelSkyColor(天顶) × (1-smoothstep(-1,0.3,NdotU)) × 0.22 × STRENGTH`，朝上补 0 不重复
+- ~~朝下表面天光下限（借鉴 itrp SimpleSkyLighting）~~ **已回退（2026-08-17 同日）**：
+  全量叠加让天花板（NdotU=-1 权重 1.0）异常发亮（用户实测）；itrp 的 SimpleSkyLighting
+  只在 IRC 越界兜底、不叠加在追踪结果上。阳光反弹修复（去 rPI + SUN_STRENGTH 1.0 +
+  TRACE_SUN 12）后朝下表面已有反弹光，无需填充。
+- 天光阳光颜色混合（SH 环境光同款 AMBIENT_SUNLIGHT_TINT_RATIO 机制）：VoxelSkyColor
+  内按 worldSunDir.y 染暖阳色，正午金黄/夜晚关闭；色度取 sunIrradiance 归一化（无 SSBO 依赖）。
 
 ## 关键坑（本次新增）
 1. **`shaderpacks/Revelation-AD-edit.txt`（Iris 记住的选项文件）覆盖代码默认值**：

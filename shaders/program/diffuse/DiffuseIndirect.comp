@@ -104,17 +104,13 @@ void main() {
 			// 种子：全分辨率像素索引哈希 + 帧计数（每帧不同方向，棋盘 offset 轮转 4 帧全覆盖）
 			uint traceSeed = triple32(uint(renderTexel.x + renderTexel.y * int(viewWidth)) * 0x9E3779B1u
 			                          + uint(frameCounter + 1) * 0x85EBCA77u);
-			// [2026-08-17] 朝下表面天光下限（借鉴 itrp SimpleSkyLighting 的 NdotU 曲线）：
-			// 朝上(NdotU=1)由出界射线拿天光 → 补 0；朝下(-1)补满；水平少量。
-			// 量 = 天顶 LUT × lightmap 门控（洞穴 0 不漏光）× 下限权重 × itrp 同款 0.22 系数。
-			float nUp = dot(worldNormal, vec3(0.0, 1.0, 0.0));
+			// [2026-08-17] 移除朝下表面天光下限填充（eb54807 引入）：itrp 的
+			// SimpleSkyLighting 只在 IRC 越界兜底，从不叠加在追踪结果上——全量叠加
+			// 让天花板（NdotU=-1 权重=1.0）异常发亮（用户实测）。阳光反弹修复后
+			// （去 rPI + SUN_STRENGTH 1.0 + TRACE_SUN 12）朝下表面已有反弹光，不再需要。
 			result = vec4(VoxelTracePixelCascaded(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
 			                              -viewPos.z, lightmap.y, lightmap.x, traceSeed)
-			             * VOXEL_GI_TRACE_STRENGTH
-			             + VoxelSkyColor(vec3(0.0, 1.0, 0.0), lightmap.y)
-			               * (1.0 - smoothstep(-1.0, 0.3, nUp)) * 0.22
-			               * VOXEL_GI_STRENGTH * VOXEL_GI_TRACE_SKY_STRENGTH,
-			             1.0);
+			             * VOXEL_GI_TRACE_STRENGTH, 1.0);
 		#else
 			vec3 worldNormal = FetchSurfaceNormal(renderTexel);
 			float lightmapSky = Unpack2x8UY(loadMaterialPack(renderTexel).x);
