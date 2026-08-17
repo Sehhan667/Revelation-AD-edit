@@ -436,7 +436,9 @@ vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float 
             contrib += alb * (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
                      * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * absorption;
             // 间接光：命中级联的 IRC 前帧缓存（相机重投影，同单级联版）
-            ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
+            // [2026-08-17] 级联重投影换算：cDi 米 ÷ 本级联格（mid=2m/far=4m 时
+            // 直接加米会过量 2×/4× → 移动闪烁）；单级联 1m 格不变
+            ivec3 ircHit = vc + ivec3(round(vec3(cameraPositionInt - previousCameraPositionInt) / cell));
             if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA))))
                 contrib += alb * FetchVoxelRadianceSmoothed(ircHit, cascade) * VOXEL_GI_SELF_BOUNCE * absorption;
             hitSolid = true;

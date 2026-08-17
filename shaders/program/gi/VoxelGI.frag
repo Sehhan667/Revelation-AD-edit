@@ -176,6 +176,10 @@ float VoxelGI_SunVisible(vec3 camRelPos) {
 // c = 当前体素坐标；cDi = 相机重投影；返回 0-1 空间累计值（未 ×100、未时间混合）。
 // 返回 vec4：rgb = 辐照度（0-1），a = 天空曝光度（0-1，Phase 1：向上出界样本占比）
 vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
+    // [2026-08-17] 级联重投影换算：cDi 是整数米，须除以本级联格尺寸才是格位移
+    //（旧版直接加 cDi——仅 1m 格正确；mid=2m/far=4m 时过量 2×/4× → 移动时缓存
+    // 错位 → GI 时有时无闪烁，用户实测 zfighting 感）。
+    ivec3 cDiC = ivec3(round(vec3(cDi) / cellSize));
     // 每帧换种子（triple32 为完美整数哈希；frameCounter+1 避免第 0 帧全 0 种子）
     uint seed = triple32(uint(c.x + c.y * VOXEL_AREA + c.z * VOXEL_AREA * VOXEL_AREA) * 0x9E3779B1u
                          + uint(frameCounter + 1) * 0x85EBCA77u
@@ -356,7 +360,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
             // 天空光不在此注入：与参考实现一致，天光只经“出界射线 + IRC 自反弹”
             // 进入缓存，才能自然衰减并产生 AO。命中面只处理方块光/阳光/自反弹。
             // 自反弹：前帧 IRC 在命中点的值（相机重投影；FetchPrevRadiance 内含 ×0.01 解码）
-            contrib += alb * FetchPrevRadianceC(hit + cDi, cascade) * VOXEL_GI_SELF_BOUNCE * absorption;
+            contrib += alb * FetchPrevRadianceC(hit + cDiC, cascade) * VOXEL_GI_SELF_BOUNCE * absorption;
             hitSolid = true;
             break;
         }
@@ -392,6 +396,8 @@ out vec4 dummyOut;
 // 单级联单体素的 IRC 注入（ADR-0001）：mid 由下方原逻辑负责（等价 cascade=1）；
 // 本函数供 near/far 使用，取数/写入按 cascade 选择、世界换算按 cellSize。
 void IrcInject(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
+    // [2026-08-17] 级联重投影换算（同 IrcTraceVoxel：cDi 米 → 本级联格）
+    ivec3 cDiC = ivec3(round(vec3(cDi) / cellSize));
     // ---- 当前帧体素数据（begin1 已在 shadow 前清空，shadow pass 写入本帧数据）----
     vec4 vd = FetchCascadeData(c, cascade);
     bool sld = vd.z > 0.5; // voxelID 原值（>0 即固体，0=空气）
@@ -405,7 +411,7 @@ void IrcInject(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
     float nExp = irc.a; // Phase 1：本帧天空曝光度
 
     // ---- 上一帧辐照度（带相机重投影）----
-    ivec3 prevC = c + cDi;
+    ivec3 prevC = c + cDiC;
     bool pValid = all(greaterThanEqual(prevC, ivec3(0))) && all(lessThan(prevC, ivec3(VOXEL_AREA)));
     // [2026-08-17] 恢复新暴露天空播种（同 main；级联版）
     float seedSkylight = VoxelUnpack2xU8Y(vd.w);
@@ -495,7 +501,8 @@ void main() {
         // 越界 = 旧帧网格未覆盖的新区域（相机移动新暴露的地形），旧帧没有有效值，
         // 若按 0 混合会把值拉低 10 倍，且自反弹反馈连锁 → 移动时越走越黑（实测）。
         // 直接采用本帧采样值（等价 bw=0），等下一帧旧帧有数据后再恢复时间混合。
-        ivec3 prevC = c + cDi;
+        ivec3 cDiM = ivec3(round(vec3(cDi) / VOXEL_CASCADE_CELL_1)); // [2026-08-17] mid 级联重投影换算
+        ivec3 prevC = c + cDiM;
         bool pValid = all(greaterThanEqual(prevC, ivec3(0))) && all(lessThan(prevC, ivec3(VOXEL_AREA)));
         // [2026-08-17] 恢复新暴露天空播种（8/10 设计）：新暴露固体格用天顶方向平滑
         // 天空值播种（× EDGE_SEED，step(0.15, skylight) 硬门槛），避免前缘格每帧裸
