@@ -211,3 +211,39 @@ Phase1 曝光计数），`VoxelSkyColor` 变死函数、4 个天光滑条零使�
    是缓存值的 ~1%/帧（prevIrcColor×0.006~0.01），0.15 已足够（实测对比见 TODO §5）。
 6. **阳光方向性来自缓存空间对比**：门口/窗边的阳光亮斑 vs 室内深处暗——由追踪射线
    实际打到的体素决定（FetchVoxelRadianceSmoothed 三线性不会糊掉亮斑）。
+
+---
+
+# 备忘：级联辐射度缓存回退（2026-08-17）
+
+## 结论
+三级联（ADR-0001，near 0.5m/mid 1m/far 2m，后改"近=1m"方案）因问题无法收敛，
+整体回退到级联前单 64³ 1m 网格（95cc0a5 + d6f62bc）。级联前版本
+（d695d1f，2026-08-16）为已知稳定基线，天光链路当时正常（8/16 的天光移除发生在
+级联时代之后，回退时保留我的天光修复：VoxelSkyLight 门控修复/染红/阳光染色、
+Common.glsl 天顶 NaN 修复、阳光注入/追踪 GI 强度滑条、网格内最小环境光底、灰阶 HUD）。
+
+## 级联的失败模式（全部用户实测）
+1. **亚米格形状块锯齿**：形状子盒按 1m 整块设计（blockOrigin=voxelCoord-ray.ori，
+   1/16 格单位），cell<1m 时形状压缩 → 命中/穿透交替成 cell 周期锯齿（0.5m 实测）。
+   世界锚定换算可修：ray.ori/blockOrigin 换算到世界对齐米（格单位 ×cell，
+   块锚点=floor((格+0.5-R)×cell)），命中距离换算回格单位（ray.rdir 单位与 boxMin
+   同乘 cell 抵消，不需换算）；cell=1m 时逐项退化为旧公式。
+2. **全块逐格填充的边界对齐问题**：面恰在格边界时 AABB=floor..ceil 只含面外侧一层，
+   墙体内侧质心格不在 AABB 内 → 永不写入 → 墙镂空 → 黑方格（0.5m/1/4 方块大小）。
+   修复：AABB 沿法线主轴向固体侧（-nrm）扩一层并 clamp。
+3. **节流注入 + 单缓冲缓存**：near 隔帧/far 每4帧注入 + 单缓冲，移动时缓存陈旧
+   → GI 时有时无。缓解：每帧注入 + 按 sld 跳过空气格追踪控成本。
+4. **重投影单位错配**：cDi = cameraPositionInt - previousCameraPositionInt 是整数米，
+   直接加到格坐标只对 1m 格正确；mid/far 过量 2×/4× → 移动时读到错误/空气格。
+   须按级联格换算：ivec3(round(vec3(cDi)/cell))（IrcTraceVoxel 自反弹、IrcInject、
+   main 循环、VoxelTracing 级联自反弹共 4 处）。
+5. **"停下稳定二态"闪烁**（移动时 GI 有/无交替、停下保持、不随视角变）：级联网格
+   相机居中 + 跨级联续接（射线出 near 后用累积 worldRel 换 mid 网格）+ 缓存稳态，
+   机制未完全单点定位，回退即消除——说明是级联架构性因素叠加，不是单个 bug。
+
+## 回退后的稳定基线
+- 单 64³ 1m 网格（±32m）、VoxelTracePixel 查询、单网格 IRC 每帧乒乓注入、
+  单级联体素化（Shadow.geom + Shadow.frag + VoxelClear）。
+- 注意：VOXEL_DISTANCE 滑条已随级联移除（网格固定 ±32m）；配置文件里级联时代的
+  旧滑条值（VOXEL_DISTANCE=32 等）会被忽略；天光/阳光滑条的旧值仍会覆盖默认值。
