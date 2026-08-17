@@ -687,6 +687,15 @@ void main() {
                     }
                 #else
                     sceneOut += voxelGI;
+                    #ifdef DEBUG_VOXEL_SKY
+                    // 左上角 64×64 灰阶读数：本像素 voxelGI 亮度（天光+阳光+反弹），
+                    // ×4 放大后量化 8 级（0=黑 → 1=白）。与全屏染红（VoxelSkyColor 内）
+                    // 配合：染红=路径通，灰阶=值大小。调 VOXEL_GI_SKY_STRENGTH 可见变化。
+                    if (all(lessThan(gl_FragCoord.xy, vec2(64.0)))) {
+                        float luma = clamp(dot(voxelGI, vec3(0.299, 0.587, 0.114)) * 4.0, 0.0, 1.0);
+                        sceneOut = vec3(floor(luma * 7.999) / 7.0);
+                    }
+                    #endif
                 #endif
             #endif
         #else
