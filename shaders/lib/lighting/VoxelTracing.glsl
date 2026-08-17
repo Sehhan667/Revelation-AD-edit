@@ -236,10 +236,9 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         contrib += alb * (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
                  * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * absorption;
         // 间接光：命中体素处的 IRC 前帧缓存（相机重投影 +cDi，与注入端同款）
-        // [2026-08-17 临时诊断] 禁用 IRC 自反弹——纯靠射线天光（只留阳光反弹+出界天光+发射光）
-        // ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
-        // if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA))))
-        //     contrib += alb * FetchVoxelRadiance(ircHit).rgb * 0.01 * VOXEL_GI_SELF_BOUNCE * absorption;
+        ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
+        if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA))))
+            contrib += alb * FetchVoxelRadiance(ircHit).rgb * 0.01 * VOXEL_GI_SELF_BOUNCE * absorption;
         return contrib * weight;
     }
 

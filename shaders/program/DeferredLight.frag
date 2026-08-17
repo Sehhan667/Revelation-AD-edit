@@ -498,10 +498,20 @@ void main() {
     #endif
 
     #ifndef SSILVB_ENABLED
-        if (lightmap.y > EPS && !ambientInVoxelGrid) {
-            float lm3 = cube(lightmap.y);
-            ambientAccum += ConvolvedReconstructSH3(global.skySH, worldNormal) * lm3;
-            ambientAccum += CalculateFakeBouncedLight(worldNormal) * lm3 * (lightmap.y * lightmap.y) * sunlightBase;
+        // [2026-08-17] SH 天光 × 天空可见度：网格内也保留 SH（此前屏蔽），亮度由射线
+        // 追踪的体素天空可见度（IRC 缓存 alpha = Phase1 曝光）调制——开阔阴影能看到
+        // 天空 → exposure≈1 → SH 全量（阴影亮，正是"理应是开阔的"）；室内深处被墙挡
+        // → exposure≈0 → SH 关闭（暗）。解析 SH 无噪声；替代原版 lightmap 门控的近似。
+        float skyVis = 1.0;
+        #ifdef VOXEL_GI_ENABLED
+        if (ambientInVoxelGrid)
+            skyVis = FetchVoxelRadiance(ivec3(ambientVoxelCoord)).a;
+        #endif
+        if (lightmap.y > EPS) {
+            float lm3 = ambientInVoxelGrid ? 1.0 : cube(lightmap.y);
+            ambientAccum += ConvolvedReconstructSH3(global.skySH, worldNormal) * lm3 * skyVis;
+            if (!ambientInVoxelGrid)
+                ambientAccum += CalculateFakeBouncedLight(worldNormal) * lm3 * (lightmap.y * lightmap.y) * sunlightBase;
         }
     #endif
 
