@@ -108,7 +108,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #define VOXEL_GI_BLOCK_STRENGTH 0.8    // 方块光注入倍率（× blocklightColor，火把等光源）
 // 天空辐射贴图 → 0-1 尺度换算基准（skyViewTex 白天顶光 ≈110-130；与阳光基准同量级，
 // 调大=天光变暗、调小=天光变亮）。定义在 VoxelSkyLight.glsl 之前（VoxelLighting 先 include）
-#define VOXEL_SKY_REFERENCE 300.0   // [100.0 150.0 200.0 250.0 300.0 350.0 400.0 500.0 600.0 800.0 1000.0] 天空辐射贴图→0-1 尺度换算基准
+#define VOXEL_SKY_REFERENCE 150.0   // [100.0 150.0 200.0 250.0 300.0 350.0 400.0 500.0 600.0 800.0 1000.0] 天空辐射贴图→0-1 尺度换算基准（[2026-08-17 临时诊断] 300→150：纯射线天光加倍）
 // [FIX 2026-08-06] 方块光反弹的最小 albedo 底：薄片/流体光源（发光地衣、岩浆）的
 // voxelData 中心色 midCoord 采样可能为 0/很暗（贴图大部分透明黑）→ albedo 乘进
 // blocklight 后趋 0 → 光源不发光。给 blocklight 反弹一个不依赖采样色的最小 albedo。
@@ -139,7 +139,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；
 // 洞穴/室内（skyLightmap≈0）无天光，不会过量。若整体过亮用 VOXEL_GI_TRACE_STRENGTH 旋钮。
-#define VOXEL_GI_TRACE_SKY_STRENGTH 10.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0] 追踪端出界方向天光倍率（2026-08-17 4.0→10.0：阳光反弹(用户配置 32)是天空 8 倍 → 阴影被曝光压黑；天光提到与阳光同量级，开阔阴影应呈明亮天光）
+#define VOXEL_GI_TRACE_SKY_STRENGTH 40.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 40.0 48.0] 追踪端出界方向天光倍率（[2026-08-17 临时诊断] 10→40 超级加倍：纯射线模式下射线天光太暗）
 // （新增环境光控制宏已移除 2026-08-06：环境光还原旧版纯 skySH 行为）
 
 #endif // VOXEL_GI_LIGHTING_INCLUDED
