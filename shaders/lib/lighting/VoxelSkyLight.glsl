@@ -14,6 +14,13 @@
     #define VOXEL_SKY_REFERENCE 300.0
 #endif
 
+// [2026-08-17] 阳光颜色混合（SH 环境光同款，DeferredLight 的 AMBIENT_SUNLIGHT_TINT_RATIO）：
+// 用暖阳色 sunIrradiance 的色度（归一化，只染色调不动亮度）；正午最强、日落/夜晚关闭。
+// 同一滑条（屏幕 Compensation 菜单「漫反射阳光染色强度」）控制，两处观感一致。
+#ifndef AMBIENT_SUNLIGHT_TINT_RATIO
+    #define AMBIENT_SUNLIGHT_TINT_RATIO 1.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0]
+#endif
+
 // 地平线衰减：上半球全开，略低于地平线即截止（与通用光追天空采样一致）
 float VoxelSkyHorizonFade(vec3 dir) {
     return saturate(dir.y * 25.0 + 0.5);
@@ -39,6 +46,18 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     // 洞穴/室内 lightmap≈0 时 LUT 项仍全量通过 → 室内过亮、洞穴漏光（用户实测）。
     sky = max(sky * fade * gate, skyColor * fade * gate);
     sky *= 0.8;
+    // [2026-08-17] 阳光颜色混合（SH 环境光同款机制，用户需求）：天光随太阳高度染暖阳色，
+    // 正午金黄、黄昏渐变、夜晚关闭——消除"到处发蓝"。sunIrradiance 色度（settings.glsl 常量，
+    // 两个编译单元都可见；DeferredLight 版用 global.directIlluminance，色度相同）。
+    // 只染色调不动亮度；DEBUG 分支在其后，不影响红/黑判定。
+    #ifndef DIMENSION_THE_END
+        float timeBasedTint = saturate(worldSunDir.y * 2.5 - 0.15);
+        float tintStrength = AMBIENT_SUNLIGHT_TINT_RATIO * timeBasedTint;
+        if (tintStrength > 0.0) {
+            vec3 sunColorTint = sunIrradiance / max(luminance(sunIrradiance), 1e-4);
+            sky = mix(sky, sky * sunColorTint, tintStrength);
+        }
+    #endif
     #ifdef DEBUG_VOXEL_SKY
         // [2026-08-17] 染红改为"门控放行且有值才红"：洞穴/浅洞 gate≈0 → 黑，
         // 区分"路径被拦截"与"真实吃到天光"（此前无条件红 → 室内也全红）。
