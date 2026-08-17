@@ -30,16 +30,17 @@ float VoxelSkyLeakGate(float lightmap) {
 // × 同样的地平线衰减与门控（方向性兜底，避免全黑）。
 // 函数内部已含地平线衰减与漏光门控，调用方不要再重复乘。
 vec3 VoxelSkyColor(vec3 dir, float lightmap) {
-    vec3 sky = AtmosphereSkyView(atmosphereViewPos, dir, worldSunDir);
-    sky = max(sky, vec3(0.0)) * rcp(VOXEL_SKY_REFERENCE);
+    vec3 sky = max(AtmosphereSkyView(atmosphereViewPos, dir, worldSunDir), vec3(0.0)) * rcp(VOXEL_SKY_REFERENCE);
     float fade = VoxelSkyHorizonFade(dir);
     float gate = VoxelSkyLeakGate(lightmap);
-    sky = max(sky, skyColor * fade * gate);
+    // [2026-08-17] 门控必须作用到主 LUT 路径：此前只乘在 skyColor 兜底分支上，
+    // 洞穴/室内 lightmap≈0 时 LUT 项仍全量通过 → 室内过亮、洞穴漏光（用户实测）。
+    sky = max(sky * fade * gate, skyColor * fade * gate);
     sky *= 0.8;
     #ifdef DEBUG_VOXEL_SKY
-        // 诊断：命中天光路径 → 染红（纯红调试色，非真实颜色）。红=路径通了
-        //（门控放行、LUT 有值）；黑=路径被拦截/值确实为 0（洞穴、漏光门控）。
-        return vec3(1.0, 0.0, 0.0);
+        // [2026-08-17] 染红改为"门控放行且有值才红"：洞穴/浅洞 gate≈0 → 黑，
+        // 区分"路径被拦截"与"真实吃到天光"（此前无条件红 → 室内也全红）。
+        return sky > vec3(0.01) ? vec3(1.0, 0.0, 0.0) : vec3(0.0);
     #endif
     return sky;
 }

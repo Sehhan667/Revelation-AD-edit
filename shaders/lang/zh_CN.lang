@@ -612,6 +612,9 @@ value.VOXEL_GI_MODE.1=射线步进
 option.VOXEL_GI_STRENGTH=GI 强度
 option.VOXEL_GI_STRENGTH.comment=整体体素 GI 亮度倍率
 
+option.VOXEL_GI_TRACE_STRENGTH=追踪 GI 强度
+option.VOXEL_GI_TRACE_STRENGTH.comment=每像素漫反射追踪信号的总强度旋钮；过亮降、过暗升（洞穴防漏由 lightmap 泄漏衰减保证，不靠压低天空值）
+
 option.VOXEL_GI_BLENDED_LIGHTMAP=Lightmap混合
 option.VOXEL_GI_BLENDED_LIGHTMAP.comment=原版 Lightmap 与体素 GI 的混合倍率（1.0=完全保留原版光照，0.0=完全屏蔽原版 Lightmap，间接光照仅由体素 GI 提供）
 

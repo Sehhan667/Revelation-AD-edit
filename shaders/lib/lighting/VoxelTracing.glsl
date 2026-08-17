@@ -263,7 +263,8 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // contrib += blocklightColor * blockLightmap * VOXEL_GI_BLOCK_STRENGTH * absorption;
     }
     contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS * saturate(rayLength * 0.2) * absorption;
-    return contrib * weight;
+    // [2026-08-17] 随 VOXEL_GI_STRENGTH 整体缩放（GI 强度滑条）
+    return contrib * weight * VOXEL_GI_STRENGTH;
 }
 
 //================================================================================================//
@@ -459,5 +460,6 @@ vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float 
         // [2026-08-16 临时] 光追天光停用（球谐光接管）
         contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS * saturate(totalWorldLen * 0.2) * absorption;
     }
-    return contrib * weight;
+    // [2026-08-17] 随 VOXEL_GI_STRENGTH 整体缩放（GI 强度滑条）
+    return contrib * weight * VOXEL_GI_STRENGTH;
 }

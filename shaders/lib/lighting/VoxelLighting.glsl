@@ -148,7 +148,8 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #define VOXEL_TRACE_DISTANCE 32 // [8 16 24 32 48 64 96] 追踪光线最大步进体素数（越大传播越远，性能略降）
 // 追踪 GI 强度总旋钮：信号量级 = 追踪值 × STRENGTH（命中/出界已按 语义全强度输出，
 // 过亮就降这个，过暗就升；洞穴不过量由 lightmap 泄漏衰减保证，不靠压低天空值）。
-#define VOXEL_GI_TRACE_STRENGTH 1.0
+// [2026-08-17] 已暴露为 GUI 滑条（screen.voxel + sliders + lang 三处同步）。
+#define VOXEL_GI_TRACE_STRENGTH 1.0 // [0.0 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0] 追踪 GI 总强度（过亮降、过暗升）
 // 物理直射辐照度 → 0-1 尺度换算基准（GlobalStorage.comp：directIlluminance = 128×(sun+moon)，
 // 白天约 300；除以该值即得 0-1 尺度阳光色——自带昼夜明暗 + 暖色温，见 VoxelTracing 阳光弹射）
 #define VOXEL_SUN_REFERENCE 300.0

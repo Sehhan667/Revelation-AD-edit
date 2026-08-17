@@ -377,7 +377,8 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
         result += contrib * rcpPdf;
     }
 
-    return vec4(result * rcp(float(VOXEL_IRC_SPP)), exposure * rcp(float(VOXEL_IRC_SPP)));
+    // [2026-08-17] 随 VOXEL_GI_STRENGTH 整体缩放（GI 强度滑条；exposure 是可见度计数，不缩放）
+    return vec4(result * rcp(float(VOXEL_IRC_SPP)) * VOXEL_GI_STRENGTH, exposure * rcp(float(VOXEL_IRC_SPP)));
 }
 
 //======// Main //================================================================================//

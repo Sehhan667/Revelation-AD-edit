@@ -436,6 +436,12 @@ option.VOXEL_DISTANCE.comment=Maximum voxelization coverage radius (far cascade)
 option.VOXEL_GI_BLENDED_LIGHTMAP=Blended Lightmap
 option.VOXEL_GI_BLENDED_LIGHTMAP.comment=Blend between vanilla lightmap and voxel GI (1.0 = keep vanilla lighting, 0.0 = mask vanilla lightmap, indirect light comes from voxel GI only)
 
+option.VOXEL_GI_STRENGTH=GI Strength
+option.VOXEL_GI_STRENGTH.comment=Overall voxel GI brightness multiplier
+
+option.VOXEL_GI_TRACE_STRENGTH=Trace GI Strength
+option.VOXEL_GI_TRACE_STRENGTH.comment=Overall strength knob for the per-pixel diffuse trace signal; lower if too bright, raise if too dark (cave leak protection is handled by the lightmap leak gate)
+
 option.VOXEL_TRACE_SUN_STRENGTH=Sun Bounce Strength
 option.VOXEL_TRACE_SUN_STRENGTH.comment=Strength of the sun bounce in per-pixel diffuse tracing (light reflected from sunlit surfaces into shadow). Too low = dark shadows, too high = overexposed.
 
