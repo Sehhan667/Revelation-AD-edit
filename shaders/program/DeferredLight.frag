@@ -193,8 +193,11 @@ void main() {
     //   以非光追样式渲染。
     vec3 activeBlocklightColor = blocklightColor;
     #ifdef VOXEL_GI_ENABLED
-        vec3 blocklightVoxelCoord = camRelPos + cameraPositionFract + float(VOXEL_RADIUS);
-        if (all(greaterThanEqual(blocklightVoxelCoord, vec3(0.0))) && all(lessThan(blocklightVoxelCoord, vec3(float(VOXEL_AREA))))) {
+        // [2026-08-17] 体素内外判定改用 far 级联半径（跟随 VOXEL_DISTANCE），
+        // 与球谐光边界（L486 ambientInVoxelGrid）统一；旧版用 64³@1m 单网格
+        // 判定（±32m），far 级联加入后 32m 外会被误判为"体素外"而错误恢复原版方块光。
+        vec3 blocklightVoxelCoord = camRelPos + cameraPositionFract;
+        if (all(lessThan(abs(blocklightVoxelCoord), vec3(VOXEL_CASCADE_RADIUS_2)))) {
             activeBlocklightColor = vec3(0.0);
         } else {
             activeBlocklightColor = vec3(BLOCKLIGHT_BRIGHTNESS);
@@ -569,7 +572,10 @@ void main() {
     #ifdef HANDHELD_LIGHTING
         if (heldBlockLightValue + heldBlockLightValue2 > EPS) {
             float attenuation = rcp(1.0 + worldDistSquared) * saturate(dot(worldNormal, -worldDir));
-            sceneOut += max(heldBlockLightValue, heldBlockLightValue2) * HELD_LIGHT_BRIGHTNESS * attenuation * blocklightColor;
+            // [2026-08-17] 手持光源改用 activeBlocklightColor：体素内随方块光一起屏蔽（GI 接管），
+            // 体素外恢复默认色渲染——与"体素内屏蔽、体素外正常渲染原版方块光"策略一致。
+            // 旧代码用 blocklightColor（GI 开启时恒 0），导致体素外手持光源也不亮。
+            sceneOut += max(heldBlockLightValue, heldBlockLightValue2) * HELD_LIGHT_BRIGHTNESS * attenuation * activeBlocklightColor;
         }
     #endif
 
