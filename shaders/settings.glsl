@@ -141,7 +141,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define NIGHT_BRIGHTNESS 1.0 // Brightness of the night. [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.7 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
 
 /* Global Illumination */
-	#define VOXEL_DISTANCE 64.0 // [16.0 24.0 32.0 48.0 64.0 80.0 96.0 112.0 128.0 160.0 192.0] 体素化距离(米,far 级联半径;级联/球谐光/光追距离自动跟随,需 ≤ 阴影渲染距离)
+	#define VOXEL_DISTANCE 64.0 // [16.0 24.0 32.0 48.0 64.0 80.0 96.0 112.0 128.0 160.0 192.0] 体素化距离(米,far 级联半径;级联/球谐光/光追距离自动跟随;要求阴影分辨率 ≥1536 否则 far 级联被裁剪、有效距离减半;需 ≤ 阴影渲染距离)
 	//#define SSILVB_ENABLED
 	#define SVGF_ENABLED // Enables spatiotemporal variance-guided filtering（SSILVB 降噪）
 	#define VOXEL_GI_DENOISE  // 光追降噪开关（SVGF 时域+空间）；注释此行或 GUI 关闭即关闭光追降噪

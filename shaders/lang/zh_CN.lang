@@ -602,7 +602,7 @@ option.VOXEL_GI_DENOISE=光追降噪
 option.VOXEL_GI_DENOISE.comment=体素光追的 SVGF 时域+空间降噪；关闭后直接显示半分辨率棋盘信号（未降噪，较闪烁）
 
 option.VOXEL_DISTANCE=体素化距离
-option.VOXEL_DISTANCE.comment=体素化最远覆盖半径（far 级联）；近/中级联、远处球谐光边界、光追计算距离自动按比例跟随。建议 ≤ 阴影渲染距离
+option.VOXEL_DISTANCE.comment=体素化最远覆盖半径（far 级联）；近/中级联、远处球谐光边界、光追计算距离自动按比例跟随。要求阴影分辨率 ≥1536（三级联平铺总高，固定值，与距离无关）；不足时 far 级联被裁剪，有效 GI 距离降至该值的一半。建议 ≤ 阴影渲染距离
 
 option.VOXEL_GI_MODE=GI 传播模式
 option.VOXEL_GI_MODE.comment=0=纯漫反射注入（低配）| 1=射线步进（推荐，颜色传递更准确）
