@@ -87,7 +87,10 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #endif
 
 // ------ 传播配置（风格 IRC 随机注入）------
-#define VOXEL_GI_SELF_BOUNCE 1.0       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 自反弹衰减比（光线命中点取前帧 IRC；1.0=表面命中全强度）
+// [2026-08-17] 1.0→0.15：itrp 的 IRC 反弹权重 = prevIrcColor×0.006~0.01（缓存值 ~1%/帧），
+// 我们 1.0 会稳态放大缓存 ~1/(1-albedo×1.0)≈2× → 室内被天光灌满（用户实测）。
+// 0.15 仅微弱反馈，室内光照由直射阳光采样（门口地面反射）主导 → 方向性强、门口留阴影。
+#define VOXEL_GI_SELF_BOUNCE 0.15       // [0.01 0.02 0.05 0.1 0.15 0.2 0.3 0.4 0.6 0.8 1.0] 自反弹衰减比（光线命中点取前帧 IRC；itrp 参考 ~0.01-0.1）
 #define VOXEL_GI_EMISSIVE_THRESHOLD 0.1 // [0.0 0.01 0.02 0.05 0.1 0.2] 发射度阈值（LabPBR 发射贴图，太低会把矿物误判为发光体）
 #define VOXEL_GI_BOOST 1.5              // [0.5 1.0 1.5 2.0 3.0 4.0] 发射体素能量倍率
 // 发射光球形光距离衰减（语义的补充，2026-08-04 #8）：远场（16 格外）偶发
@@ -130,8 +133,8 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // [2026-08-17] 0.5→1.0 并暴露滑条：IRC 阳光注入去掉 rPI 后（与追踪端同口径），
 // 1.0 让阳光反弹 ≈ 天光量级，阴影处出现金色漫反射（itrp 同款观感：物理 sunLight 1.8×rPI≈0.57，
 // 我们 0.427×1.0 同量级）。
-#define VOXEL_GI_SUN_STRENGTH 1.0      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显）
-#define VOXEL_GI_SKY_STRENGTH 1.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 默认 2.0→1.0：与追踪端同降，缓解"特亮侧过曝"）
+#define VOXEL_GI_SUN_STRENGTH 1.5      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显。2026-08-17 1.0→1.5：室内阳光太少，只有门口有反射——用户要求 itrp 同款"室内大部分阳光"）
+#define VOXEL_GI_SKY_STRENGTH 0.6    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17：1.0→0.6，室内天光仍过量）
 #define VOXEL_GI_BLOCK_STRENGTH 0.8    // 方块光注入倍率（× blocklightColor，火把等光源）
 // 天空辐射贴图 → 0-1 尺度换算基准（skyViewTex 白天顶光 ≈110-130；与阳光基准同量级，
 // 调大=天光变暗、调小=天光变亮）。定义在 VoxelSkyLight.glsl 之前（VoxelLighting 先 include）
@@ -169,7 +172,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；
 // 洞穴/室内（skyLightmap≈0）无天光，不会过量。若整体过亮用 VOXEL_GI_TRACE_STRENGTH 旋钮。
-#define VOXEL_GI_TRACE_SKY_STRENGTH 1.5  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0] 追踪端出界方向天光倍率（2026-08-17 默认 4.0→1.5：与注入端同降，缓解"特亮侧过曝/对比撕裂"）
+#define VOXEL_GI_TRACE_SKY_STRENGTH 1.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0] 追踪端出界方向天光倍率（2026-08-17：1.5→1.0，室内天光仍过量）
 // （新增环境光控制宏已移除 2026-08-06：环境光还原旧版纯 skySH 行为）
 
 #endif // VOXEL_GI_LIGHTING_INCLUDED
