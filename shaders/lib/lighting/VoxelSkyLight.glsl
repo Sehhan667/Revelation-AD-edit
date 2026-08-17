@@ -40,7 +40,8 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     #ifdef DEBUG_VOXEL_SKY
         // [2026-08-17] 染红改为"门控放行且有值才红"：洞穴/浅洞 gate≈0 → 黑，
         // 区分"路径被拦截"与"真实吃到天光"（此前无条件红 → 室内也全红）。
-        return sky > vec3(0.01) ? vec3(1.0, 0.0, 0.0) : vec3(0.0);
+        // 注：三元条件必须是标量 bool（vec3 比较是 bvec3，不能作条件）。
+        return max(max(sky.r, sky.g), sky.b) > 0.01 ? vec3(1.0, 0.0, 0.0) : vec3(0.0);
     #endif
     return sky;
 }
