@@ -194,6 +194,11 @@ void main() {
                     vec3 hi = max(max(n0, n1), n2); \
                     ivec3 iLo = ivec3(clamp(floor(lo), vec3(0.0), vec3(float(VOXEL_AREA) - 1.0))); \
                     ivec3 iHi = ivec3(clamp(ceil(hi), vec3(0.0), vec3(float(VOXEL_AREA) - 1.0))); \
+                    if (projX) { if (nrm.x > 0.0) --iLo.x; else ++iHi.x; } \
+                    else if (projY) { if (nrm.y > 0.0) --iLo.y; else ++iHi.y; } \
+                    else { if (nrm.z > 0.0) --iLo.z; else ++iHi.z; } \
+                    iLo = max(iLo, ivec3(0)); \
+                    iHi = min(iHi, ivec3(int(VOXEL_AREA) - 1)); \
                     int cellCount = (iHi.x - iLo.x + 1) * (iHi.y - iLo.y + 1) * (iHi.z - iLo.z + 1); \
                     if (cellCount <= 24) { \
                         for (int ix = iLo.x; ix <= iHi.x; ++ix) \
