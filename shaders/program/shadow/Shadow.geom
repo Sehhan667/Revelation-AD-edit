@@ -217,13 +217,14 @@ void main() {
                     } \
                 }
 
-            // near 级联（0.5m @D64）：只处理完整方块（ID==1）——逐格填充（宏）。
-            // 形状/透明块不进 near（IsHitBlock 世界锚定后任意格尺寸均可，但 near 保持
-            // 只收全块的原有语义，形状由 mid/far 按原语义处理）。
+            // near 级联（1m @D≤64）：全方块（ID==1）逐格填充 + 形状/发射/透明质心发射。
+            // [2026-08-17] 近=1m 方案：near 收全部方块——形状块在 1m 格 = 子盒设计尺寸，
+            // 世界锚定判定正确；mid/far（2m/4m）只收全块（>1m 格形状锚定偏移，排除）。
             if (all(bvec3(clamp(voxelCoordNear, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordNear))) {
-                if (voxelID == 1.0) {
-                    EMIT_FULLBLOCK_FILL(VOXEL_CASCADE_CELL_0, VOXEL_TILE_Y_0, 0.0, voxelCoordNear);
-                }
+                if (voxelID == 1.0)
+                    EMIT_FULLBLOCK_FILL(VOXEL_CASCADE_CELL_0, VOXEL_TILE_Y_0, 0.0, voxelCoordNear)
+                else
+                    EMIT_VOXEL_CASCADE(voxelCoordNear, VOXEL_TILE_Y_0, 0.0);
             }
             // [2026-08-17] 形状块(155-294)只写 cell≤1.0m 的级联（>1m 质心锚定偏移）：
             // D=64: 只 mid(1m)；D=32: mid(0.5m)+far(1m) 全覆盖。

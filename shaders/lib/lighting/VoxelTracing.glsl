@@ -337,8 +337,9 @@ vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float 
     bool hitSolid = false;
     float totalWorldLen = 0.0;
 
-    // 级联查询配置: SKIP_NEAR=1(mid 起) SKIP_FAR=0(mid+far)
-    #define VOXEL_QUERY_SKIP_NEAR 1
+    // 级联查询配置: [2026-08-17] 近=1m 方案 → SKIP_NEAR=0（near 已是 1m 全块网格,
+    // 质量与旧单级联一致, 查询它获得近处 1m 精度而非 mid 的 2m 粗格）
+    #define VOXEL_QUERY_SKIP_NEAR 0
     #define VOXEL_QUERY_SKIP_FAR 0
     for (int cascade = VOXEL_QUERY_SKIP_NEAR; cascade < VOXEL_CASCADE_COUNT - VOXEL_QUERY_SKIP_FAR; ++cascade) {
         float cell = cascade == 0 ? VOXEL_CASCADE_CELL_0

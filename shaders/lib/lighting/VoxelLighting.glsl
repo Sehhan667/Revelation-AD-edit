@@ -17,13 +17,16 @@
 
 // ------ 级联辐射度缓存配置（ADR-0001）------
 // 三级同心相机居中网格,均为 VOXEL_AREA 立方,cell 尺寸不同:
-//   C0 near (D/128) m (±D/4), C1 mid (D/64) m (±D/2), C2 far (D/32) m (±D)
-//   D = VOXEL_DISTANCE（默认 64m → 0.5m/1.0m/2.0m cell, ±16/±32/±64m）
+// [2026-08-17] 近=1m 方案（用户拍板）：近级联 ≥1m，彻底避开亚米格问题
+// （形状锚定偏移/稀疏填充/边界对齐镂空），性能更好（每三角形覆盖格数少）。
+//   C0 near = max(1.0, D/64) m（D≤64 恒 1.0m）→ 覆盖 ±32m
+//   C1 mid  = near×2 m（2.0m @D≤64）→ 覆盖 ±64m
+//   C2 far  = near×4 m（4.0m @D≤64）→ 覆盖 ±128m
 // 级联索引约定: 0=near, 1=mid, 2=far
 #define VOXEL_CASCADE_COUNT 3
-#define VOXEL_CASCADE_CELL_2 (VOXEL_DISTANCE / float(VOXEL_RADIUS))
-#define VOXEL_CASCADE_CELL_1 (VOXEL_CASCADE_CELL_2 * 0.5)
-#define VOXEL_CASCADE_CELL_0 (VOXEL_CASCADE_CELL_2 * 0.25)
+#define VOXEL_CASCADE_CELL_0 max(1.0, VOXEL_DISTANCE / 64.0)
+#define VOXEL_CASCADE_CELL_1 (VOXEL_CASCADE_CELL_0 * 2.0)
+#define VOXEL_CASCADE_CELL_2 (VOXEL_CASCADE_CELL_0 * 4.0)
 #define VOXEL_CASCADE_RADIUS_0 (VOXEL_RADIUS * VOXEL_CASCADE_CELL_0)
 #define VOXEL_CASCADE_RADIUS_1 (VOXEL_RADIUS * VOXEL_CASCADE_CELL_1)
 #define VOXEL_CASCADE_RADIUS_2 (VOXEL_RADIUS * VOXEL_CASCADE_CELL_2)
