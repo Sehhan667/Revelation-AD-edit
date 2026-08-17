@@ -359,8 +359,10 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
         }
 
         if (!hitSolid) {
-            // 出界 → 方向天空光 + NOLIGHT 兜底：skyMapTex 方向辐射（内含地平线衰减
-            // 与线性漏光门控）。洞穴 hitSkylight≈0 → 无天光。
+            // [2026-08-17] 恢复出界天光（8/10 设计）：VoxelSkyColor = LUT × 基准换算 ×
+            // 地平线衰减 × 漏光门控。洞穴 hitSkylight≈0 → 无天光（hitSkylight 来自
+            // 起点体素 voxelData.w，L228 已解包，与命中路径同口径）。
+            contrib += VoxelSkyColor(dir, hitSkylight) * VOXEL_GI_SKY_STRENGTH * absorption;
             // [2026-08-16 临时] 光追天光从未正常工作 → 移除注入端天空光（球谐光接管）
             // NOLIGHT 底光（出界路径专有：NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)；
             // 命中路径无此项，闭塞处底光由自反弹/方块光链路提供）
@@ -369,6 +371,8 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
             // Phase 1：该样本向上出界且门控放行（真能看到天空）才计入曝光度。
             // 洞穴里射线即使从 64³ 网格顶逃逸，lightmap≈0 也不计曝光——否则
             // 曝光 alpha 被当作“可见天空”，天光会漏进洞穴（用户实测反馈）。
+            if (dir.y > 0.0 && VoxelSkyLeakGate(hitSkylight) > 0.0)
+                exposure += 1.0;
         }
         result += contrib * rcpPdf;
     }
@@ -396,8 +400,11 @@ void IrcInject(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
     // ---- 上一帧辐照度（带相机重投影）----
     ivec3 prevC = c + cDi;
     bool pValid = all(greaterThanEqual(prevC, ivec3(0))) && all(lessThan(prevC, ivec3(VOXEL_AREA)));
-    // [2026-08-16 临时] 移除天空播种（光追天光停用，球谐光接管）
-    vec3 pRC = pValid ? FetchPrevRadianceC(prevC, cascade) : nRC;
+    // [2026-08-17] 恢复新暴露天空播种（同 main；级联版）
+    float seedSkylight = VoxelUnpack2xU8Y(vd.w);
+    vec3 skySeed = VoxelSkyColor(vec3(0.0, 1.0, 0.0), seedSkylight)
+                 * VOXEL_IRC_EDGE_SEED * step(0.15, seedSkylight);
+    vec3 pRC = pValid ? FetchPrevRadianceC(prevC, cascade) : (sld ? skySeed : nRC);
     float pExp = pValid ? FetchPrevExposureC(prevC, cascade) : nExp;
 
     // 时间混合权重（IRC 随机采样靠时域累积降噪）
@@ -483,10 +490,13 @@ void main() {
         // 直接采用本帧采样值（等价 bw=0），等下一帧旧帧有数据后再恢复时间混合。
         ivec3 prevC = c + cDi;
         bool pValid = all(greaterThanEqual(prevC, ivec3(0))) && all(lessThan(prevC, ivec3(VOXEL_AREA)));
-        // 新暴露固体格用平滑天空值播种（天顶方向辐射 × EDGE_SEED；函数内含门控），
-        // 避免前缘格每帧裸随机样本闪烁；空气格保持 0（不写入无用值）。
-        // [2026-08-16 临时] 移除天空播种（光追天光停用，球谐光接管）
-        vec3 pRC = pValid ? FetchPrevRadiance(prevC) : nRC;
+        // [2026-08-17] 恢复新暴露天空播种（8/10 设计）：新暴露固体格用天顶方向平滑
+        // 天空值播种（× EDGE_SEED，step(0.15, skylight) 硬门槛），避免前缘格每帧裸
+        // 随机样本闪烁；空气格保持 0（不写入无用值）。
+        float seedSkylight = VoxelUnpack2xU8Y(vd.w);
+        vec3 skySeed = VoxelSkyColor(vec3(0.0, 1.0, 0.0), seedSkylight)
+                     * VOXEL_IRC_EDGE_SEED * step(0.15, seedSkylight);
+        vec3 pRC = pValid ? FetchPrevRadiance(prevC) : (sld ? skySeed : nRC);
         float pExp = pValid ? FetchPrevExposure(prevC) : nExp;
 
         // 旧帧全黑（冷启动 / 相机大幅移动新暴露）→ 直接写本帧值（等价 bw=0）。

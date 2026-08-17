@@ -346,13 +346,20 @@ vec3 AtmosphereSkyView(vec3 viewPos, vec3 rayDir, vec3 sunDir) {
     vec3 up = viewPos / height;
 
 	float viewZenithCos = dot(rayDir, up);
-	// [临时还原 2026-08-06 奇点修复] 用回旧版 normalize(cross(up,rayDir))，
-	// 用于对比 skySH/环境光是否受奇点修复影响（测试完决定保留或恢复）。
-	vec3 sideVector = normalize(cross(up, rayDir));
+	// [2026-08-17] 天顶/天底奇点修复：rayDir∥up 时 cross(up,rayDir)=0 → normalize(0)=NaN
+	// → lightOnPlane/UV NaN → LUT 采样垃圾。恢复天光后朝上出界射线必中此坑
+	//（朝天顶采样）。退化时用与 up 正交的稳定方向替代；lightOnPlane 同退化时取 0。
+	vec3 sideVector;
+	{
+		vec3 c = cross(up, rayDir);
+		float cl = length(c);
+		sideVector = cl > 1e-6 ? c / cl
+		           : (abs(up.y) < 0.999 ? normalize(cross(up, vec3(0.0, 1.0, 0.0))) : vec3(1.0, 0.0, 0.0));
+	}
 	vec3 forwardVector = normalize(cross(sideVector, up));
 
     vec2 lightOnPlane = vec2(dot(sunDir, sideVector), dot(sunDir, forwardVector));
-	float lightViewCos = normalize(lightOnPlane).y;
+	float lightViewCos = length(lightOnPlane) > 1e-6 ? normalize(lightOnPlane).y : 0.0;
 
 	vec2 uv;
 	uv.x = sqrt(-lightViewCos * 0.5 + 0.5);

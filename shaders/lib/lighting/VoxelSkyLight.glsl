@@ -37,9 +37,9 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     sky = max(sky, skyColor * fade * gate);
     sky *= 0.8;
     #ifdef DEBUG_VOXEL_SKY
-        // 诊断：放大显示真实天光值（×8）——黑=值确实是 0（LUT/兜底没生效），
-        // 亮=值正常（问题在下游 SVGF/读回链路）
-        return sky * 8.0;
+        // 诊断：命中天光路径 → 染红（纯红调试色，非真实颜色）。红=路径通了
+        //（门控放行、LUT 有值）；黑=路径被拦截/值确实为 0（洞穴、漏光门控）。
+        return vec3(1.0, 0.0, 0.0);
     #endif
     return sky;
 }
