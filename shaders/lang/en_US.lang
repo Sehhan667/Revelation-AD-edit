@@ -431,6 +431,8 @@ option.VOXEL_GI_ENABLED.comment=Voxel GI: IRC propagation + per-pixel ray tracin
 
 option.VOXEL_GI_DENOISE=Voxel GI Denoise
 option.VOXEL_GI_DENOISE.comment=Spatio-temporal variance-guided filtering for voxel GI ray tracing. Disable to show raw half-res checkerboard signal (noisy).
+option.VOXEL_DISTANCE=Voxel Distance
+option.VOXEL_DISTANCE.comment=Maximum voxelization coverage radius (far cascade); near/mid cascades, distant spherical-harmonic boundary and ray-tracing distance follow proportionally. Keep <= shadow render distance.
 option.VOXEL_GI_BLENDED_LIGHTMAP=Blended Lightmap
 option.VOXEL_GI_BLENDED_LIGHTMAP.comment=Blend between vanilla lightmap and voxel GI (1.0 = keep vanilla lighting, 0.0 = mask vanilla lightmap, indirect light comes from voxel GI only)
 

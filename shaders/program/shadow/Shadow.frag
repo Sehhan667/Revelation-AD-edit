@@ -96,13 +96,7 @@ void main() {
                 imageStore(voxelDataNear, voxelCell, vec4(rgStore, v_voxelID, wPack));
                 imageAtomicMax(voxelLightDataNear, voxelCell, lightPacked);
             } else if (v_cascade > 1.5) {
-                // [DEBUG-far-tile] 临时探针: 强制写固定标记,验证 far 平铺区是否被光栅化
-                #define VOXEL_DEBUG_FAR_TILE 1
-                if (VOXEL_DEBUG_FAR_TILE == 1) {
-                    imageStore(voxelDataFar, voxelCell, vec4(1.0, 0.0, 999.0, 0.5));
-                } else {
-                    imageStore(voxelDataFar, voxelCell, vec4(rgStore, v_voxelID, wPack));
-                }
+                imageStore(voxelDataFar, voxelCell, vec4(rgStore, v_voxelID, wPack));
                 imageAtomicMax(voxelLightDataFar, voxelCell, lightPacked);
             } else {
                 imageStore(voxelData, voxelCell, vec4(rgStore, v_voxelID, wPack));

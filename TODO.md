@@ -7,6 +7,8 @@
 - 现状：单分辨率 64³ IRC 辐射度双缓冲（voxelRadiance / voxelRadiance2），另有 RSM、SSILVB
 - 目标：多级分辨率 / 按距离级联，扩大 GI 覆盖距离并提升近处质量
 - 规模：中等
+- 已实现：三级联（near 0.5m / mid 1.0m / far 2.0m 默认），GUI `VOXEL_DISTANCE` 统一驱动级联/球谐光/光追距离
+- **待修 bug**：far 级联网格始终为空——far 平铺区（阴影贴图 y 1024–1536 行）未收到光栅化写入。已排除：分辨率（1024→2048 均无）、far 边界检查（去掉 bounds 也无）、几何输入（固定格探针无数据）。下一步查 Shadow.geom far 平铺坐标 / Shadow.frag imageStore 写入链路
 
 ## 2. NRD 风格实时降噪增强
 

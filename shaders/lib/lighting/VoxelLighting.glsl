@@ -11,15 +11,19 @@
 #ifndef VOXEL_RADIUS
     #define VOXEL_RADIUS (VOXEL_AREA / 2)
 #endif
+#ifndef VOXEL_DISTANCE
+    #define VOXEL_DISTANCE 64.0      // 体素化距离(米) = far 级联半径;near/mid 按 1/4、1/2 自动缩放
+#endif
 
 // ------ 级联辐射度缓存配置（ADR-0001）------
 // 三级同心相机居中网格,均为 VOXEL_AREA 立方,cell 尺寸不同:
-//   C0 near 0.5m (±16m), C1 mid 1.0m (±32m, 原 64³@1m 语义), C2 far 2.0m (±64m)
+//   C0 near (D/128) m (±D/4), C1 mid (D/64) m (±D/2), C2 far (D/32) m (±D)
+//   D = VOXEL_DISTANCE（默认 64m → 0.5m/1.0m/2.0m cell, ±16/±32/±64m）
 // 级联索引约定: 0=near, 1=mid, 2=far
 #define VOXEL_CASCADE_COUNT 3
-#define VOXEL_CASCADE_CELL_0 0.5
-#define VOXEL_CASCADE_CELL_1 1.0
-#define VOXEL_CASCADE_CELL_2 2.0
+#define VOXEL_CASCADE_CELL_2 (VOXEL_DISTANCE / float(VOXEL_RADIUS))
+#define VOXEL_CASCADE_CELL_1 (VOXEL_CASCADE_CELL_2 * 0.5)
+#define VOXEL_CASCADE_CELL_0 (VOXEL_CASCADE_CELL_2 * 0.25)
 #define VOXEL_CASCADE_RADIUS_0 (VOXEL_RADIUS * VOXEL_CASCADE_CELL_0)
 #define VOXEL_CASCADE_RADIUS_1 (VOXEL_RADIUS * VOXEL_CASCADE_CELL_1)
 #define VOXEL_CASCADE_RADIUS_2 (VOXEL_RADIUS * VOXEL_CASCADE_CELL_2)
