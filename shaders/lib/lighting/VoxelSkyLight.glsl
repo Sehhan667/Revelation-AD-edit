@@ -31,7 +31,9 @@ float VoxelSkyHorizonFade(vec3 dir) {
 // 1/15，过渡带仅 1-2 格。放宽后部分遮挡（走廊/树冠）按比例保留天光，边界柔和。
 // 洞穴（≈0）仍为 0，不漏光。）
 float VoxelSkyLeakGate(float lightmap) {
-    return smoothstep(0.03, 0.30, lightmap);
+    // [2026-08-17 临时诊断] 禁用漏光门控——纯靠射线天光，观察无抑制时的原始射线天光表现
+    return 1.0;
+    // return smoothstep(0.03, 0.30, lightmap);
 }
 
 // 方向天空辐射：AtmosphereSkyView（大气 LUT，调用方需先包含 atmosphere/Common.glsl）
