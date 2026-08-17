@@ -165,3 +165,40 @@ org.anarres.cpp.InternalException: Bad token [³@278,0]:"³"
 - 新增宏要暴露到 GUI 必须三处同步：1) VoxelLighting.glsl 定义处带 `// [值列表]`；
   2) shaders.properties 的 `screen.voxel` 与 `sliders`；3) lang/zh_CN.lang + en_US.lang。
   properties 保持纯 ASCII（中文会崩预处理，skyMap 白块的根因）。
+
+---
+
+# 备忘：光追天光系统恢复（2026-08-17，最新）
+
+## 背景
+8/16 一次标注"临时"的改动把天光全部删了（追踪出界、IRC 出界、新暴露播种、
+Phase1 曝光计数），`VoxelSkyColor` 变死函数、4 个天光滑条零使用点，RT 模式天光≈0
+（只剩 NOLIGHT 常数 ~5e-4），室内/阴影黑、只有阳光直射处亮。8/17 恢复并接通。
+
+## 已实施（提交 c722f4d → 1127259 → 本轮）
+- 追踪（单级联+级联）出界注入 `VoxelSkyColor(dir, skyLightmap) × VOXEL_GI_TRACE_SKY_STRENGTH`
+- IRC 出界注入 `VoxelSkyColor(dir, hitSkylight) × VOXEL_GI_SKY_STRENGTH` + Phase1 曝光计数恢复
+- 两处新暴露播种：`VoxelSkyColor(天顶, skylight) × VOXEL_IRC_EDGE_SEED × step(0.15, skylight)`
+- `AtmosphereSkyView` 天顶/天底奇点修复（cross(up,rayDir) 退化时用稳定正交方向）
+- 漏光门控作用到主 LUT 路径（原来只乘 skyColor 兜底 → 室内过亮/洞穴漏光），
+  阈值放宽 smoothstep(0.10,0.25)→(0.03,0.30)
+- 滑条接线：VOXEL_GI_SKY_STRENGTH 1.0 / VOXEL_GI_TRACE_SKY_STRENGTH 1.5 /
+  VOXEL_SKY_REFERENCE 300 / VOXEL_IRC_EDGE_SEED 0.35；VOXEL_GI_STRENGTH（追踪+IRC 输出乘）；
+  VOXEL_GI_TRACE_STRENGTH 补值列表并进 GUI（screen.voxel/sliders/lang 三处同步）
+- DEBUG_VOXEL_SKY 改染红（门控放行且有值才红，洞穴黑）；DeferredLight 左上角灰阶读数 HUD
+- 网格内最小环境光底 = skyColor×lightmap.y×0.04（洞穴≈0 保持黑）
+- 朝下表面天光下限（借鉴 itrp SimpleSkyLighting）：追踪输出补
+  `VoxelSkyColor(天顶) × (1-smoothstep(-1,0.3,NdotU)) × 0.22 × STRENGTH`，朝上补 0 不重复
+
+## 关键坑（本次新增）
+1. **`shaderpacks/Revelation-AD-edit.txt`（Iris 记住的选项文件）覆盖代码默认值**：
+   死滑条时期拉满的值（TRACE_SKY 16 / SKY 8 / REFERENCE 100 / SELF_BOUNCE 0.4 /
+   TRACE_DISTANCE 16 / SUN 32）在滑条接线后全部生效 → 画面过曝/死黑/硬分界线。
+   改代码默认值无效，必须改这个 txt 或在 GUI 里重置滑条。
+2. GLSL 三元条件必须是标量 bool：`sky > vec3(0.01)` 是 bvec3，会编译失败；
+   用 `max(max(sky.r,sky.g),sky.b) > 0.01`。
+3. 引用外部成熟方案（itrp）时：它的"朝下表面不黑"靠 SimpleSkyLighting 的
+   `NdotU*0.35+0.65` 曲线 + 无条件小底光（NOLIGHT 7e-6）+ IRC 自反弹；环境光与
+   直射光解耦相加（阴影只乘直射项）。全部是连续函数，无一处 step()/二值。
+4. 天光滑条全接线后，GUI 值是"现场调参"的最快途径（边拖边看），
+   不需要每轮改代码默认值。
