@@ -177,57 +177,66 @@ void main() {
                     EndPrimitive(); \
                 }
 
-            // near 级联（0.5m）：只处理完整方块（ID==1）——三角形覆盖多个格,按 AABB
-            // + 法线主轴投影点内测试填满覆盖格（只写质心格会留下 1/4 稀疏棋盘）。
-            // 形状/透明块不进 near：IsHitBlock 子盒判定按 1m 整块坐标系设计,塞进
-            // 0.5m 格会错配 → 命中/穿透交替成 0.5m 锯齿（实测）；由 mid 级联按原语义处理。
+            // [2026-08-17] 全块逐格填充宏：三角形覆盖多个格时按 AABB + 法线主轴投影
+            // 点内测试填满覆盖格（只写质心格会留下稀疏棋盘 → 光线穿墙 → 黑方格）。
+            // near/mid/far 共用；AABB 覆盖格数超 24（约 45 顶点预算的保守一半，覆盖
+            // D≥16 的 mid 面 AABB=16）时退化为质心单格。
+            #define EMIT_FULLBLOCK_FILL(CELLC, TY, CIDX, CENT) \
+                { \
+                    vec3 n0 = (g_voxelCoordBase[0] - float(VOXEL_RADIUS)) / CELLC + float(VOXEL_RADIUS); \
+                    vec3 n1 = (g_voxelCoordBase[1] - float(VOXEL_RADIUS)) / CELLC + float(VOXEL_RADIUS); \
+                    vec3 n2 = (g_voxelCoordBase[2] - float(VOXEL_RADIUS)) / CELLC + float(VOXEL_RADIUS); \
+                    vec3 nrm = cross(n1 - n0, n2 - n0); \
+                    vec3 an = abs(nrm); \
+                    bool projX = an.x >= an.y && an.x >= an.z; \
+                    bool projY = an.y >= an.z; \
+                    vec3 lo = min(min(n0, n1), n2); \
+                    vec3 hi = max(max(n0, n1), n2); \
+                    ivec3 iLo = ivec3(clamp(floor(lo), vec3(0.0), vec3(float(VOXEL_AREA) - 1.0))); \
+                    ivec3 iHi = ivec3(clamp(ceil(hi), vec3(0.0), vec3(float(VOXEL_AREA) - 1.0))); \
+                    int cellCount = (iHi.x - iLo.x + 1) * (iHi.y - iLo.y + 1) * (iHi.z - iLo.z + 1); \
+                    if (cellCount <= 24) { \
+                        for (int ix = iLo.x; ix <= iHi.x; ++ix) \
+                        for (int iy = iLo.y; iy <= iHi.y; ++iy) \
+                        for (int iz = iLo.z; iz <= iHi.z; ++iz) { \
+                            vec3 cc = vec3(ix, iy, iz) + 0.5; \
+                            vec2 p  = projX ? cc.zy : projY ? cc.xz : cc.xy; \
+                            vec2 a2 = projX ? n0.zy : projY ? n0.xz : n0.xy; \
+                            vec2 b2 = projX ? n1.zy : projY ? n1.xz : n1.xy; \
+                            vec2 c2 = projX ? n2.zy : projY ? n2.xz : n2.xy; \
+                            if (PointInTri2D(p, a2, b2, c2) && dot(cc - n0, nrm) < 0.0) \
+                                EMIT_VOXEL_CASCADE(vec3(ix, iy, iz), TY, CIDX); \
+                        } \
+                    } else { \
+                        EMIT_VOXEL_CASCADE(CENT, TY, CIDX); \
+                    } \
+                }
+
+            // near 级联（0.5m @D64）：只处理完整方块（ID==1）——逐格填充（宏）。
+            // 形状/透明块不进 near（IsHitBlock 世界锚定后任意格尺寸均可，但 near 保持
+            // 只收全块的原有语义，形状由 mid/far 按原语义处理）。
             if (all(bvec3(clamp(voxelCoordNear, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordNear))) {
                 if (voxelID == 1.0) {
-                    vec3 n0 = (g_voxelCoordBase[0] - float(VOXEL_RADIUS)) / VOXEL_CASCADE_CELL_0 + float(VOXEL_RADIUS);
-                    vec3 n1 = (g_voxelCoordBase[1] - float(VOXEL_RADIUS)) / VOXEL_CASCADE_CELL_0 + float(VOXEL_RADIUS);
-                    vec3 n2 = (g_voxelCoordBase[2] - float(VOXEL_RADIUS)) / VOXEL_CASCADE_CELL_0 + float(VOXEL_RADIUS);
-                    vec3 nrm = cross(n1 - n0, n2 - n0);
-                    vec3 an = abs(nrm);
-                    bool projX = an.x >= an.y && an.x >= an.z;
-                    bool projY = an.y >= an.z;
-                    vec3 lo = min(min(n0, n1), n2);
-                    vec3 hi = max(max(n0, n1), n2);
-                    ivec3 iLo = ivec3(clamp(floor(lo), vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)));
-                    ivec3 iHi = ivec3(clamp(ceil(hi), vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)));
-                    int cellCount = (iHi.x - iLo.x + 1) * (iHi.y - iLo.y + 1) * (iHi.z - iLo.z + 1);
-                    if (cellCount <= 12) {
-                        for (int ix = iLo.x; ix <= iHi.x; ++ix)
-                        for (int iy = iLo.y; iy <= iHi.y; ++iy)
-                        for (int iz = iLo.z; iz <= iHi.z; ++iz) {
-                            vec3 cc = vec3(ix, iy, iz) + 0.5;
-                            vec2 p  = projX ? cc.zy : projY ? cc.xz : cc.xy;
-                            vec2 a2 = projX ? n0.zy : projY ? n0.xz : n0.xy;
-                            vec2 b2 = projX ? n1.zy : projY ? n1.xz : n1.xy;
-                            vec2 c2 = projX ? n2.zy : projY ? n2.xz : n2.xy;
-                            // 只写面"固体侧"的格层: 面落在格边界时两侧格心都投影在面内,
-                            // 不加此判定会把近网格墙写厚 1 倍 → 命中位置偏移出暗纹
-                            if (PointInTri2D(p, a2, b2, c2) && dot(cc - n0, nrm) < 0.0)
-                                EMIT_VOXEL_CASCADE(vec3(ix, iy, iz), VOXEL_TILE_Y_0, 0.0);
-                        }
-                    } else {
-                        // [FIX 2026-08-17] VOXEL_DISTANCE 调小时 near cell 变小,完整方块覆盖格数
-                        // 超 GS 顶点预算(45)无法逐格填充 → 退化为质心单格,避免 near 级联整块空。
-                        // 查询端 SKIP_NEAR 时 near 仅作注入冗余,不影响主查询;恢复大距离后自动回填充。
-                        EMIT_VOXEL_CASCADE(voxelCoordNear, VOXEL_TILE_Y_0, 0.0);
-                    }
+                    EMIT_FULLBLOCK_FILL(VOXEL_CASCADE_CELL_0, VOXEL_TILE_Y_0, 0.0, voxelCoordNear);
+                }
             }
-            }
-            // [2026-08-17] 形状块(155-294)只写 cell≤1.0m 的级联：
-            // HitShape 已做世界锚定换算（按 cell 换算射线/blockOrigin/距离，任意格尺寸
-            // 判定正确），但 cell>1m 时质心格锚定会偏移（如 far@D=64 的 2m 格, 块锚点
-            // 可偏 1m）→ 排除 >1m 级联。D=64: 只 mid(1m)；D=32: mid(0.5m)+far(1m) 全覆盖。
+            // [2026-08-17] 形状块(155-294)只写 cell≤1.0m 的级联（>1m 质心锚定偏移）：
+            // D=64: 只 mid(1m)；D=32: mid(0.5m)+far(1m) 全覆盖。
+            // [2026-08-17] 全块(ID==1)在 mid/far 同样逐格填充：D<64 时格<1m，全块跨多格，
+            // 只写质心格 → 网格稀疏 → 光线穿墙 → 不完整方块垂直表面黑方格（用户实测）。
             bool shapeBlock = voxelID > 154.0;
-            if (all(bvec3(clamp(voxelCoord, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoord)))
-                if (!shapeBlock || VOXEL_CASCADE_CELL_1 <= 1.0)
+            if (all(bvec3(clamp(voxelCoord, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoord))) {
+                if (voxelID == 1.0)
+                    EMIT_FULLBLOCK_FILL(VOXEL_CASCADE_CELL_1, VOXEL_TILE_Y_1, 1.0, voxelCoord);
+                else if (!shapeBlock || VOXEL_CASCADE_CELL_1 <= 1.0)
                     EMIT_VOXEL_CASCADE(voxelCoord, VOXEL_TILE_Y_1, 1.0);
-            if (all(bvec3(clamp(voxelCoordFar, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordFar)))
-                if (!shapeBlock || VOXEL_CASCADE_CELL_2 <= 1.0)
+            }
+            if (all(bvec3(clamp(voxelCoordFar, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordFar))) {
+                if (voxelID == 1.0)
+                    EMIT_FULLBLOCK_FILL(VOXEL_CASCADE_CELL_2, VOXEL_TILE_Y_2, 2.0, voxelCoordFar);
+                else if (!shapeBlock || VOXEL_CASCADE_CELL_2 <= 1.0)
                     EMIT_VOXEL_CASCADE(voxelCoordFar, VOXEL_TILE_Y_2, 2.0);
+            }
 
             #undef EMIT_VOXEL_CASCADE
         }
