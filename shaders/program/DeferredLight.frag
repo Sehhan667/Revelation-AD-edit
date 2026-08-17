@@ -193,11 +193,8 @@ void main() {
     //   以非光追样式渲染。
     vec3 activeBlocklightColor = blocklightColor;
     #ifdef VOXEL_GI_ENABLED
-        // [2026-08-17] 体素内外判定改用 far 级联半径（跟随 VOXEL_DISTANCE），
-        // 与球谐光边界（L486 ambientInVoxelGrid）统一；旧版用 64³@1m 单网格
-        // 判定（±32m），far 级联加入后 32m 外会被误判为"体素外"而错误恢复原版方块光。
-        vec3 blocklightVoxelCoord = camRelPos + cameraPositionFract;
-        if (all(lessThan(abs(blocklightVoxelCoord), vec3(VOXEL_CASCADE_RADIUS_2)))) {
+        vec3 blocklightVoxelCoord = camRelPos + cameraPositionFract + float(VOXEL_RADIUS);
+        if (all(greaterThanEqual(blocklightVoxelCoord, vec3(0.0))) && all(lessThan(blocklightVoxelCoord, vec3(float(VOXEL_AREA))))) {
             activeBlocklightColor = vec3(0.0);
         } else {
             activeBlocklightColor = vec3(BLOCKLIGHT_BRIGHTNESS);
@@ -483,15 +480,13 @@ void main() {
     // 体素 GI 开启时：网格内由光追天光（skyMapTex 方向辐射）提供环境光，
     // 屏蔽原版 SH 平涂天光，避免方向性天光被环境光盖掉；体素外仍走非光追样式。
     #ifdef VOXEL_GI_ENABLED
-        // [2026-08-16] 体素覆盖已扩到 far 级联（±64m）：球谐光只在 far 范围外渲染，
-        // 避免 32–64m 区域被球谐光盖住 far GI。
-        vec3 ambientVoxelCoord = camRelPos + cameraPositionFract;
-        bool ambientInVoxelGrid = all(lessThan(abs(ambientVoxelCoord), vec3(VOXEL_CASCADE_RADIUS_2)));
+        vec3 ambientVoxelCoord = camRelPos + cameraPositionFract + float(VOXEL_RADIUS);
+        bool ambientInVoxelGrid = all(greaterThanEqual(ambientVoxelCoord, vec3(0.0)))
+                               && all(lessThan(ambientVoxelCoord, vec3(float(VOXEL_AREA))));
         // 网格内完全交给 GI（含最小环境光底）：否则平铺底光会把
         // 窗口逸散/遮挡 AO 的梯度盖成“死板固定亮度”（用户实测反馈）。
         // 仅保留夜视底光，避免夜视失效。
-        // [2026-08-17] 加最小环境光底：仅随 lightmap.y 缩放（洞穴≈0 保持黑，不漏光），
-        // 系数 0.04 只为避免"室内/朝下特黑侧全黑"的硬分界线观感；AO 梯度仍由 GI 提供。
+        // [2026-08-17] 最小环境光底：随 lightmap.y 缩放（洞穴≈0 保持黑），避免阴影侧全黑
         if (ambientInVoxelGrid)
             ambientAccum = max(vec3(5e-3 * nightVision), skyColor * lightmap.y * 0.04);
         else
@@ -574,10 +569,7 @@ void main() {
     #ifdef HANDHELD_LIGHTING
         if (heldBlockLightValue + heldBlockLightValue2 > EPS) {
             float attenuation = rcp(1.0 + worldDistSquared) * saturate(dot(worldNormal, -worldDir));
-            // [2026-08-17] 手持光源改用 activeBlocklightColor：体素内随方块光一起屏蔽（GI 接管），
-            // 体素外恢复默认色渲染——与"体素内屏蔽、体素外正常渲染原版方块光"策略一致。
-            // 旧代码用 blocklightColor（GI 开启时恒 0），导致体素外手持光源也不亮。
-            sceneOut += max(heldBlockLightValue, heldBlockLightValue2) * HELD_LIGHT_BRIGHTNESS * attenuation * activeBlocklightColor;
+            sceneOut += max(heldBlockLightValue, heldBlockLightValue2) * HELD_LIGHT_BRIGHTNESS * attenuation * blocklightColor;
         }
     #endif
 
@@ -690,9 +682,7 @@ void main() {
                 #else
                     sceneOut += voxelGI;
                     #ifdef DEBUG_VOXEL_SKY
-                    // 左上角 64×64 灰阶读数：本像素 voxelGI 亮度（天光+阳光+反弹），
-                    // ×4 放大后量化 8 级（0=黑 → 1=白）。与全屏染红（VoxelSkyColor 内）
-                    // 配合：染红=路径通，灰阶=值大小。调 VOXEL_GI_SKY_STRENGTH 可见变化。
+                    // [2026-08-17] 左上角 64×64 灰阶读数：本像素 voxelGI 亮度（×4 放大，8 级量化）
                     if (all(lessThan(gl_FragCoord.xy, vec2(64.0)))) {
                         float luma = clamp(dot(voxelGI, vec3(0.299, 0.587, 0.114)) * 4.0, 0.0, 1.0);
                         sceneOut = vec3(floor(luma * 7.999) / 7.0);

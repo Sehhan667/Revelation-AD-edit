@@ -16,9 +16,6 @@
 // Iris 分配的普通贴图纹理单元冲突，导致采样读不到数据——"全黑"根因之一）
 uniform sampler3D voxelRadianceSampler;
 uniform sampler3D voxelRadiance2Sampler;
-// 级联缓存（ADR-0001）：near/far 与 mid 同格式
-uniform sampler3D voxelRadianceNearSampler;
-uniform sampler3D voxelRadianceFarSampler;
 // 体素化光数据（r32ui 打包：x=emissive y=sky z=block），DEBUG_VOXEL_GI 判断光源体素用
 uniform usampler3D voxelLightSampler;
 // 体素数据（rgba16f：z=voxelID 原值），仅 DEBUG_VOXEL_RADIANCE 诊断用
@@ -26,16 +23,6 @@ uniform sampler3D voxelDataSampler;
 
 // 帧奇偶采样（与注入端写入一致：偶数帧写 voxelRadiance、读 voxelRadiance2）
 vec4 FetchVoxelRadiance(ivec3 c) {
-    return ((frameCounter & 1) == 0)
-        ? texelFetch(voxelRadiance2Sampler, c, 0)
-        : texelFetch(voxelRadianceSampler, c, 0);
-}
-
-// 级联版 IRC 读取（ADR-0001）：cascade 0=near 1=mid 2=far
-vec4 FetchVoxelRadianceC(ivec3 c, int cascade) {
-    // 节流级联（near/far）为单缓冲,不做乒乓（乒乓另一侧从未写入会读到黑）
-    if (cascade == 0) return texelFetch(voxelRadianceNearSampler, c, 0);
-    if (cascade == 2) return texelFetch(voxelRadianceFarSampler, c, 0);
     return ((frameCounter & 1) == 0)
         ? texelFetch(voxelRadiance2Sampler, c, 0)
         : texelFetch(voxelRadianceSampler, c, 0);

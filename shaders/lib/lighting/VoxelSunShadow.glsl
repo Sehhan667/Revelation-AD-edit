@@ -61,8 +61,7 @@ vec3 VoxelSunShadowMap(vec3 camRelPos, vec3 normal) {
 }
 
 // 体素 DDA 短程阳光遮挡判定（SimpleShadowTracing）：1=阳光可见，0=被网格内固体挡住
-// cell = 当前级联格尺寸（voxelPos 所在网格的单位，米/格）
-float VoxelSunShadowTracing(vec3 voxelPos, vec3 sunDir, float cell) {
+float VoxelSunShadowTracing(vec3 voxelPos, vec3 sunDir) {
     vec3 voxelCoord = floor(voxelPos);
     vec3 sdir = sign(sunDir);
     vec3 rdir = 1.0 / max(abs(sunDir), vec3(1e-8));
@@ -84,7 +83,7 @@ float VoxelSunShadowTracing(vec3 voxelPos, vec3 sunDir, float cell) {
             vray.sdir = sdir;
             vec3 hitNormal;
             float hitLength = rayLength;
-            if (IsHitBlock(vray, totalStep, tracingNext, voxelCoord, abs(hvd.z), hitLength, hitNormal, cell)) {
+            if (IsHitBlock(vray, totalStep, tracingNext, voxelCoord, abs(hvd.z), hitLength, hitNormal)) {
                 return 0.0;
             }
         }

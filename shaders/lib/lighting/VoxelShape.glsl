@@ -61,15 +61,9 @@ bool IsHitBox(VoxelRay ray, vec3 blockOrigin, vec3 boxOrigin, vec3 boxSize, inou
 
 // 形状求交（ID 平移：vID = voxelID - 150）。
 // 形状 ID 统一用 vID（5-144 原表），几何公式里的 ID 系数同样用 vID。
-// [2026-08-17] 世界锚定：子盒表按 1m 整块设计，cell≠1m（VOXEL_DISTANCE≠64）时把
-// ray.ori/blockOrigin 换算到"世界对齐米"（格单位 ×cell），命中距离换算回格单位。
-// ray.rdir 不变——其单位与 boxMin 同乘 cell 相互抵消（t_m = rdir × boxMin_m）。
-// cell=1m 时逐项退化为旧公式（blockOrigin = voxelCoord - ray.ori，无缩放）。
-bool HitShape(VoxelRay ray, vec3 voxelCoord, float voxelID, inout float rayLength, out vec3 hitNormal, float cell) {
-    ray.ori = (ray.ori - float(VOXEL_RADIUS)) * cell;
-    vec3 blockOrigin = floor((voxelCoord + 0.5 - float(VOXEL_RADIUS)) * cell) - ray.ori;
+bool HitShape(VoxelRay ray, vec3 voxelCoord, float voxelID, inout float rayLength, out vec3 hitNormal) {
+    vec3 blockOrigin = voxelCoord - ray.ori;
     hitNormal = vec3(0.0);
-    rayLength *= cell; // 调用方上限（格单位）→ 米
 
     // 平移回 原 ID（形状区间 155-294 → 5-144）
     float vID = voxelID - 150.0;
@@ -438,7 +432,6 @@ bool HitShape(VoxelRay ray, vec3 voxelCoord, float voxelID, inout float rayLengt
         hit = IsHitBox(ray, blockOrigin, vec3(1.0 / 16.0, 0.0, 1.0 / 16.0), vec3(14.0 / 16.0, 0.5 / 16.0, 14.0 / 16.0), rayLength, hitNormal);
     }
 
-    rayLength *= rcp(cell); // 命中距离（米）→ 格单位
     return hit;
 }
 
@@ -447,10 +440,9 @@ bool HitShape(VoxelRay ray, vec3 voxelCoord, float voxelID, inout float rayLengt
 //   （DDA 进入面方向反推；rayLength 保持调用方传入的"本格进入距离"不变）
 // - 形状块（155-294）：rayLength 重置为"本格退出距离"= minVec3(totalStep)
 //   （光线必须在本格退出前进入子盒），HitShape 子盒求交；未命中返回 false
-// - cell = 当前级联格尺寸（米）；HitShape 内部做世界锚定换算（见 HitShape 注释）
 // totalStep/tracingNext/voxelCoord = DDA 步进状态（当前格已 advance 后的值）；
 // 命中后 rayLength = 子盒进入距离、hitNormal = 子盒命中面法线。
-bool IsHitBlock(VoxelRay ray, vec3 totalStep, vec3 tracingNext, vec3 voxelCoord, float voxelID, inout float rayLength, out vec3 hitNormal, float cell) {
+bool IsHitBlock(VoxelRay ray, vec3 totalStep, vec3 tracingNext, vec3 voxelCoord, float voxelID, inout float rayLength, out vec3 hitNormal) {
     hitNormal = vec3(0.0);
 
     bool hit = true;
@@ -459,7 +451,7 @@ bool IsHitBlock(VoxelRay ray, vec3 totalStep, vec3 tracingNext, vec3 voxelCoord,
         hitNormal = -tracingNext * ray.sdir;
     } else {
         rayLength = VoxelMin3(totalStep);
-        hit = HitShape(ray, voxelCoord, voxelID, rayLength, hitNormal, cell);
+        hit = HitShape(ray, voxelCoord, voxelID, rayLength, hitNormal);
     }
 
     return hit;

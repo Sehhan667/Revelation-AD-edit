@@ -104,11 +104,7 @@ void main() {
 			// 种子：全分辨率像素索引哈希 + 帧计数（每帧不同方向，棋盘 offset 轮转 4 帧全覆盖）
 			uint traceSeed = triple32(uint(renderTexel.x + renderTexel.y * int(viewWidth)) * 0x9E3779B1u
 			                          + uint(frameCounter + 1) * 0x85EBCA77u);
-			// [2026-08-17] 移除朝下表面天光下限填充（eb54807 引入）：itrp 的
-			// SimpleSkyLighting 只在 IRC 越界兜底，从不叠加在追踪结果上——全量叠加
-			// 让天花板（NdotU=-1 权重=1.0）异常发亮（用户实测）。阳光反弹修复后
-			// （去 rPI + SUN_STRENGTH 1.0 + TRACE_SUN 12）朝下表面已有反弹光，不再需要。
-			result = vec4(VoxelTracePixelCascaded(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
+			result = vec4(VoxelTracePixel(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
 			                              -viewPos.z, lightmap.y, lightmap.x, traceSeed)
 			             * VOXEL_GI_TRACE_STRENGTH, 1.0);
 		#else

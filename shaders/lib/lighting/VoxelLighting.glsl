@@ -11,52 +11,25 @@
 #ifndef VOXEL_RADIUS
     #define VOXEL_RADIUS (VOXEL_AREA / 2)
 #endif
-#ifndef VOXEL_DISTANCE
-    #define VOXEL_DISTANCE 64.0      // 体素化距离(米) = far 级联半径;near/mid 按 1/4、1/2 自动缩放
-#endif
-
-// ------ 级联辐射度缓存配置（ADR-0001）------
-// 三级同心相机居中网格,均为 VOXEL_AREA 立方,cell 尺寸不同:
-// [2026-08-17] 近=1m 方案（用户拍板）：近级联 ≥1m，彻底避开亚米格问题
-// （形状锚定偏移/稀疏填充/边界对齐镂空），性能更好（每三角形覆盖格数少）。
-//   C0 near = max(1.0, D/64) m（D≤64 恒 1.0m）→ 覆盖 ±32m
-//   C1 mid  = near×2 m（2.0m @D≤64）→ 覆盖 ±64m
-//   C2 far  = near×4 m（4.0m @D≤64）→ 覆盖 ±128m
-// 级联索引约定: 0=near, 1=mid, 2=far
-#define VOXEL_CASCADE_COUNT 3
-#define VOXEL_CASCADE_CELL_0 max(1.0, VOXEL_DISTANCE / 64.0)
-#define VOXEL_CASCADE_CELL_1 (VOXEL_CASCADE_CELL_0 * 2.0)
-#define VOXEL_CASCADE_CELL_2 (VOXEL_CASCADE_CELL_0 * 4.0)
-#define VOXEL_CASCADE_RADIUS_0 (VOXEL_RADIUS * VOXEL_CASCADE_CELL_0)
-#define VOXEL_CASCADE_RADIUS_1 (VOXEL_RADIUS * VOXEL_CASCADE_CELL_1)
-#define VOXEL_CASCADE_RADIUS_2 (VOXEL_RADIUS * VOXEL_CASCADE_CELL_2)
 
 // ------ Shadow Map 平铺布局 ------
 // 体素化迁到 shadow pass（2026-08-04）：阴影贴图拆成两块——
 //   - 真阴影：右上区（宽 VOXEL_SHADOW_WIDTH = RES - TILE_WIDTH）
-//   - 体素三角形：左条带（宽 VOXEL_TILE_WIDTH，Y 型平铺 64³ = 512×512 texel）
-//     三级联（ADR-0001）竖向堆叠：near y∈[0,512) / mid y∈[512,1024) / far y∈[1024,1536)
+//   - 体素三角形：左条带（宽 VOXEL_TILE_WIDTH，Y 型平铺 64³ = 256×1024 texel）
 // 太阳方向固定 → 体素化内容不随相机转动（根治 gbuffers 时代"转头/移动重播种闪烁"）。
-// 布局常量跟随 shadowMapResolution（settings.glsl 滑条），要求 shadowMapResolution ≥ 1536
-// （三级联 strip 总高 1536 硬需求；改小会溢出挤掉真阴影）。真阴影 Shift 由 shadow GS 与
+// 布局常量跟随 shadowMapResolution（settings.glsl 滑条），要求 shadowMapResolution ≥ 1024
+// （tile 高 1024 硬需求；改小会溢出挤掉真阴影）。真阴影 Shift 由 shadow GS 与
 // Render.glsl 的 WorldToShadowScreenSpace 同步应用，两侧必须一致。
 #ifndef VOXEL_SHADOW_RES
     #define VOXEL_SHADOW_RES float(shadowMapResolution)   // 阴影贴图总宽/高（跟随滑条）
 #endif
 #ifndef VOXEL_TILE_WIDTH
-    #define VOXEL_TILE_WIDTH 512.0                         // 体素条带宽度（64 格 × 8 层/行，三级联共用）
+    #define VOXEL_TILE_WIDTH 256.0                         // 体素条带宽度（64 格 × 4 层/行）
 #endif
 #ifndef VOXEL_TILE_HEIGHT
-    // 64³ = 262144 texel；Y 型平铺：每行 8 层 × 64 格，8 行 → 高 512
+    // 64³ = 262144 texel；Y 型平铺：每行 4 层 × 64 格，16 行 → 高 1024
     #define VOXEL_TILE_HEIGHT (float(VOXEL_AREA) * float(VOXEL_AREA) * float(VOXEL_AREA) / VOXEL_TILE_WIDTH)
 #endif
-// 三级联 tile 的纵向偏移（ADR-0001；strip 总高 = 3 × 512，要求 shadowMapResolution ≥ 1536）
-#ifndef VOXEL_TILE_LAYER_HEIGHT
-    #define VOXEL_TILE_LAYER_HEIGHT VOXEL_TILE_HEIGHT   // 每个级联 tile 的高 = 64³/512 = 512
-#endif
-#define VOXEL_TILE_Y_0 0.0
-#define VOXEL_TILE_Y_1 VOXEL_TILE_LAYER_HEIGHT
-#define VOXEL_TILE_Y_2 (2.0 * VOXEL_TILE_LAYER_HEIGHT)
 #define VOXEL_SHADOW_WIDTH (VOXEL_SHADOW_RES - VOXEL_TILE_WIDTH)
 #define VOXEL_SHADOW_RATIO (VOXEL_SHADOW_WIDTH / VOXEL_SHADOW_RES)
 
@@ -90,10 +63,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #endif
 
 // ------ 传播配置（风格 IRC 随机注入）------
-// [2026-08-17] 1.0→0.15：itrp 的 IRC 反弹权重 = prevIrcColor×0.006~0.01（缓存值 ~1%/帧），
-// 我们 1.0 会稳态放大缓存 ~1/(1-albedo×1.0)≈2× → 室内被天光灌满（用户实测）。
-// 0.15 仅微弱反馈，室内光照由直射阳光采样（门口地面反射）主导 → 方向性强、门口留阴影。
-#define VOXEL_GI_SELF_BOUNCE 0.15       // [0.01 0.02 0.05 0.1 0.15 0.2 0.3 0.4 0.6 0.8 1.0] 自反弹衰减比（光线命中点取前帧 IRC；itrp 参考 ~0.01-0.1）
+#define VOXEL_GI_SELF_BOUNCE 1.0       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 自反弹衰减比（光线命中点取前帧 IRC；1.0=表面命中全强度）
 #define VOXEL_GI_EMISSIVE_THRESHOLD 0.1 // [0.0 0.01 0.02 0.05 0.1 0.2] 发射度阈值（LabPBR 发射贴图，太低会把矿物误判为发光体）
 #define VOXEL_GI_BOOST 1.5              // [0.5 1.0 1.5 2.0 3.0 4.0] 发射体素能量倍率
 // 发射光球形光距离衰减（语义的补充，2026-08-04 #8）：远场（16 格外）偶发
@@ -133,11 +103,8 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 量级链路：注入 nRC → ×100 存储 → 查询 ×0.01 解码，最终 ≈ 注入值 × albedo × STRENGTH
 // 2026-08-04 真阳光改造（思路）：阳光注入主体改为"阴影贴图判定直射"（sunVis），
 // vanilla 天空光 lightmap 降级为弱环境底，保留洞穴渐变。
-// [2026-08-17] 0.5→1.0 并暴露滑条：IRC 阳光注入去掉 rPI 后（与追踪端同口径），
-// 1.0 让阳光反弹 ≈ 天光量级，阴影处出现金色漫反射（itrp 同款观感：物理 sunLight 1.8×rPI≈0.57，
-// 我们 0.427×1.0 同量级）。
-#define VOXEL_GI_SUN_STRENGTH 1.5      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显。2026-08-17 1.0→1.5：室内阳光太少，只有门口有反射——用户要求 itrp 同款"室内大部分阳光"）
-#define VOXEL_GI_SKY_STRENGTH 0.6    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17：1.0→0.6，室内天光仍过量）
+#define VOXEL_GI_SUN_STRENGTH 0.5      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显）
+#define VOXEL_GI_SKY_STRENGTH 2.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显）
 #define VOXEL_GI_BLOCK_STRENGTH 0.8    // 方块光注入倍率（× blocklightColor，火把等光源）
 // 天空辐射贴图 → 0-1 尺度换算基准（skyViewTex 白天顶光 ≈110-130；与阳光基准同量级，
 // 调大=天光变暗、调小=天光变亮）。定义在 VoxelSkyLight.glsl 之前（VoxelLighting 先 include）
@@ -157,7 +124,6 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #define VOXEL_TRACE_DISTANCE 32 // [8 16 24 32 48 64 96] 追踪光线最大步进体素数（越大传播越远，性能略降）
 // 追踪 GI 强度总旋钮：信号量级 = 追踪值 × STRENGTH（命中/出界已按 语义全强度输出，
 // 过亮就降这个，过暗就升；洞穴不过量由 lightmap 泄漏衰减保证，不靠压低天空值）。
-// [2026-08-17] 已暴露为 GUI 滑条（screen.voxel + sliders + lang 三处同步）。
 #define VOXEL_GI_TRACE_STRENGTH 1.0 // [0.0 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0] 追踪 GI 总强度（过亮降、过暗升）
 // 物理直射辐照度 → 0-1 尺度换算基准（GlobalStorage.comp：directIlluminance = 128×(sun+moon)，
 // 白天约 300；除以该值即得 0-1 尺度阳光色——自带昼夜明暗 + 暖色温，见 VoxelTracing 阳光弹射）
@@ -168,14 +134,12 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 改为物理直射辐照度换算；强度 1.0 → 2.0 让反弹在阴影里可辨。
 // [FIX 2026-08-05] 2.0 → 8.0：阳光项去掉 rPI 后仍比方块光弱，实测"阳光反弹不可见"；
 // 8.0 让阳光反弹 ≈ 0.4×cosθ×albedo×8 达到可见量级（过亮可调回 2-5）。
-// [2026-08-17] 8.0→12.0：用户反馈"阳光反射太弱"（itrp 半开阔阴影处有明亮金色漫反射），
-// 追踪端阳光反弹略提；过强可调回 8。
 // 已暴露为 GUI 滑条（shaders.properties sliders），可在光影设置里直接调。
-#define VOXEL_TRACE_SUN_STRENGTH 12.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
+#define VOXEL_TRACE_SUN_STRENGTH 8.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
 // 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；
 // 洞穴/室内（skyLightmap≈0）无天光，不会过量。若整体过亮用 VOXEL_GI_TRACE_STRENGTH 旋钮。
-#define VOXEL_GI_TRACE_SKY_STRENGTH 1.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0] 追踪端出界方向天光倍率（2026-08-17：1.5→1.0，室内天光仍过量）
+#define VOXEL_GI_TRACE_SKY_STRENGTH 4.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0] 追踪端出界方向天光倍率
 // （新增环境光控制宏已移除 2026-08-06：环境光还原旧版纯 skySH 行为）
 
 #endif // VOXEL_GI_LIGHTING_INCLUDED
