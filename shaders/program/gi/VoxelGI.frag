@@ -397,7 +397,10 @@ void IrcInject(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
     bool sld = vd.z > 0.5; // voxelID 原值（>0 即固体，0=空气）
 
     // ---- IRC 随机注入（：只对非空气体素注入）----
-    vec4 irc = IrcTraceVoxel(c, cDi, cascade, cellSize);
+    // [2026-08-17] 空气格跳过追踪（旧版无条件跑，成本 ×64³ 且值无消费端）：
+    // 每帧注入 near/far 后必须控成本；空气缓存写入 ~0，查询端只读固体命中格。
+    vec4 irc = vec4(0.0);
+    if (sld) irc = IrcTraceVoxel(c, cDi, cascade, cellSize);
     vec3 nRC = irc.rgb;
     float nExp = irc.a; // Phase 1：本帧天空曝光度
 
@@ -524,10 +527,13 @@ void main() {
         else
             imageStore(voxelRadiance2, c, o);
 
-        // 级联注入配置: 2 = 仅 far(每 4 帧); near 暂挂起
+        // 级联注入配置: [2026-08-17] near/far 改为每帧注入——查询端 SKIP_NEAR=0 后
+        // near 缓存若半速率更新（旧 2 帧/4 帧节奏），相机移动时缓存滞后 + 单缓冲
+        // → 陈旧/新鲜交替 → GI 疯狂闪烁（用户实测 zfighting 感）。
+        // IrcInject 内部按 sld 跳过空气格（只对固体跑追踪），成本可控。
         #define VOXEL_INJECT_CASCADES 2
-        if (VOXEL_INJECT_CASCADES >= 1 && (frameCounter & 1) == 0) IrcInject(c, cDi, 0, VOXEL_CASCADE_CELL_0);
-        if (VOXEL_INJECT_CASCADES >= 2 && (frameCounter & 3) == 0) IrcInject(c, cDi, 2, VOXEL_CASCADE_CELL_2);
+        if (VOXEL_INJECT_CASCADES >= 1) IrcInject(c, cDi, 0, VOXEL_CASCADE_CELL_0);
+        if (VOXEL_INJECT_CASCADES >= 2) IrcInject(c, cDi, 2, VOXEL_CASCADE_CELL_2);
 
         #endif
     }
