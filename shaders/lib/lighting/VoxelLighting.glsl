@@ -63,7 +63,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #endif
 
 // ------ 传播配置（风格 IRC 随机注入）------
-#define VOXEL_GI_SELF_BOUNCE 1.0       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 自反弹衰减比（光线命中点取前帧 IRC；1.0=表面命中全强度）
+#define VOXEL_GI_SELF_BOUNCE 0.5       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 自反弹衰减比（光线命中点取前帧 IRC；[2026-08-17] 1.0→0.5 减小 IRC 亮度，避免整体过亮）
 #define VOXEL_GI_EMISSIVE_THRESHOLD 0.1 // [0.0 0.01 0.02 0.05 0.1 0.2] 发射度阈值（LabPBR 发射贴图，太低会把矿物误判为发光体）
 #define VOXEL_GI_BOOST 1.5              // [0.5 1.0 1.5 2.0 3.0 4.0] 发射体素能量倍率
 // 发射光球形光距离衰减（语义的补充，2026-08-04 #8）：远场（16 格外）偶发
