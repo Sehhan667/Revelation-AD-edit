@@ -311,7 +311,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
             vray.rdir = hrdir;
             vray.sdir = hsdir;
             vec3 hitNormal;
-            bool shapeHit = IsHitBlock(vray, htotalStep, tracingNext, hvoxel, abs(hvd.z), rayLen, hitNormal);
+            bool shapeHit = IsHitBlock(vray, htotalStep, tracingNext, hvoxel, abs(hvd.z), rayLen, hitNormal, cellSize);
             if (!shapeHit) continue;
 
             // 反弹 albedo 用整块图集中心色：64³ 网格无法表达 16px 纹理细节，

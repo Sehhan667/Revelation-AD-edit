@@ -217,17 +217,16 @@ void main() {
                     }
             }
             }
-            // [2026-08-17] 形状块(155-294, IsHitBlock 走 HitShape 子盒)只写 cell=1.0m 的级联：
-            // 子盒判定按 1m 整块坐标系设计(blockOrigin=voxelCoord-ray.ori, 子盒 1/16 格)，
-            // 塞进 0.5m(mid@D=32)/2m(far@D=64) 格 → 形状缩放错配 → 命中/穿透交替成
-            // 0.5m/2m 周期锯齿(用户实测 0.5m 黑锯齿)。cell=1m 的级联: D=64→mid, D=32→far。
-            // 全块(≤154)/发射/透明不受影响(整格或独立路径)。
+            // [2026-08-17] 形状块(155-294)只写 cell≤1.0m 的级联：
+            // HitShape 已做世界锚定换算（按 cell 换算射线/blockOrigin/距离，任意格尺寸
+            // 判定正确），但 cell>1m 时质心格锚定会偏移（如 far@D=64 的 2m 格, 块锚点
+            // 可偏 1m）→ 排除 >1m 级联。D=64: 只 mid(1m)；D=32: mid(0.5m)+far(1m) 全覆盖。
             bool shapeBlock = voxelID > 154.0;
             if (all(bvec3(clamp(voxelCoord, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoord)))
-                if (!shapeBlock || abs(VOXEL_CASCADE_CELL_1 - 1.0) < 0.01)
+                if (!shapeBlock || VOXEL_CASCADE_CELL_1 <= 1.0)
                     EMIT_VOXEL_CASCADE(voxelCoord, VOXEL_TILE_Y_1, 1.0);
             if (all(bvec3(clamp(voxelCoordFar, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordFar)))
-                if (!shapeBlock || abs(VOXEL_CASCADE_CELL_2 - 1.0) < 0.01)
+                if (!shapeBlock || VOXEL_CASCADE_CELL_2 <= 1.0)
                     EMIT_VOXEL_CASCADE(voxelCoordFar, VOXEL_TILE_Y_2, 2.0);
 
             #undef EMIT_VOXEL_CASCADE

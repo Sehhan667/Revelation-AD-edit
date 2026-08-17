@@ -179,7 +179,7 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         vray.rdir = rdir;
         vray.sdir = sdir;
         vec3 hitNormal;
-        if (!IsHitBlock(vray, totalStep, tracingNext, voxelCoord, abs(hvd.z), rayLength, hitNormal))
+        if (!IsHitBlock(vray, totalStep, tracingNext, voxelCoord, abs(hvd.z), rayLength, hitNormal, 1.0))
             continue;
 
         // 反弹 albedo：固体格 r/g=染过色中心色 RG、w 高 8 位=染过色 B（Shadow.frag 草方块
@@ -229,7 +229,7 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // × 体素 DDA 短程遮挡（3 格内屋檐/树冠/墙角等网格内遮挡，阴影贴图分辨率外）。
         // 彩色阴影：实心挡=0，直射=1，穿玻璃=玻璃吸收色（反弹光线染色）
         vec3 sunVis = VoxelSunShadowMap(hitWorldPos, hitNormal)
-                    * VoxelSunShadowTracing(hitVoxelPos, sunDir);
+                    * VoxelSunShadowTracing(hitVoxelPos, sunDir, 1.0);
 
         // [2026-08-09 恢复] 追踪端阳光反弹已恢复（删除临时 *0.0）；sunVis 判定
         // 保证只有被太阳直射的体素才反弹阳光，洞穴/背阴处不会产生阳光散射。
@@ -404,7 +404,7 @@ vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float 
             vray.rdir = rdir;
             vray.sdir = sdir;
             vec3 hitNormal;
-            if (!IsHitBlock(vray, totalStep, tracingNext, voxelCoord, abs(hvd.z), rayLen, hitNormal))
+            if (!IsHitBlock(vray, totalStep, tracingNext, voxelCoord, abs(hvd.z), rayLen, hitNormal, cell))
                 continue;
 
             vec3 alb = vec3(hvd.r, hvd.g, VoxelUnpack2xU8X(hvd.w));
@@ -430,7 +430,7 @@ vec3 VoxelTracePixelCascaded(vec3 origin, vec3 normal, vec3 vertexNormal, float 
             vec3 hitWorldPos = (hitVoxelPos - float(VOXEL_RADIUS)) * cell - cameraPositionFract;
             vec3 sunVis = VoxelSunShadowMap(hitWorldPos, hitNormal);
             if (cascade == 1)
-                sunVis *= VoxelSunShadowTracing(hitVoxelPos, sunDir);
+                sunVis *= VoxelSunShadowTracing(hitVoxelPos, sunDir, cell);
 
             contrib += alb * (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
                      * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * absorption;
