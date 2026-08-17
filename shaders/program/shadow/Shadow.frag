@@ -27,7 +27,6 @@ flat in uint isWaterOut;
 
 #ifdef ENABLE_VOXELIZATION
 flat in vec3 v_voxelCoord;   // 体素格坐标（imageStore 目标）
-flat in float v_cascade;     // 级联索引：0=near 1=mid 2=far
 flat in float v_voxelID;     // 正=固体 / 负=透明
 flat in float v_emissive;    // 发光量（材料 ID 硬编码 [20,31]）
 flat in float v_skylight;    // 天空光 lightmap（0-1）
@@ -39,11 +38,6 @@ flat in float v_isVoxel;     // 1=体素 tile 像素
 // 显式 binding 会与 Iris 给普通贴图分配的硬件纹理单元冲突（全黑根因，血泪教训 #1）。
 layout (rgba16f) uniform writeonly image3D voxelData;      // xy=atlas UV 中心 z=voxelID(原值) w=texRes(16)
 layout (r32ui) uniform uimage3D voxelLightData;            // x=emissive y=sky z=block（atomicMax 需读写权限，不能 writeonly）
-// 级联缓冲（ADR-0001）：near/far 与 mid 同格式，Shadow.geom 按级联分别调度
-layout (rgba16f) uniform writeonly image3D voxelDataNear;
-layout (r32ui) uniform uimage3D voxelLightDataNear;
-layout (rgba16f) uniform writeonly image3D voxelDataFar;
-layout (r32ui) uniform uimage3D voxelLightDataFar;
 #endif
 
 //======// Uniform //=============================================================================//
@@ -86,22 +80,13 @@ void main() {
                 wPack = (floor(clamp(16.0 / 255.0, 0.0, 1.0) * 255.0) * 256.0
                        + floor(clamp(v_skylight, 0.0, 1.0) * 255.0)) / 65535.0;
             }
-            ivec3 voxelCell = ivec3(v_voxelCoord);
+            imageStore(voxelData, ivec3(v_voxelCoord), vec4(rgStore, v_voxelID, wPack));
             // 亮度类光数据仍 atomicMax。旧字节序 packUnorm4x8(emissive,sky,block,0)：
             // R=emissive(byte0) G=sky(byte8) B=block(byte16) → block光(uint高位) 压掉发射光(uint低位)
             // → 火把旁边高block光方块 atomicMax 胜出 → 火把发射被清零 → "六面突然全黑"（#6根因）。
             // 修复：发射光放 B 通道（byte 16-23），block光放 G（byte 8-15），sky放 R（byte 0-7）。
             uint lightPacked = packUnorm4x8(vec4(v_skylight, v_blocklight, v_emissive, 0.0));
-            if (v_cascade < 0.5) {
-                imageStore(voxelDataNear, voxelCell, vec4(rgStore, v_voxelID, wPack));
-                imageAtomicMax(voxelLightDataNear, voxelCell, lightPacked);
-            } else if (v_cascade > 1.5) {
-                imageStore(voxelDataFar, voxelCell, vec4(rgStore, v_voxelID, wPack));
-                imageAtomicMax(voxelLightDataFar, voxelCell, lightPacked);
-            } else {
-                imageStore(voxelData, voxelCell, vec4(rgStore, v_voxelID, wPack));
-                imageAtomicMax(voxelLightData, voxelCell, lightPacked);
-            }
+            imageAtomicMax(voxelLightData, ivec3(v_voxelCoord), lightPacked);
             return;
         }
 
