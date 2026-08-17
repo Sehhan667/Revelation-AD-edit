@@ -227,13 +227,13 @@ void main() {
             bool shapeBlock = voxelID > 154.0;
             if (all(bvec3(clamp(voxelCoord, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoord))) {
                 if (voxelID == 1.0)
-                    EMIT_FULLBLOCK_FILL(VOXEL_CASCADE_CELL_1, VOXEL_TILE_Y_1, 1.0, voxelCoord);
+                    EMIT_FULLBLOCK_FILL(VOXEL_CASCADE_CELL_1, VOXEL_TILE_Y_1, 1.0, voxelCoord)
                 else if (!shapeBlock || VOXEL_CASCADE_CELL_1 <= 1.0)
                     EMIT_VOXEL_CASCADE(voxelCoord, VOXEL_TILE_Y_1, 1.0);
             }
             if (all(bvec3(clamp(voxelCoordFar, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoordFar))) {
                 if (voxelID == 1.0)
-                    EMIT_FULLBLOCK_FILL(VOXEL_CASCADE_CELL_2, VOXEL_TILE_Y_2, 2.0, voxelCoordFar);
+                    EMIT_FULLBLOCK_FILL(VOXEL_CASCADE_CELL_2, VOXEL_TILE_Y_2, 2.0, voxelCoordFar)
                 else if (!shapeBlock || VOXEL_CASCADE_CELL_2 <= 1.0)
                     EMIT_VOXEL_CASCADE(voxelCoordFar, VOXEL_TILE_Y_2, 2.0);
             }
