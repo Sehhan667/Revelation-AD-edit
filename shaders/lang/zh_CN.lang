@@ -621,6 +621,9 @@ option.VOXEL_GI_BLENDED_LIGHTMAP.comment=原版 Lightmap 与体素 GI 的混合�
 option.VOXEL_TRACE_SUN_STRENGTH=阳光反弹强度
 option.VOXEL_TRACE_SUN_STRENGTH.comment=追踪端阳光反弹（阳光从被照亮的表面反射进阴影）的强度倍率；过弱阴影发黑、过强泛白
 
+option.VOXEL_GI_SUN_STRENGTH=阳光注入强度
+option.VOXEL_GI_SUN_STRENGTH.comment=体素 GI 缓存（IRC）的阳光反弹注入倍率；调大让阴影处出现金色阳光漫反射
+
 option.VOXEL_TRACE_DISTANCE=光线传播距离
 option.VOXEL_TRACE_DISTANCE.comment=追踪光线最大步进体素数；越大阳光/方块光传播越远（性能略降）
 

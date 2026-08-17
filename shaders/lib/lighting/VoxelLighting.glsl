@@ -127,7 +127,10 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 量级链路：注入 nRC → ×100 存储 → 查询 ×0.01 解码，最终 ≈ 注入值 × albedo × STRENGTH
 // 2026-08-04 真阳光改造（思路）：阳光注入主体改为"阴影贴图判定直射"（sunVis），
 // vanilla 天空光 lightmap 降级为弱环境底，保留洞穴渐变。
-#define VOXEL_GI_SUN_STRENGTH 0.5      // 真阳光直射注入倍率（× sunLight 暖阳色，2026-08-06 阳光色改为暖阳色后提亮，让阳光反弹传播到阴影）
+// [2026-08-17] 0.5→1.0 并暴露滑条：IRC 阳光注入去掉 rPI 后（与追踪端同口径），
+// 1.0 让阳光反弹 ≈ 天光量级，阴影处出现金色漫反射（itrp 同款观感：物理 sunLight 1.8×rPI≈0.57，
+// 我们 0.427×1.0 同量级）。
+#define VOXEL_GI_SUN_STRENGTH 1.0      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显）
 #define VOXEL_GI_SKY_STRENGTH 1.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 默认 2.0→1.0：与追踪端同降，缓解"特亮侧过曝"）
 #define VOXEL_GI_BLOCK_STRENGTH 0.8    // 方块光注入倍率（× blocklightColor，火把等光源）
 // 天空辐射贴图 → 0-1 尺度换算基准（skyViewTex 白天顶光 ≈110-130；与阳光基准同量级，
@@ -159,8 +162,10 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 改为物理直射辐照度换算；强度 1.0 → 2.0 让反弹在阴影里可辨。
 // [FIX 2026-08-05] 2.0 → 8.0：阳光项去掉 rPI 后仍比方块光弱，实测"阳光反弹不可见"；
 // 8.0 让阳光反弹 ≈ 0.4×cosθ×albedo×8 达到可见量级（过亮可调回 2-5）。
+// [2026-08-17] 8.0→12.0：用户反馈"阳光反射太弱"（itrp 半开阔阴影处有明亮金色漫反射），
+// 追踪端阳光反弹略提；过强可调回 8。
 // 已暴露为 GUI 滑条（shaders.properties sliders），可在光影设置里直接调。
-#define VOXEL_TRACE_SUN_STRENGTH 8.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
+#define VOXEL_TRACE_SUN_STRENGTH 12.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
 // 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；
 // 洞穴/室内（skyLightmap≈0）无天光，不会过量。若整体过亮用 VOXEL_GI_TRACE_STRENGTH 旋钮。

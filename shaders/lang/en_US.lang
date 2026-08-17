@@ -445,6 +445,9 @@ option.VOXEL_GI_TRACE_STRENGTH.comment=Overall strength knob for the per-pixel d
 option.VOXEL_TRACE_SUN_STRENGTH=Sun Bounce Strength
 option.VOXEL_TRACE_SUN_STRENGTH.comment=Strength of the sun bounce in per-pixel diffuse tracing (light reflected from sunlit surfaces into shadow). Too low = dark shadows, too high = overexposed.
 
+option.VOXEL_GI_SUN_STRENGTH=Sun Inject Strength
+option.VOXEL_GI_SUN_STRENGTH.comment=Sun bounce injection strength into the voxel GI (IRC) cache; raise to make warm golden diffuse light appear in shadowed areas
+
 option.VOXEL_TRACE_DISTANCE=Trace Distance
 option.VOXEL_TRACE_DISTANCE.comment=Maximum voxel steps for traced rays; larger = sun/block light travels farther (slightly slower)
 

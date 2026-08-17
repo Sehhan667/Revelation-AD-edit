@@ -330,7 +330,10 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi, int cascade, float cellSize) {
             // [FIX 2026-08-05] 门限改用 voxelData.w 写胜 skylight（同追踪端/一致）：
             // lD.x 来自 imageAtomicMax 的 voxelLightData，sky 是最低字节被高位压掉 → 恒 0。
             float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
-            float sunLighting = saturate(dot(sunDir, hitNormal)) * rPI * saturate(hitSkylight * 444.0);
+            // [2026-08-17] 去掉 rPI：与追踪端（VoxelTracing L422 无 rPI）同口径。
+            // 原 rPI 让 IRC 阳光注入比追踪端弱 π 倍 → 缓存里天光(≈0.32) 压过阳光
+            // (≈0.068)，阴影反弹只有蓝天光、无金色阳光漫反射（用户实测：itrp 有）。
+            float sunLighting = saturate(dot(sunDir, hitNormal)) * saturate(hitSkylight * 444.0);
             // [FIX 2026-08-06 阳光色] 阳光项用暖阳色 sunLight（sunIrradiance 暖白
             // ×128×rcp(300) 归一化到 0-1，白天≈0.43，与注入端 sunLight/黑体色温一致 + 追踪端
             // directIlluminance），不再是天空蓝 VoxelSkyColor——蓝天空色导致阳光反弹偏蓝且暗，
