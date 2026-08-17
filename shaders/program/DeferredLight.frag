@@ -490,8 +490,10 @@ void main() {
         // 网格内完全交给 GI（含最小环境光底）：否则平铺底光会把
         // 窗口逸散/遮挡 AO 的梯度盖成“死板固定亮度”（用户实测反馈）。
         // 仅保留夜视底光，避免夜视失效。
+        // [2026-08-17] 加最小环境光底：仅随 lightmap.y 缩放（洞穴≈0 保持黑，不漏光），
+        // 系数 0.04 只为避免"室内/朝下特黑侧全黑"的硬分界线观感；AO 梯度仍由 GI 提供。
         if (ambientInVoxelGrid)
-            ambientAccum = vec3(5e-3 * nightVision);
+            ambientAccum = max(vec3(5e-3 * nightVision), skyColor * lightmap.y * 0.04);
         else
             // 网格外：洞穴/封闭室内不吃平铺底光（lightmap≈0 → 0），
             // 否则大洞穴远处的网格外墙壁会被均匀点亮（洞穴漏光根因之一）。

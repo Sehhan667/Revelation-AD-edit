@@ -19,10 +19,12 @@ float VoxelSkyHorizonFade(vec3 dir) {
     return saturate(dir.y * 25.0 + 0.5);
 }
 
-// 漏光门控：skylight 0.10-0.25 平滑过渡（洞穴/浅洞 <0.10 → 0，杜绝普遍泛蓝；
-// 户外 ≥0.25 全开；树冠/半遮挡按比例保留）
+// 漏光门控：skylight 0.03-0.30 平滑过渡（2026-08-17 放宽：原 0.10-0.25 阈值太陡，
+// 室内/半遮挡出现硬分界线——低于 0.10 直接 0、高于 0.25 直接满，而 skylight 每格只降
+// 1/15，过渡带仅 1-2 格。放宽后部分遮挡（走廊/树冠）按比例保留天光，边界柔和。
+// 洞穴（≈0）仍为 0，不漏光。）
 float VoxelSkyLeakGate(float lightmap) {
-    return smoothstep(0.10, 0.25, lightmap);
+    return smoothstep(0.03, 0.30, lightmap);
 }
 
 // 方向天空辐射：AtmosphereSkyView（大气 LUT，调用方需先包含 atmosphere/Common.glsl）

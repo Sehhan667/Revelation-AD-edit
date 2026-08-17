@@ -128,7 +128,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 2026-08-04 真阳光改造（思路）：阳光注入主体改为"阴影贴图判定直射"（sunVis），
 // vanilla 天空光 lightmap 降级为弱环境底，保留洞穴渐变。
 #define VOXEL_GI_SUN_STRENGTH 0.5      // 真阳光直射注入倍率（× sunLight 暖阳色，2026-08-06 阳光色改为暖阳色后提亮，让阳光反弹传播到阴影）
-#define VOXEL_GI_SKY_STRENGTH 2.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显）
+#define VOXEL_GI_SKY_STRENGTH 1.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 默认 2.0→1.0：与追踪端同降，缓解"特亮侧过曝"）
 #define VOXEL_GI_BLOCK_STRENGTH 0.8    // 方块光注入倍率（× blocklightColor，火把等光源）
 // 天空辐射贴图 → 0-1 尺度换算基准（skyViewTex 白天顶光 ≈110-130；与阳光基准同量级，
 // 调大=天光变暗、调小=天光变亮）。定义在 VoxelSkyLight.glsl 之前（VoxelLighting 先 include）
@@ -164,7 +164,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；
 // 洞穴/室内（skyLightmap≈0）无天光，不会过量。若整体过亮用 VOXEL_GI_TRACE_STRENGTH 旋钮。
-#define VOXEL_GI_TRACE_SKY_STRENGTH 4.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0] 追踪端出界方向天光倍率
+#define VOXEL_GI_TRACE_SKY_STRENGTH 1.5  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0] 追踪端出界方向天光倍率（2026-08-17 默认 4.0→1.5：与注入端同降，缓解"特亮侧过曝/对比撕裂"）
 // （新增环境光控制宏已移除 2026-08-06：环境光还原旧版纯 skySH 行为）
 
 #endif // VOXEL_GI_LIGHTING_INCLUDED
