@@ -112,7 +112,10 @@ void main() {
         vec3 baseCentroid = g_voxelCoord[0] * 0.33333333 + g_voxelCoord[1] * 0.33333333 + g_voxelCoord[2] * 0.33333333;
         vec3 baseRel = baseCentroid - vec3(float(VOXEL_RADIUS));
         vec3 voxelCoordNear = floor(baseRel * (1.0 / VOXEL_CASCADE_CELL_0) + vec3(float(VOXEL_RADIUS)));
-        vec3 voxelCoord     = floor(baseCentroid);   // mid = 原 64³@1m 语义
+        // [FIX 2026-08-17] mid 级联必须与查询/注入端一致地用 CELL_1 换算。
+        // 旧代码 floor(baseCentroid) 硬编码 1.0m cell：VOXEL_DISTANCE=64 时 CELL_1 恰为 1.0 无事，
+        // 调小距离后 CELL_1<1.0 → 写入端 1m 网格 vs 读取端 0.5m 网格 → 光与光源错位（用户实测）。
+        vec3 voxelCoord     = floor(baseRel * (1.0 / VOXEL_CASCADE_CELL_1) + vec3(float(VOXEL_RADIUS)));
         vec3 voxelCoordFar  = floor(baseRel * (1.0 / VOXEL_CASCADE_CELL_2) + vec3(float(VOXEL_RADIUS)));
 
         if (all(bvec2(
@@ -206,7 +209,12 @@ void main() {
                             if (PointInTri2D(p, a2, b2, c2) && dot(cc - n0, nrm) < 0.0)
                                 EMIT_VOXEL_CASCADE(vec3(ix, iy, iz), VOXEL_TILE_Y_0, 0.0);
                         }
-                }
+                    } else {
+                        // [FIX 2026-08-17] VOXEL_DISTANCE 调小时 near cell 变小,完整方块覆盖格数
+                        // 超 GS 顶点预算(45)无法逐格填充 → 退化为质心单格,避免 near 级联整块空。
+                        // 查询端 SKIP_NEAR 时 near 仅作注入冗余,不影响主查询;恢复大距离后自动回填充。
+                        EMIT_VOXEL_CASCADE(voxelCoordNear, VOXEL_TILE_Y_0, 0.0);
+                    }
             }
             }
             if (all(bvec3(clamp(voxelCoord, vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)) == voxelCoord)))
