@@ -60,12 +60,16 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     vec3 lutSky = max(AtmosphereSkyView(atmosphereViewPos, dir, worldSunDir), vec3(0.0)) * rcp(VOXEL_SKY_REFERENCE);
     float fade = VoxelSkyHorizonFade(dir);
     float gate = VoxelSkyLeakGate(lightmap);
-    // [FIX 2026-08-18 傍晚过亮/不变色] 合并 LUT 与 skyColor 兜底必须"LUT 优先、兜底补位"，
-    // 不能逐分量 max：白天 LUT 亮蓝 > skyColor 无影响，但傍晚 LUT 物理变暗变粉后
-    // max 逐分量取大 → 取到仍亮的蓝紫 skyColor → 傍晚天光不衰减、不变粉（用户实测）。
-    // 正确语义：LUT 恒 0（GI pass 未绑定/未生成）时 skyColor 兜底，其余一律用 LUT。
+    // [FIX 2026-08-18] 白天/傍晚用不同合并策略（用户实测校准）：
+    // - 白天（太阳高）：max 合并——LUT 物理值÷300 仅 ~0.4，比 MC skyColor（亮蓝 ~0.7+）
+    //   暗，LUT 优先会让白天所有天光砍暗（用户实测"太黑"）；max 保证白天亮度。
+    // - 傍晚/夜晚（太阳低）：LUT 优先——LUT 物理变暗变粉，max 会取到仍亮的蓝紫 skyColor
+    //   → 傍晚不衰减、不变粉（用户实测"SH 粉但 GI 蓝"）。此时用 LUT，颜色/亮度都正确。
+    // - skyColor 兜底：LUT 恒 0（GI pass 未绑定/未生成）时用 MC 天空色，避免全黑。
+    float dayBlend = saturate(worldSunDir.y * 6.0);   // 太阳仰角 0°→1.0，~9.6° 以上全白天
     vec3 sky = lutSky;
-    if (luminance(lutSky) < 1e-4) sky = skyColor;   // 兜底判定用亮度，非逐分量 max
+    if (luminance(sky) < 1e-4) sky = skyColor;        // LUT 无值 → 兜底
+    sky = mix(sky, max(sky, skyColor), dayBlend);     // 傍晚用 LUT，白天过渡到 max
     sky = max(sky * fade * gate, vec3(0.0));
     sky *= 0.8;
     // [2026-08-17] 阳光颜色混合（SH 环境光同款机制，用户需求）：天光随太阳高度染暖阳色，
