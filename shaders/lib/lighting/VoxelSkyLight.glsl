@@ -31,11 +31,12 @@ vec3 SimpleSkyLighting(vec3 skylightColor, vec3 shadowlightColor, float NdotU, f
     vec3 skySunLight = shadowlightColor * (NdotU * 0.015 + 0.02);
     skylight += skySunLight;
     skylight = mix(skylight, shadowlightColor * (NdotU * 0.003 + 0.005), wetness * 0.6);
-    // [2026-08-18] ×50 临时调试值已还原（阴影死黑根因是追踪端射程用尽未出界，
-    // 非下限强度不足）：×50 会让洞穴体素残留 skylight（vd.w 写胜值 ≈0.05-0.15）
-    // ×0.22×50 ≈ 0.55-1.65 直接拉亮 IRC 下限 → 洞穴过亮（用户实测）。
-    // 还原为 itrp 原式 lightmap×0.22，阴影由射程修复后的真实出界天光承担。
-    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * 0.22);
+    // [2026-08-18] 强度系数：×50 是用户实测"白天地面刚刚好"的确认值，不要还原！
+    // 但 ×50 会把洞穴体素残留 skylight（vd.w 写胜值 0.05-0.15）放大成 0.55-1.65
+    // → 洞穴过亮。修复：lightmap 门控加 step(0.15) 硬门槛（与 MEMO 新暴露播种
+    // edgeSeedGate 同阈值，洞穴残留实测 <0.15、地面 0.7+ 不受影响）→ 洞穴不触发下限。
+    float caveGate = step(0.15, lightmap);
+    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * 0.22 * caveGate) * 50.0;
 }
 
 // 地平线衰减：上半球全开，略低于地平线即截止（与通用光追天空采样一致）
