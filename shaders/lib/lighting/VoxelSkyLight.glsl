@@ -72,8 +72,8 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     // 网格内 GI 的 LUT 傍晚物理值很暗 → "暗淡的多"（用户实测）。加一个按天空可见度
     // 门控的 skyColor 底（傍晚/夜晚生效，白天被 dayBlend 盖掉），让网格内傍晚也有
     // 可见天光；色度随后用 SH 天顶统一，底只提亮度不染色。
-    // [2026-08-18 傍晚过亮] 0.25 → 0.12 → 0.08：用户两次反馈傍晚偏亮，逐步调暗。
-    vec3 skyColorFloor = skyColor * 0.08 * saturate(1.0 - worldSunDir.y * 2.5);
+    // [2026-08-18 傍晚过亮] 0.25 → 0.12 → 0.08 → 0.05：用户多次反馈傍晚偏亮，逐步调暗。
+    vec3 skyColorFloor = skyColor * 0.05 * saturate(1.0 - worldSunDir.y * 2.5);
     sky = max(sky, skyColorFloor);
     sky = mix(sky, max(sky, skyColor), dayBlend);
     float skyLuma = luminance(sky);   // 先取亮度（保持分时策略的亮度）
@@ -94,8 +94,9 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     // 色度取 global.directIlluminance（与网格外同一来源，含昼夜色温——正午暖白、
     // 傍晚橙红、夜晚暗蓝；比 settings.glsl 的 sunIrradiance 纯白更能中和蓝）。
     // 强度 = 太阳仰角权重（正午暖、傍晚弱、夜晚关），加性混入暖底模拟地面反弹阳光。
+    // [2026-08-18 白天更暖] 0.18 → 0.30：用户要求白天天光混入更多阳光颜色。
     #ifndef DIMENSION_THE_END
-        float bounceBlend = saturate(worldSunDir.y * 2.0) * 0.18;
+        float bounceBlend = saturate(worldSunDir.y * 2.0) * 0.30;
         if (bounceBlend > 0.0) {
             vec3 directChroma = global.directIlluminance / max(luminance(global.directIlluminance), 1e-4);
             sky = mix(sky, directChroma * skyLuma, bounceBlend);
