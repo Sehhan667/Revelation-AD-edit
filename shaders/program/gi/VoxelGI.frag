@@ -315,7 +315,11 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
         if (!hitSolid) {
             // 出界 → 方向天空光 + NOLIGHT 兜底：skyMapTex 方向辐射（内含地平线衰减
             // 与线性漏光门控）。洞穴 hitSkylight≈0 → 无天光。
-            contrib += VoxelSkyColor(dir, hitSkylight) * VOXEL_GI_SKY_STRENGTH * absorption;
+            // [2026-08-18] 门控 = max(体素 lightmap, 上一帧曝光度)：与追踪端一致，
+            // 曝光度是真·天空可见度（DEBUG 实测"红但黑"），lightmap 低的开阔阴影
+            // 不再被压成 0。
+            contrib += VoxelSkyColor(dir, max(hitSkylight, FetchPrevExposure(c)))
+                     * VOXEL_GI_SKY_STRENGTH * absorption;
             // NOLIGHT 底光（出界路径专有：NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)；
             // 命中路径无此项，闭塞处底光由自反弹/方块光链路提供）
             contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS
@@ -385,13 +389,6 @@ void main() {
             vec4 irc = IrcTraceVoxel(c, cDi);
             nRC = irc.rgb;
             nExp = irc.a;
-            // [2026-08-18] 解析下限每帧生效：固体体素即使射线出不去（阴影/闭塞），
-            // IRC 辐照度也不低于 SimpleSkyLighting——它由法线曲线 + lightmap 门控给出
-            // 连续底光（洞穴 lightmap≈0 → 下限≈0 不漏光），阴影"本身是亮的"（用户实测
-            // 阴影太黑）。此前下限只在"新暴露播种"和"查询越界"生效，稳态阴影体素
-            // 仍靠射线碰运气 → RGB 趋 0。
-            nRC = max(nRC, SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
-                                             0.0, VoxelUnpack2xU8Y(vd.w)));
         }
 
         // ---- 上一帧辐照度（带相机重投影）----
@@ -426,6 +423,14 @@ void main() {
 
         // ---- 时间混合（实体/空体素统一；IRC 随机采样靠时域累积降噪）----
         nRC = max(mix(nRC, pRC, localBw), 1e-7);
+        // [2026-08-18] 解析下限必须在时间混合之后施加：0.99 混合下每帧只接受 1% 新值，
+        // 若下限在采样后、混合前，冷启动缓存≈0 时会被稀释成 ≈0 永远爬不起来
+        // → 阴影 IRC≈0 暗、只有网格边缘出界路径亮（用户实测"越接近边缘越亮"）。
+        // 混合后取 max 保证每帧结果至少 = SimpleSkyLighting（lightmap 门控，洞穴不漏光）。
+        if (sld) {
+            nRC = max(nRC, SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
+                                             0.0, VoxelUnpack2xU8Y(vd.w)));
+        }
         nExp = mix(nExp, pExp, bw);      // Phase 1：曝光度恒用 bw，防二值跳变
 
         // ---- 保色压缩：任一分量 >1.0 时按最大分量整体缩放，保持色相不漂白 ----

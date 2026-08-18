@@ -31,7 +31,9 @@ vec3 SimpleSkyLighting(vec3 skylightColor, vec3 shadowlightColor, float NdotU, f
     vec3 skySunLight = shadowlightColor * (NdotU * 0.015 + 0.02);
     skylight += skySunLight;
     skylight = mix(skylight, shadowlightColor * (NdotU * 0.003 + 0.005), wetness * 0.6);
-    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * 0.22);
+    // [2026-08-18 临时调试] ×50 放大下限,验证阴影是否随下限变亮、是否漏光。
+    // 定位后恢复系数(或改回 lightmap*0.22 原式)。
+    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * 0.22) * 50.0;
 }
 
 // 地平线衰减：上半球全开，略低于地平线即截止（与通用光追天空采样一致）
