@@ -105,11 +105,17 @@ void main() {
 			// 曝光度 = 射线追踪的真实天空可见度（DEBUG_VOXEL_SKY_LEVEL 实测：阴影处
 			// exposure=1 显示红，但 lightmap 门控把出界天光压成 0 → 画面黑）。
 			// max 兼容：开阔阴影 exposure=1 → 天光全量；洞穴 exposure≈0 且 lightmap≈0 → 仍门控。
+			// [FIX 2026-08-18 洞穴闪烁] 门控输入与 IRC 端对齐：IRC 注入端（VoxelGI.frag）
+			// 用 max(体素 skylight, 曝光度)——体素 skylight 是体素化写胜值（洞穴残留低）；
+			// 追踪端此前用 max(像素 lightmap.y, 曝光度)——MC lightmap.y 在洞穴口/缝隙处
+			// 有残留（0.1~0.3）→ 追踪端放行天光、IRC 端不放行 → 同一位置追踪亮 IRC 暗
+			// → 闪来闪去（用户实测）。改为读像素所在体素的 skylight，两端口径一致。
 			vec3 voxelCoord = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract + float(VOXEL_RADIUS);
 			float skyExposure = 0.0;
 			ivec3 voxelC = ivec3(clamp(floor(voxelCoord), vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)));
 			skyExposure = FetchVoxelRadiance(voxelC).a;
-			float skyLightmap = max(lightmap.y, skyExposure);
+			float voxelSkylight = VoxelUnpack2xU8Y(texelFetch(voxelDataSampler, voxelC, 0).w);
+			float skyLightmap = max(voxelSkylight, skyExposure);
 			// 种子：全分辨率像素索引哈希 + 帧计数（每帧不同方向，棋盘 offset 轮转 4 帧全覆盖）
 			uint traceSeed = triple32(uint(renderTexel.x + renderTexel.y * int(viewWidth)) * 0x9E3779B1u
 			                          + uint(frameCounter + 1) * 0x85EBCA77u);
