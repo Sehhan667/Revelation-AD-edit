@@ -74,6 +74,21 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     vec3 shSky = ConvolvedReconstructSH3(global.skySH, dir);
     vec3 shChroma = shSky / max(luminance(shSky), 1e-4);
     sky = shChroma * skyLuma;
+    // [2026-08-18] 网格外环境光含"暖色假反弹"（DeferredLight L511：
+    // ambientAccum += CalculateFakeBouncedLight * lm3 * lm3 * sunlightBase，
+    // sunlightBase = 暖阳色 global.directIlluminance × 云影）→ 蓝被中和，
+    // 而网格内 GI 天光是纯 SH 蓝 → 明显更蓝（用户实测）。用户方案：
+    // 网格内也混入"假反弹的颜色"（暖阳色度），但不做假反弹的几何/亮度计算。
+    // 色度取 global.directIlluminance（与网格外同一来源，含昼夜色温——正午暖白、
+    // 傍晚橙红、夜晚暗蓝；比 settings.glsl 的 sunIrradiance 纯白更能中和蓝）。
+    // 强度 = 太阳仰角权重（正午暖、傍晚弱、夜晚关），加性混入暖底模拟地面反弹阳光。
+    #ifndef DIMENSION_THE_END
+        float bounceBlend = saturate(worldSunDir.y * 2.0) * 0.18;
+        if (bounceBlend > 0.0) {
+            vec3 directChroma = global.directIlluminance / max(luminance(global.directIlluminance), 1e-4);
+            sky = mix(sky, directChroma * skyLuma, bounceBlend);
+        }
+    #endif
     // [2026-08-18] 阳光颜色混合（DeferredLight 环境光同款，用户要求）：
     // 让 GI 天光与网格外 SH 环境光同样受 AMBIENT_SUNLIGHT_TINT_RATIO 暖阳色染色——
     // 正午金黄、黄昏渐变、夜晚关闭。色度取 sunIrradiance 归一化（settings.glsl
