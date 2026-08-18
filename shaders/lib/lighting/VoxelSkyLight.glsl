@@ -31,12 +31,14 @@ vec3 SimpleSkyLighting(vec3 skylightColor, vec3 shadowlightColor, float NdotU, f
     vec3 skySunLight = shadowlightColor * (NdotU * 0.015 + 0.02);
     skylight += skySunLight;
     skylight = mix(skylight, shadowlightColor * (NdotU * 0.003 + 0.005), wetness * 0.6);
-    // [2026-08-18] 强度系数：×50 是用户实测"白天地面刚刚好"的确认值，不要还原！
-    // 但 ×50 会把洞穴体素残留 skylight（vd.w 写胜值 0.05-0.15）放大成 0.55-1.65
-    // → 洞穴过亮。修复：lightmap 门控加 step(0.15) 硬门槛（与 MEMO 新暴露播种
-    // edgeSeedGate 同阈值，洞穴残留实测 <0.15、地面 0.7+ 不受影响）→ 洞穴不触发下限。
-    float caveGate = step(0.15, lightmap);
-    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * 0.22 * caveGate) * 50.0;
+    // [FIX 2026-08-18 暗处过亮/过渡生硬] 原 step(0.15) 硬门槛 + 线性 ×50：
+    // lightmap=0.5 → 0.5×0.22×50=5.5 保色压缩到 1.0，与白天(11→1)同样饱和
+    // → 暗处和明处一样亮、0.15 处硬跳变（用户实测）。改为：
+    // - 软门槛 smoothstep(0.15,0.40)：洞穴残留(<0.15)仍归零，过渡平滑
+    // - lightmap² 曲线：白天(≈1)仍饱和到 1.0（视觉与 ×50 一致，用户确认值），
+    //   暗处按平方衰减有梯度（0.6→0.63、0.4→0.28、0.2→0.07），不过量
+    float caveGate = smoothstep(0.15, 0.40, lightmap);
+    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * lightmap * 0.22 * caveGate) * 8.0;
 }
 
 // 地平线衰减：上半球全开，略低于地平线即截止（与通用光追天空采样一致）
@@ -68,12 +70,16 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     if (luminance(sky) < 1e-4) sky = skyColor * 0.5;
     sky = mix(sky, max(sky, skyColor), dayBlend);
     float skyLuma = luminance(sky);   // 先取亮度（保持分时策略的亮度）
-    // [FIX 2026-08-18 傍晚发绿] 颜色完全按 SH 色度（global.skySH 与 DeferredLight
-    // 环境光同源：傍晚淡粉/白天蓝）。只替换色度、亮度保持 skyLuma：
-    // 归一化色度 luminance=1，乘回亮度不改变明暗（线性性）。
+    // [FIX 2026-08-18 傍晚发绿] 色度按 dayBlend 分时段取：
+    // - 白天：SH 色度（global.skySH 与 DeferredLight 环境光同源，正午蓝正确）
+    // - 傍晚/夜晚：LUT 色度（物理天空，AtmosphereSkyView 直接给出橙粉/蓝紫）
+    // 全用 SH 时傍晚发绿：SH 是 3 阶低频球谐，会把太阳周围粉色光晕展平、
+    // 与蓝色天顶混成青绿（用户实测）。LUT 是逐方向精确物理采样，无此问题。
     vec3 shSky = ConvolvedReconstructSH3(global.skySH, dir);
     vec3 shChroma = shSky / max(luminance(shSky), 1e-4);
-    sky = shChroma * skyLuma;
+    vec3 lutChroma = lutSky / max(luminance(lutSky), 1e-4);
+    vec3 chroma = mix(lutChroma, shChroma, dayBlend);
+    sky = chroma * skyLuma;
     // [2026-08-18] 网格外环境光含"暖色假反弹"（DeferredLight L511：
     // ambientAccum += CalculateFakeBouncedLight * lm3 * lm3 * sunlightBase，
     // sunlightBase = 暖阳色 global.directIlluminance × 云影）→ 蓝被中和，
