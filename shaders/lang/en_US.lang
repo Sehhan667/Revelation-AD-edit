@@ -494,6 +494,9 @@ option.VOXEL_GI_BLEND.comment=Fraction of new samples the IRC irradiance cache a
 option.VOXEL_EDGE_BLEND_DISTANCE=Grid Edge Blend Distance
 option.VOXEL_EDGE_BLEND_DISTANCE.comment=Distance (in voxels) over which outside-grid ambient light blends into the grid: smoothly transitions from "outside SH ambient" to "inside GI" when new blocks enter the 64^3 range, avoiding dark-to-bright pops at the edge. 0 = disabled
 
+option.VOXEL_SHAPE_SOLID=Non-Full Block Occlusion
+option.VOXEL_SHAPE_SOLID.comment=Occlusion mode for non-full blocks (stairs/slabs/fences): on = fall back to full-cell occlusion when the sub-box test misses (no light leaks, visually clean); off = precise sub-boxes (stair gaps let light through, but leaky)
+
 # ===== SSILVB/VXGI 补充翻译 =====
 option.SSILVB_GI_BRIGHTNESS=GI Ray Brightness
 option.SSILVB_HAND_DEPTH_THRESHOLD=GI Hand Culling
