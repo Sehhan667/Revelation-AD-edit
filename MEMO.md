@@ -363,4 +363,42 @@ return contrib * weight;
 - 配置文件（Revelation-AD-edit.txt）当前：VOXEL_GI_ENABLED=false、SSILVB_ENABLED
   未写（默认注释关）——两者都关时走纯 SH 环境光，靠 voxelEdgeBlend=1.0 正常渲染。
 
+---
+
+# 备忘：封闭空间漏光收尾（2026-08-18 深夜，用户确认"ok了"）
+
+## 现象
+完全封闭的无光小房间/洞穴仍然亮；关键线索：**白天亮、午夜暗**（漏光依赖天光），
+且**小房间也亮**（射线会撞墙，排除出界漏光）→ 是 IRC 不依赖射线的路径照亮的。
+
+## 三个漏光源与修复（9f59e86 / 4de76a3 / 8256925）
+1. **网格内最小环境光底无 lightmap 门控**（DeferredLight）：ambientAccum =
+   (法线权重) × activeMinAmbient（0.03，补偿后最高 0.43）无条件施加——封闭空间
+   也吃满。网格外早有 smoothstep(0.10,0.25,lightmap.y) 门控，网格内是 8/18 改
+   MINIMUM_AMBIENT_BRIGHTNESS 时丢的。修复：网格内同样乘
+   smoothstep(0.03,0.15,lightmap.y)，夜视底不受影响。
+2. **IRC 出界路径漏天光**（大空间射程用尽也算出界）：!hitSolid 含"射程用尽"
+   （16 步没撞墙）→ 封闭大洞穴/房间射程用尽 → 天光漏入；门控 max(hitSkylight,
+   exposure) 在封闭空间都不为 0（写胜残留 + 射程用尽也计数）。修复：出界天光乘
+   step(0.15, hitSkylight) 硬门槛，曝光度计数同样乘（封闭不计数）。
+3. **SimpleSkyLighting 下限 + 新暴露播种用体素 skylight**（真正的小房间元凶）：
+   - 时间混合后下限 nRC=max(nRC, SimpleSkyLighting(..., vd.w))——体素 skylight
+     是 shadow pass 写胜残留（室内 0.2~0.5），SimpleSkyLighting ×8 曲线放大成
+     可见下限 → 每帧强制 IRC 发光。改用 FetchPrevExposure(c)（曝光度=射线真实
+     天空可见度，封闭≈0 → 下限归零；开阔阴影出界 → 正常）。
+   - 新暴露播种 edgeSeedGate = step(0.15, edgeSky) → 阈值 0.15 误放行残留
+     （0.2~0.5）→ 新暴露格被播种天光。阈值 0.15→0.7：户外 skylight≈1.0 放行，
+     封闭残留(≤0.5)全挡。代价：户外半遮挡（树荫 0.5）也不播种，可接受
+     （它们有正常 IRC 链路）。
+
+## 经验
+- **"封闭空间亮 + 午夜暗" = 漏光依赖天光**，不是恒定保底——先查所有出界天光
+  路径，再查下限/播种。
+- **"小房间也亮" = 排除出界漏光**（射线会撞墙），查 IRC 不依赖射线的路径
+  （下限/播种/环境光底）。
+- **体素 skylight(vd.w) 是写胜残留，不是可靠天空可见度**——封闭/室内残留
+  0.2~0.5，用它当 lightmap 门控必漏。可靠判据：像素 MC lightmap（追踪端）或
+  曝光度 exposure（IRC 端，射线真实出界比例）。
+
+
 
