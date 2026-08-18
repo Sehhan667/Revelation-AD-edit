@@ -27,3 +27,23 @@ vec4 FetchVoxelRadiance(ivec3 c) {
         ? texelFetch(voxelRadiance2Sampler, c, 0)
         : texelFetch(voxelRadianceSampler, c, 0);
 }
+
+// [2026-08-17 参考 SEUS PTGI GFME] 三线性平滑读取 IRC 缓存（返回解码后 0-1 尺度）。
+// 裸 texelFetch 会把相邻格辐照度跳变暴露成 1m 体素块状/方块表面与 SH 冲突的闪烁
+// （用户实测"糟透了"）；SEUS 在命中点用 3×3 加权（等效三线性）采样缓存。
+// 与级联时代的 FetchVoxelRadianceSmoothed 同款（near/mid/far 统一此平滑读取）。
+vec3 FetchVoxelRadianceTrilinear(ivec3 c) {
+    vec3 f = vec3(c) + 0.5;
+    ivec3 i = ivec3(floor(f));
+    vec3 t = f - vec3(i);
+    vec3 acc = vec3(0.0);
+    for (int k = 0; k < 8; ++k) {
+        ivec3 off = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+        ivec3 p = clamp(i + off, ivec3(0), ivec3(VOXEL_AREA - 1));
+        float w = (off.x == 0 ? 1.0 - t.x : t.x)
+                * (off.y == 0 ? 1.0 - t.y : t.y)
+                * (off.z == 0 ? 1.0 - t.z : t.z);
+        acc += FetchVoxelRadiance(p).rgb * w;
+    }
+    return acc * 0.01;
+}
