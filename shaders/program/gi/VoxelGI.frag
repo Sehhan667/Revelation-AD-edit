@@ -325,8 +325,17 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // [2026-08-18] 门控 = max(体素 lightmap, 上一帧曝光度)：与追踪端一致，
             // 曝光度是真·天空可见度（DEBUG 实测"红但黑"），lightmap 低的开阔阴影
             // 不再被压成 0。
+            // [FIX 2026-08-18 洞穴白天亮/午夜暗] !hitSolid 含"射程用尽"(大空间
+            // 16 步没撞墙)——封闭洞穴/大房间射程用尽也算出界 → 天光漏入
+            // （用户实测洞穴亮、午夜暗=漏光依赖天光）。且门控输入
+            // max(hitSkylight, exposure) 在封闭空间都不为 0：hitSkylight 是体素
+            // 写胜残留(0.1~0.3)，exposure 射程用尽也计数。修复：门控加 caveGate
+            // 硬门槛（与 SimpleSkyLighting 同款 step 语义）——体素 skylight 是
+            // 该格真实天空光，封闭空间写胜残留通常 <0.15 → 天光归零；
+            // 开阔阴影 skylight 高 → 放行。曝光度计数同样乘 caveGate（封闭不计数）。
+            float ircCaveGate = step(0.15, hitSkylight);
             contrib += VoxelSkyColor(dir, max(hitSkylight, FetchPrevExposure(c)))
-                     * VOXEL_GI_SKY_STRENGTH * absorption;
+                     * VOXEL_GI_SKY_STRENGTH * ircCaveGate * absorption;
             // NOLIGHT 底光（出界路径专有：NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)；
             // 命中路径无此项，闭塞处底光由自反弹/方块光链路提供）
             contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS
@@ -334,7 +343,9 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // Phase 1：该样本向上出界即计入曝光度（纯射线天空可见度，无 lightmap 门控——
             // [2026-08-17] SH×曝光设计：exposure = 真·能看到天空的比例，供 DeferredLight
             // 调制 SH 天光亮度；洞穴射线被岩层挡住不向上出界，天然不计）
-            if (dir.y > 0.1) exposure += 1.0;
+            // [2026-08-18] 计数乘 ircCaveGate：封闭空间(残留<0.15)不计数，
+            // 否则射程用尽也算出界 → exposure 高 → 天光门控被 max 绕过。
+            if (dir.y > 0.1) exposure += ircCaveGate;
         }
         result += contrib * rcpPdf;
     }
