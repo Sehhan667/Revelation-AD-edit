@@ -484,8 +484,11 @@ void main() {
     // 网格外的 SH 环境光（与非光追同款），外部光→内部 GI 平滑过渡。
     // voxelEdgeBlend：1=紧贴网格表面（全 SH 混合），0=深入网格
     // VOXEL_EDGE_BLEND_DISTANCE 格后（纯 GI，SH 完全淡出，不干扰内部方向性天光）。
-    // 声明在 VOXEL_GI_ENABLED 之外（SSILVB 分支也要用），无 GI 时恒 0。
-    float voxelEdgeBlend = 0.0;
+    // [FIX 2026-08-18 关光追无环境光] 默认值必须是 1.0：关闭 VOXEL_GI_ENABLED
+    // 时走到 #else（ambientInVoxelGrid=false），SH 环境光乘 voxelEdgeBlend——
+    // 若默认 0 会把 SH 全乘 0 → 整个世界没环境光（用户实测）。
+    // VOXEL_GI_ENABLED 开启时由下方分支按网格内外覆盖为正确值。
+    float voxelEdgeBlend = 1.0;
 
     // 体素 GI 开启时：网格内由光追天光（skyMapTex 方向辐射）提供环境光，
     // 屏蔽原版 SH 平涂天光，避免方向性天光被环境光盖掉；体素外仍走非光追样式。
