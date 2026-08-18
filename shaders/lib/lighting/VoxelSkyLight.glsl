@@ -57,20 +57,24 @@ float VoxelSkyLeakGate(float lightmap) {
 // × 同样的地平线衰减与门控（方向性兜底，避免全黑）。
 // 函数内部已含地平线衰减与漏光门控，调用方不要再重复乘。
 vec3 VoxelSkyColor(vec3 dir, float lightmap) {
-    // 亮度：LUT（AtmosphereSkyView 物理值 ÷ 基准，方向性/昼夜衰减正确）
+    // 亮度：分时策略（用户实测校准）——
+    // 白天 max 合并（LUT 物理值÷300 仅 ~0.4 < skyColor ~0.7，max 保证白天亮度），
+    // 傍晚/夜晚用 LUT（物理变暗）。LUT 恒 0 时 skyColor 兜底。
     vec3 lutSky = max(AtmosphereSkyView(atmosphereViewPos, dir, worldSunDir), vec3(0.0)) * rcp(VOXEL_SKY_REFERENCE);
     float fade = VoxelSkyHorizonFade(dir);
     float gate = VoxelSkyLeakGate(lightmap);
-    // [FIX 2026-08-18 傍晚发绿] 颜色完全按 SH（global.skySH，GenSkySH 采样 skyMapTex
-    // 生成，与 DeferredLight 环境光同源）：傍晚淡粉/白天蓝，不再用 LUT 直接采样
-    // 的色调（傍晚会出怪色）。只取 SH 色度（归一化），亮度仍由 LUT 提供——
-    // 避免 SH 尺度换算（skyMapTex 物理尺度 vs 0-1 光照尺度）改变亮度。
-    vec3 shSky = ConvolvedReconstructSH3(global.skySH, dir);
-    float shLuma = max(luminance(shSky), 1e-4);
-    vec3 shChroma = shSky / shLuma;
+    float dayBlend = saturate(worldSunDir.y * 6.0);
     vec3 sky = lutSky;
-    if (luminance(sky) < 1e-4) sky = skyColor * 0.5;   // LUT 恒 0（GI pass 未绑定）→ skyColor 兜底
-    sky = max(sky * fade * gate * shChroma, vec3(0.0));
+    if (luminance(sky) < 1e-4) sky = skyColor * 0.5;
+    sky = mix(sky, max(sky, skyColor), dayBlend);
+    float skyLuma = luminance(sky);   // 先取亮度（保持分时策略的亮度）
+    // [FIX 2026-08-18 傍晚发绿] 颜色完全按 SH 色度（global.skySH 与 DeferredLight
+    // 环境光同源：傍晚淡粉/白天蓝）。只替换色度、亮度保持 skyLuma：
+    // 归一化色度 luminance=1，乘回亮度不改变明暗（线性性）。
+    vec3 shSky = ConvolvedReconstructSH3(global.skySH, dir);
+    vec3 shChroma = shSky / max(luminance(shSky), 1e-4);
+    sky = shChroma * skyLuma;
+    sky = max(sky * fade * gate, vec3(0.0));
     sky *= 0.8;
     #ifdef DEBUG_VOXEL_SKY
         // [2026-08-17] 染红改为"门控放行且有值才红"：洞穴/浅洞 gate≈0 → 黑，
