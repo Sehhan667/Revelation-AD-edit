@@ -425,6 +425,8 @@ option.DEBUG_SKY_MAP=DEBUG_SKY_MAP
 option.DEBUG_VOXEL_GI=DEBUG_VOXEL_GI
 option.DEBUG_VOXEL_SKY=Sky Path Debug
 option.DEBUG_VOXEL_SKY.comment=Tints surfaces red where the sky light path is hit, to tell apart "path not reached" vs "value too dim to see"
+option.DEBUG_VOXEL_SKY_LEVEL=GI Sky Level Debug
+option.DEBUG_VOXEL_SKY_LEVEL.comment=Shows the voxel GI sky level on block surfaces as pseudo-color (IRC sky exposure alpha): blue = no sky light (cave/occluded), red = fully open (open shadow)
 option.DEBUG_VOXEL_RADIANCE=DEBUG_VOXEL_RADIANCE
 option.VOXEL_GI_ENABLED=Voxel Global Illumination
 option.VOXEL_GI_ENABLED.comment=Voxel GI: IRC propagation + per-pixel ray tracing. Single switch (VOXEL_GI_TRACE merged into this). Denoise controlled by VOXEL_GI_DENOISE.

@@ -486,6 +486,8 @@ option.DEBUG_VOXEL_GI=体素 GI 调试可视化
 option.DEBUG_VOXEL_GI.comment=压暗其余光照并放大体素 GI 贡献，直观查看 GI 生效区域（火把光晕、天空渗入、岩浆泛光等）
 option.DEBUG_VOXEL_SKY=天光路径调试
 option.DEBUG_VOXEL_SKY.comment=天光路径命中时把表面染成红色，用于排查“路径没跑通”还是“值太小看不到”
+option.DEBUG_VOXEL_SKY_LEVEL=GI 天光等级调试
+option.DEBUG_VOXEL_SKY_LEVEL.comment=在方块表面用伪彩色显示该体素的 GI 天光等级（IRC 天空曝光度 alpha）：蓝=无天光（洞穴/闭塞），红=全开（开阔阴影）
 option.DEBUG_VOXEL_RADIANCE=体素辐照度可视化
 option.DEBUG_VOXEL_RADIANCE.comment=直接显示传播后的体素辐照度，用于验证"体素化+传播"链路是否通
 

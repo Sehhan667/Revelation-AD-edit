@@ -695,6 +695,19 @@ void main() {
                         sceneOut = vec3(floor(luma * 7.999) / 7.0);
                     }
                     #endif
+                    #ifdef DEBUG_VOXEL_SKY_LEVEL
+                    // [2026-08-18] 方块表面显示 GI 天光等级：伪彩色 = 该体素 IRC 天空曝光度
+                    // （voxelRadiance alpha，0-1 = 出界射线占比，即天光可见度）。
+                    // 蓝=无天光（洞穴/闭塞），绿=半，红=全开（开阔阴影）。叠加在场景上。
+                    ivec3 dbgSkyCoord = ivec3(camRelPos + cameraPositionFract + float(VOXEL_RADIUS));
+                    if (all(greaterThanEqual(dbgSkyCoord, ivec3(0))) && all(lessThan(dbgSkyCoord, ivec3(VOXEL_AREA)))) {
+                        float skyLevel = FetchVoxelRadiance(dbgSkyCoord).a;   // 0-1 曝光，非 ×100 域
+                        skyLevel = smoothstep(0.0, 0.6, skyLevel);            // 低段拉开对比
+                        sceneOut = mix(vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0), skyLevel);
+                    } else {
+                        sceneOut = vec3(1.0, 1.0, 1.0);                      // 网格外白色提示
+                    }
+                    #endif
                 #endif
             #endif
         #else

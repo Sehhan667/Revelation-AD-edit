@@ -335,6 +335,8 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define DEBUG_VOXEL_RADIANCE  // 调试：直接显示传播后的体素辐照度（验证"体素化+传播"链路）
 	// 调试：天光路径命中时返回红色（验证路径是否跑通、门控是否放行）
 	//#define DEBUG_VOXEL_SKY
+	// 调试：方块表面显示 GI 天光等级（伪彩色 = IRC 天空曝光度 alpha；蓝=无天光 红=全开）
+	//#define DEBUG_VOXEL_SKY_LEVEL
 	#include "/lib/lighting/VoxelLighting.glsl"
 	// [2026-08-09] 方块光颜色：光追开启时忽略玩家 BLOCKLIGHT_COLOR_R/G/B 设置，
 	// 全局置 0（体素内无原版方块光）；体素外需要原版方块光时由 DeferredLight 的
