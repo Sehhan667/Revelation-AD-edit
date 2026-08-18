@@ -70,11 +70,9 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     if (luminance(sky) < 1e-4) sky = skyColor * 0.5;
     sky = mix(sky, max(sky, skyColor), dayBlend);
     float skyLuma = luminance(sky);   // 先取亮度（保持分时策略的亮度）
-    // [FIX 2026-08-18 傍晚发绿] 色度按 dayBlend 分时段取：
-    // - 白天：SH 色度（global.skySH 与 DeferredLight 环境光同源，正午蓝正确）
-    // - 傍晚/夜晚：LUT 色度（物理天空，AtmosphereSkyView 直接给出橙粉/蓝紫）
-    // 全用 SH 时傍晚发绿：SH 是 3 阶低频球谐，会把太阳周围粉色光晕展平、
-    // 与蓝色天顶混成青绿（用户实测）。LUT 是逐方向精确物理采样，无此问题。
+    // [2026-08-18] 色度：白天 SH(正午蓝)，傍晚/夜晚 LUT(物理橙粉/蓝紫)。
+    // 全用 SH 傍晚发绿（3 阶低频展平太阳光晕）；切 LUT 与非光追不同源但傍晚物理正确。
+    // 注：待与用户核对非光追/光追傍晚实际观感后再统一色度链路。
     vec3 shSky = ConvolvedReconstructSH3(global.skySH, dir);
     vec3 shChroma = shSky / max(luminance(shSky), 1e-4);
     vec3 lutChroma = lutSky / max(luminance(lutSky), 1e-4);
