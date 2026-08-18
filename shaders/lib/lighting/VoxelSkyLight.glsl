@@ -31,9 +31,11 @@ vec3 SimpleSkyLighting(vec3 skylightColor, vec3 shadowlightColor, float NdotU, f
     vec3 skySunLight = shadowlightColor * (NdotU * 0.015 + 0.02);
     skylight += skySunLight;
     skylight = mix(skylight, shadowlightColor * (NdotU * 0.003 + 0.005), wetness * 0.6);
-    // [2026-08-18 临时调试] ×50 放大下限,验证阴影是否随下限变亮、是否漏光。
-    // 定位后恢复系数(或改回 lightmap*0.22 原式)。
-    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * 0.22) * 50.0;
+    // [2026-08-18] ×50 临时调试值已还原（阴影死黑根因是追踪端射程用尽未出界，
+    // 非下限强度不足）：×50 会让洞穴体素残留 skylight（vd.w 写胜值 ≈0.05-0.15）
+    // ×0.22×50 ≈ 0.55-1.65 直接拉亮 IRC 下限 → 洞穴过亮（用户实测）。
+    // 还原为 itrp 原式 lightmap×0.22，阴影由射程修复后的真实出界天光承担。
+    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * 0.22);
 }
 
 // 地平线衰减：上半球全开，略低于地平线即截止（与通用光追天空采样一致）
@@ -54,12 +56,16 @@ float VoxelSkyLeakGate(float lightmap) {
 // × 同样的地平线衰减与门控（方向性兜底，避免全黑）。
 // 函数内部已含地平线衰减与漏光门控，调用方不要再重复乘。
 vec3 VoxelSkyColor(vec3 dir, float lightmap) {
-    vec3 sky = max(AtmosphereSkyView(atmosphereViewPos, dir, worldSunDir), vec3(0.0)) * rcp(VOXEL_SKY_REFERENCE);
+    vec3 lutSky = max(AtmosphereSkyView(atmosphereViewPos, dir, worldSunDir), vec3(0.0)) * rcp(VOXEL_SKY_REFERENCE);
     float fade = VoxelSkyHorizonFade(dir);
     float gate = VoxelSkyLeakGate(lightmap);
-    // [2026-08-17] 门控必须作用到主 LUT 路径：此前只乘在 skyColor 兜底分支上，
-    // 洞穴/室内 lightmap≈0 时 LUT 项仍全量通过 → 室内过亮、洞穴漏光（用户实测）。
-    sky = max(sky * fade * gate, skyColor * fade * gate);
+    // [FIX 2026-08-18 傍晚过亮/不变色] 合并 LUT 与 skyColor 兜底必须"LUT 优先、兜底补位"，
+    // 不能逐分量 max：白天 LUT 亮蓝 > skyColor 无影响，但傍晚 LUT 物理变暗变粉后
+    // max 逐分量取大 → 取到仍亮的蓝紫 skyColor → 傍晚天光不衰减、不变粉（用户实测）。
+    // 正确语义：LUT 恒 0（GI pass 未绑定/未生成）时 skyColor 兜底，其余一律用 LUT。
+    vec3 sky = lutSky;
+    if (luminance(lutSky) < 1e-4) sky = skyColor;   // 兜底判定用亮度，非逐分量 max
+    sky = max(sky * fade * gate, vec3(0.0));
     sky *= 0.8;
     // [2026-08-17] 阳光颜色混合（SH 环境光同款机制，用户需求）：天光随太阳高度染暖阳色，
     // 正午金黄、黄昏渐变、夜晚关闭——消除"到处发蓝"。sunIrradiance 色度（settings.glsl 常量，
