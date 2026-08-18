@@ -247,3 +247,76 @@ Common.glsl 天顶 NaN 修复、阳光注入/追踪 GI 强度滑条、网格内�
   单级联体素化（Shadow.geom + Shadow.frag + VoxelClear）。
 - 注意：VOXEL_DISTANCE 滑条已随级联移除（网格固定 ±32m）；配置文件里级联时代的
   旧滑条值（VOXEL_DISTANCE=32 等）会被忽略；天光/阳光滑条的旧值仍会覆盖默认值。
+
+---
+
+# 备忘：阴影死黑根因修复——追踪端射程用尽未走出界路径（2026-08-18，用户验证成功）
+
+## 结论（一句话）
+追踪端 `VoxelTracePixel` 的 DDA 循环**步数走满但未命中/未越界时，exitGrid 保持 false，
+出界天光路径被跳过** → 网格中央开阔阴影（正上方就是天空）只剩 NOLIGHT 微光 → 死黑；
+只有网格边缘（射线几步内真越界）才吃到天光 → 用户 DEBUG_VOXEL_SKY 实测
+"体素范围边缘才发红"。修复（9a6c710）：命中路径提前 return，循环结束后必然未命中
+→ **无条件走出界路径**，与 IRC 注入端 `if (!hitSolid)` 语义统一。用户验证"终于亮堂了"。
+
+## 为什么 `rayLength > VOXEL_TRACE_DISTANCE` 判定不触发
+- DDA 中 `rayLength = min(totalStep)` 是**到下一格面的累计距离**（totalStep 每步累加
+  `tracingNext * rdir`），不是"已走的步数"。
+- 纯向上射线每步恰好 1 格：起点在格内（如 y=32.3）第一格面距离 0.7，迭代 i 的
+  rayLength = (i-1)+0.7；第 24 次迭代 = 23.7 < 24 → `>` 为 false。
+- 起点恰在格心（y=32.0）时第 24 步才 = 24.0，`24 > 24` 仍是 false。
+- 斜方向射线每步主轴距离 <1，24 步累计更到不了 24。
+- 网格半径 32 > 射程 24：中央区域射线 24 步内**永远走不到网格顶**，越界分支也不触发。
+- 三重判定（距离/越界/命中）全不触发 → 循环自然结束 → exitGrid=false → 黑。
+
+## 为什么 IRC 注入端一直正常、追踪端却黑（排查关键）
+- IRC 端（VoxelGI.frag `IrcTraceVoxel`）用 `if (!hitSolid)` 判定出界——**无条件**，
+  不依赖 exitGrid 标志 → 曝光度 alpha（DEBUG_VOXEL_SKY_LEVEL 实测阴影处=1 红）正常。
+- 追踪端（VoxelTracePixel，真正上屏的信号源，经 DiffuseIndirect → SVGF → DeferredLight）
+  用 exitGrid 标志 → 被此 bug 卡死。两个"出界"判定不一致是症状割裂的根源。
+- 教训：同语义的出界判定在追踪端与 IRC 端必须一致，排查先对比两端的出界条件。
+
+## 修复代码形态（VoxelTracing.glsl）
+```glsl
+// 命中路径提前 return，走到这里必然未命中 → 无条件视为出界
+{
+    contrib += VoxelSkyColor(dir, skyLightmap) * VOXEL_GI_TRACE_SKY_STRENGTH * absorption;
+}
+contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS * saturate(rayLength * 0.2) * absorption;
+return contrib * weight;
+```
+- 删除了 `bool exitGrid` 声明与两处赋值（射程/越界处只 break，不再置标志）。
+- 防漏光仍由 `VoxelSkyColor` 内部承担：leak gate `smoothstep(0.03, 0.30, lightmap)`
+  + 地平线衰减 `saturate(dir.y*25+0.5)` → 洞穴/室内 lightmap≈0 天光≈0，不会漏。
+- 语义说明：射程用尽 = 视线一路畅通 = 通向天空，本就是光追的合理近似
+  （SEUS PTGI 同款：有限步数后取天空）。
+
+## 本会话其他已提交项（供复盘）
+- `167ccac` IRC 缓存三线性读取（参考 SEUS PTGI GFME）：`FetchVoxelRadianceTrilinear`
+  8-tap 三线性采样，消除 1m 体素块状/表面冲突；越界时 itrp 同款
+  `SimpleSkyLighting` 按命中法线兜底（消费端）。
+- `e2edd39` IRC 注入端每帧施加 `SimpleSkyLighting` 解析下限，且**必须在时间混合之后**
+  施加（0.99 混合下每帧只接受 1% 新值，混合前施加冷启动永远爬不起来）。
+- `bbb7c28` 追踪出界天光门控改用 `max(lightmap.y, FetchVoxelRadiance(voxelC).a)`：
+  曝光度 = 射线追踪的真实天空可见度（DEBUG_VOXEL_SKY_LEVEL 实测阴影处 exposure=1 但
+  lightmap 门控压光 → 画面黑）；max 兼容：开阔阴影 exposure=1 → 天光全量，
+  洞穴 exposure≈0 且 lightmap≈0 → 仍门控。IRC 端同样改
+  `VoxelSkyColor(dir, max(hitSkylight, FetchPrevExposure(c)))`。
+- 工作区残留（已在 bbb7c28 一并提交，**待还原**）：`SimpleSkyLighting` 里的
+  `* 50.0` 临时调试放大（验证阴影是否随下限变亮用），确认效果后改回
+  `lightmap * 0.22` 原式。
+
+## 当前滑条/配置状态（Revelation-AD-edit.txt，已归一化）
+- VOXEL_GI_SKY_STRENGTH=1.0、VOXEL_SKY_REFERENCE=300、GAMMA_CORRECTION=2.2、
+  MINIMUM_AMBIENT_BRIGHTNESS=0.03、VOXEL_GI_BOOST=4.0、AMBIENT_SUNLIGHT_TINT_RATIO=1.5、
+  VOXEL_GI_SUN_STRENGTH=1.0、VOXEL_TRACE_DISTANCE=24、VOXEL_TRACE_SUN_STRENGTH=0.0
+  （阳光反弹被关，用户可恢复 0.5~1.0 让阴影带暖色阳光弹射）。
+- 代码默认：VOXEL_GI_TRACE_SKY_STRENGTH 8.0（配置文件未覆盖，生效 8.0）、
+  VOXEL_GI_SELF_BOUNCE 0.5、VOXEL_GI_TRACE_STRENGTH 1.0。
+
+## 下一步待办（用户未定）
+1. 还原 SimpleSkyLighting ×50 临时值。
+2. 分支 fix/sky-indoor-outdoor 合并回主分支 codex/cascaded-radiance-cache（用户要求）。
+3. 天光平衡收尾：室内是否漏光/过量（可调 VOXEL_GI_TRACE_SKY_STRENGTH）、
+   VOXEL_TRACE_SUN_STRENGTH 是否恢复。
+
