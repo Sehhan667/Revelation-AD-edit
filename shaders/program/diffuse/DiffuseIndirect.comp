@@ -101,21 +101,15 @@ void main() {
 			vec3 worldNormal = FetchSurfaceNormal(renderTexel);
 			vec3 geoNormal = FetchGeometryNormal(renderTexel);
 			vec2 lightmap = Unpack2x8U(loadMaterialPack(renderTexel).x);
-			// [2026-08-18] 追踪出界天光门控改用 max(lightmap, IRC 曝光度)：
-			// 曝光度 = 射线追踪的真实天空可见度（DEBUG_VOXEL_SKY_LEVEL 实测：阴影处
-			// exposure=1 显示红，但 lightmap 门控把出界天光压成 0 → 画面黑）。
-			// max 兼容：开阔阴影 exposure=1 → 天光全量；洞穴 exposure≈0 且 lightmap≈0 → 仍门控。
-			// [FIX 2026-08-18 洞穴闪烁] 门控输入与 IRC 端对齐：IRC 注入端（VoxelGI.frag）
-			// 用 max(体素 skylight, 曝光度)——体素 skylight 是体素化写胜值（洞穴残留低）；
-			// 追踪端此前用 max(像素 lightmap.y, 曝光度)——MC lightmap.y 在洞穴口/缝隙处
-			// 有残留（0.1~0.3）→ 追踪端放行天光、IRC 端不放行 → 同一位置追踪亮 IRC 暗
-			// → 闪来闪去（用户实测）。改为读像素所在体素的 skylight，两端口径一致。
+			// [2026-08-18] 追踪出界天光门控：像素级 lightmap.y（MC 平滑光照，稳定）。
+			// 此前 bbb7c28 尝试 max(lightmap, IRC 曝光度) 修复"阴影红但黑"，后改用
+			// max(体素 skylight, 曝光度) 对齐 IRC 端 → 玩家移动时像素所在格在
+			// 固体/空气间切换（空气格 voxelData.w=0）→ 门控 1.0/0 跳变 → 全场景闪
+			// （用户实测）。恢复 lightmap.y：平滑、无格切换跳变；洞穴 lightmap≈0
+			// 仍被门控，开阔阴影 lightmap.y 高仍全量。洞穴口残留 lightmap 的天光
+			// 由 IRC 曝光度链路另行处理，不在追踪端叠加。
 			vec3 voxelCoord = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract + float(VOXEL_RADIUS);
-			float skyExposure = 0.0;
-			ivec3 voxelC = ivec3(clamp(floor(voxelCoord), vec3(0.0), vec3(float(VOXEL_AREA) - 1.0)));
-			skyExposure = FetchVoxelRadiance(voxelC).a;
-			float voxelSkylight = VoxelUnpack2xU8Y(texelFetch(voxelDataSampler, voxelC, 0).w);
-			float skyLightmap = max(voxelSkylight, skyExposure);
+			float skyLightmap = lightmap.y;
 			// 种子：全分辨率像素索引哈希 + 帧计数（每帧不同方向，棋盘 offset 轮转 4 帧全覆盖）
 			uint traceSeed = triple32(uint(renderTexel.x + renderTexel.y * int(viewWidth)) * 0x9E3779B1u
 			                          + uint(frameCounter + 1) * 0x85EBCA77u);
