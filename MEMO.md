@@ -315,8 +315,52 @@ return contrib * weight;
   VOXEL_GI_SELF_BOUNCE 0.5、VOXEL_GI_TRACE_STRENGTH 1.0。
 
 ## 下一步待办（用户未定）
-1. 还原 SimpleSkyLighting ×50 临时值。
+1. 还原 SimpleSkyLighting ×50 临时值。  → **已处理**：×50 改为 ×8 + lightmap² 曲线
+   （白天视觉等价饱和到 1.0，暗处有梯度），勿再"还原 ×50"。
 2. 分支 fix/sky-indoor-outdoor 合并回主分支 codex/cascaded-radiance-cache（用户要求）。
+   → **已处理**：用户改合并到 dev（最主要分支），快进合并 5bc112b 已推送 origin/dev。
 3. 天光平衡收尾：室内是否漏光/过量（可调 VOXEL_GI_TRACE_SKY_STRENGTH）、
    VOXEL_TRACE_SUN_STRENGTH 是否恢复。
+
+---
+
+# 备忘：天光颜色与网格边缘收尾（2026-08-18 傍晚，用户确认"舒服了"）
+
+## 1. SimpleSkyLighting 下限曲线化（修复暗处过亮 + 过渡生硬）
+- 原 `step(0.15) 硬门槛 + 线性 ×50`：lightmap=0.5 → 0.5×0.22×50=5.5 保色压缩到 1.0，
+  与白天(11→1)同样饱和 → 暗处和明处一样亮、0.15 处硬跳变（用户实测）。
+- 改 `smoothstep(0.15,0.40) 软门槛 + lightmap² 曲线 ×8`：白天(≈1)仍饱和到 1.0
+  （视觉同 ×50），暗处有梯度（0.6→0.63 / 0.4→0.28 / 0.2→0.07），洞穴(<0.15)仍归零。
+
+## 2. GI 天光色度 = 非光追同源（修复网格内外色差/傍晚发绿）
+- 非光追环境光链路：GenSkyMap(skyMapTex=AtmosphereSkyView+云+雾) → GenSkySH(3 阶球谐
+  skySH) → DeferredLight = 灰白底 + ConvolvedReconstructSH3(skySH, worldNormal)×lm3 + 暖假反弹。
+- **关键差异是采样方向**：非光追用 worldNormal（地面=天顶），GI 用射线方向 dir——
+  傍晚太阳低，dir 半球平均被 SH 展平成微蓝白"没颜色"（用户实测网格内偏蓝/暗淡）。
+- 修复：GI 色度固定 `ConvolvedReconstructSH3(skySH, vec3(0,1,0))`（天顶，与非光追
+  地面像素同色），方向性由 LUT 亮度 fade 承担；色度全域一致。
+- 傍晚亮度底：`skyColor * 0.05 * saturate(1 - worldSunDir.y*2.5)`（0.25→0.12→0.08→0.05
+  逐步调暗，用户多次反馈傍晚偏亮）。只提亮度不染色（色度仍 SH 天顶）。
+- 白天天光暖色：`bounceBlend = saturate(worldSunDir.y*2) * 0.30` 混入
+  global.directIlluminance 色度（真实暖阳色，正午暖白/傍晚橙；勿用 settings.glsl 的
+  sunIrradiance 纯白 vec3(1,0.949,0.937)——它中和不了蓝）。
+
+## 3. 网格边缘环境光过渡带（VOXEL_EDGE_BLEND_DISTANCE）
+- 问题：新方块进入 64³ 范围时，网格外 SH 环境光(亮) 瞬间切到 网格内"灰白底+GI"
+  且 GI 新暴露种子(暗) → 边缘暗→亮跳变（用户实测）。
+- 修复：DeferredLight 计算像素到网格表面距离，网格内边缘
+  VOXEL_EDGE_BLEND_DISTANCE(默认 6) 格内按距离渐进混入网格外同款 SH+假反弹
+  （权重 1→0 渐隐），外部光→内部 GI 平滑过渡。滑条已注册 screen.voxel。
+
+## 4. 回归教训（重要）
+- **关闭光追后整个世界没环境光**（用户实测）：边缘过渡把 SH 环境光乘 voxelEdgeBlend，
+  声明默认值误给 0.0 → 关 VOXEL_GI_ENABLED 走 #else 时 SH 全乘 0。默认值必须 1.0，
+  开启光追时由分支覆盖。教训：**新加的环境光权重变量，默认值要考虑"功能关闭"路径**。
+
+## 5. 分支与状态
+- fix/sky-indoor-outdoor 快进合并到 dev（5bc112b，已推送 origin/dev）；
+  codex/cascaded-radiance-cache / backup-pre-filter / upstream 未动。
+- 配置文件（Revelation-AD-edit.txt）当前：VOXEL_GI_ENABLED=false、SSILVB_ENABLED
+  未写（默认注释关）——两者都关时走纯 SH 环境光，靠 voxelEdgeBlend=1.0 正常渲染。
+
 
