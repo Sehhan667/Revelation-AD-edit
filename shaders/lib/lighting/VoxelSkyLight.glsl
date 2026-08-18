@@ -74,6 +74,19 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     vec3 shSky = ConvolvedReconstructSH3(global.skySH, dir);
     vec3 shChroma = shSky / max(luminance(shSky), 1e-4);
     sky = shChroma * skyLuma;
+    // [2026-08-18] 阳光颜色混合（DeferredLight 环境光同款，用户要求）：
+    // 让 GI 天光与网格外 SH 环境光同样受 AMBIENT_SUNLIGHT_TINT_RATIO 暖阳色染色——
+    // 正午金黄、黄昏渐变、夜晚关闭。色度取 sunIrradiance 归一化（settings.glsl
+    // 常量，与 DeferredLight 的 global.directIlluminance 色度相同，无 SSBO 依赖）。
+    // 只染色调不动亮度；DEBUG 分支在其后，不影响红/黑判定。
+    #ifndef DIMENSION_THE_END
+        float timeBasedTint = saturate(worldSunDir.y * 2.5 - 0.15);
+        float tintStrength = AMBIENT_SUNLIGHT_TINT_RATIO * timeBasedTint;
+        if (tintStrength > 0.0) {
+            vec3 sunColorTint = sunIrradiance / max(luminance(sunIrradiance), 1e-4);
+            sky = mix(sky, sky * sunColorTint, tintStrength);
+        }
+    #endif
     sky = max(sky * fade * gate, vec3(0.0));
     sky *= 0.8;
     #ifdef DEBUG_VOXEL_SKY
