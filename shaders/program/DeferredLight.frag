@@ -477,6 +477,16 @@ void main() {
     // 环境光累积
     vec3 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
 
+    // [2026-08-18 网格边缘过渡] 网格外环境光平滑过渡进网格内几格：
+    // 新方块进入 64³ 范围时，从"网格外 SH 环境光"瞬间切到"网格内 GI"，
+    // 且 GI 是新暴露种子（暗）→ 边缘暗→亮的跳变（用户实测）。在网格内
+    // 边缘 VOXEL_EDGE_BLEND_DISTANCE 格内，按到网格表面的距离渐进混入
+    // 网格外的 SH 环境光（与非光追同款），外部光→内部 GI 平滑过渡。
+    // voxelEdgeBlend：1=紧贴网格表面（全 SH 混合），0=深入网格
+    // VOXEL_EDGE_BLEND_DISTANCE 格后（纯 GI，SH 完全淡出，不干扰内部方向性天光）。
+    // 声明在 VOXEL_GI_ENABLED 之外（SSILVB 分支也要用），无 GI 时恒 0。
+    float voxelEdgeBlend = 0.0;
+
     // 体素 GI 开启时：网格内由光追天光（skyMapTex 方向辐射）提供环境光，
     // 屏蔽原版 SH 平涂天光，避免方向性天光被环境光盖掉；体素外仍走非光追样式。
     #ifdef VOXEL_GI_ENABLED
@@ -495,6 +505,14 @@ void main() {
             // 网格外：洞穴/封闭室内不吃平铺底光（lightmap≈0 → 0），
             // 否则大洞穴远处的网格外墙壁会被均匀点亮（洞穴漏光根因之一）。
             ambientAccum *= smoothstep(0.10, 0.25, lightmap.y);
+        // 网格内边缘的过渡权重（网格外恒 1.0 全 SH）
+        if (ambientInVoxelGrid) {
+            vec3 edgeDist = min(ambientVoxelCoord, vec3(float(VOXEL_AREA)) - ambientVoxelCoord);
+            float minEdgeDist = min(min(edgeDist.x, edgeDist.y), edgeDist.z);
+            voxelEdgeBlend = 1.0 - saturate(minEdgeDist / VOXEL_EDGE_BLEND_DISTANCE);
+        } else {
+            voxelEdgeBlend = 1.0;
+        }
     #else
         bool ambientInVoxelGrid = false;
     #endif
@@ -505,10 +523,12 @@ void main() {
         // 注入 IRC + 自反弹传播），SH 只在网格外按非光追样式渲染。最小环境光底
         // （ambientAccum 的 skyColor×lightmap 项）保留作安全网；IRC alpha 曝光
         // 计算保留但不消费（供后续天光方案复用）。
-        if (lightmap.y > EPS && !ambientInVoxelGrid) {
+        // [2026-08-18] 边缘过渡：ambientInVoxelGrid 内的边缘区域（voxelEdgeBlend>0）
+        // 也混入网格外同款 SH 环境光，权重随边缘距离渐隐——新方块进网格不再暗→亮跳变。
+        if (lightmap.y > EPS && (!ambientInVoxelGrid || voxelEdgeBlend > 0.0)) {
             float lm3 = cube(lightmap.y);
-            ambientAccum += ConvolvedReconstructSH3(global.skySH, worldNormal) * lm3;
-            ambientAccum += CalculateFakeBouncedLight(worldNormal) * lm3 * (lightmap.y * lightmap.y) * sunlightBase;
+            ambientAccum += ConvolvedReconstructSH3(global.skySH, worldNormal) * lm3 * voxelEdgeBlend;
+            ambientAccum += CalculateFakeBouncedLight(worldNormal) * lm3 * (lightmap.y * lightmap.y) * sunlightBase * voxelEdgeBlend;
         }
     #endif
 
