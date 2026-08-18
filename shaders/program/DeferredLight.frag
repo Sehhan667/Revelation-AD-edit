@@ -696,14 +696,21 @@ void main() {
                     }
                     #endif
                     #ifdef DEBUG_VOXEL_SKY_LEVEL
-                    // [2026-08-18] 方块表面显示 GI 天光等级：伪彩色 = 该体素 IRC 天空曝光度
-                    // （voxelRadiance alpha，0-1 = 出界射线占比，即天光可见度）。
-                    // 蓝=无天光（洞穴/闭塞），绿=半，红=全开（开阔阴影）。叠加在场景上。
+                    // [2026-08-18] 方块表面标记有 GI 天光的体素：IRC 天空曝光度
+                    // （voxelRadiance alpha，0-1 = 出界射线占比，即天光可见度）超过
+                    // 阈值 → 染红；无天光（洞穴/闭塞）→ 保持正常场景不覆盖。
+                    // 阈值 0.1 = 只要有少量射线见天（曝光度>10%）即算有天光 → 红。
+                    // 0.5 太高：普通方块(ID==1)注入走全方向采样，向上出界占比常
+                    // 收敛在 0.2-0.4，会被误判为"无天光"（用户实测大部分位置不红）。
                     ivec3 dbgSkyCoord = ivec3(camRelPos + cameraPositionFract + float(VOXEL_RADIUS));
                     if (all(greaterThanEqual(dbgSkyCoord, ivec3(0))) && all(lessThan(dbgSkyCoord, ivec3(VOXEL_AREA)))) {
-                        float skyLevel = FetchVoxelRadiance(dbgSkyCoord).a;   // 0-1 曝光，非 ×100 域
-                        skyLevel = smoothstep(0.0, 0.6, skyLevel);            // 低段拉开对比
-                        sceneOut = mix(vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0), skyLevel);
+                        // 移动时按 cDi 重投影到上一帧缓存位置（与注入端 prevC=c+cDi 同口径），
+                        // 避免红块随移动以格为单位偏移（用户实测）。
+                        ivec3 dbgPrev = dbgSkyCoord + (cameraPositionInt - previousCameraPositionInt);
+                        float skyLevel = (all(greaterThanEqual(dbgPrev, ivec3(0))) && all(lessThan(dbgPrev, ivec3(VOXEL_AREA))))
+                                       ? FetchVoxelRadiance(dbgPrev).a : 0.0;   // 0-1 曝光，非 ×100 域
+                        if (skyLevel > 0.1)
+                            sceneOut = vec3(1.0, 0.0, 0.0);                  // 有天光 → 红
                     } else {
                         sceneOut = vec3(1.0, 1.0, 1.0);                      // 网格外白色提示
                     }

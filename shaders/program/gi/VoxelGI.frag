@@ -385,6 +385,13 @@ void main() {
             vec4 irc = IrcTraceVoxel(c, cDi);
             nRC = irc.rgb;
             nExp = irc.a;
+            // [2026-08-18] 解析下限每帧生效：固体体素即使射线出不去（阴影/闭塞），
+            // IRC 辐照度也不低于 SimpleSkyLighting——它由法线曲线 + lightmap 门控给出
+            // 连续底光（洞穴 lightmap≈0 → 下限≈0 不漏光），阴影"本身是亮的"（用户实测
+            // 阴影太黑）。此前下限只在"新暴露播种"和"查询越界"生效，稳态阴影体素
+            // 仍靠射线碰运气 → RGB 趋 0。
+            nRC = max(nRC, SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
+                                             0.0, VoxelUnpack2xU8Y(vd.w)));
         }
 
         // ---- 上一帧辐照度（带相机重投影）----
@@ -410,15 +417,16 @@ void main() {
         float pExp = pValid ? FetchPrevExposure(prevC)
                             : (sld ? VOXEL_IRC_EDGE_SEED * edgeSeedGate : nExp);
 
-        // 旧帧全黑（冷启动 / 相机大幅移动新暴露）→ 直接写本帧值（等价 bw=0）。
-        // 0.99 混合下每帧仅接受 1% 新值，若无此播种首次进入场景会黑屏 100+ 帧
-        //（缓存全黑时跳过混合播种）。
+        // 旧帧全黑（冷启动 / 相机大幅移动新暴露）→ RGB 直接写本帧值（等价 bw=0），
+        // 避免 0.99 混合下黑屏 100+ 帧；但曝光度永远保持时间混合——
+        // exposure 是 1 SPP 二值（0/1），若也跳过混合会直接 0/1 跳 → 天光/DEBUG 蓝红闪
+        // （用户实测 DEBUG_VOXEL_SKY_LEVEL 开阔处来回闪，动起来更严重）。
         float localBw = bw;
         if (pValid && max(max(pRC.r, pRC.g), pRC.b) < 1e-4) localBw = 0.0;
 
         // ---- 时间混合（实体/空体素统一；IRC 随机采样靠时域累积降噪）----
         nRC = max(mix(nRC, pRC, localBw), 1e-7);
-        nExp = mix(nExp, pExp, localBw); // Phase 1：曝光度同样时域混合
+        nExp = mix(nExp, pExp, bw);      // Phase 1：曝光度恒用 bw，防二值跳变
 
         // ---- 保色压缩：任一分量 >1.0 时按最大分量整体缩放，保持色相不漂白 ----
         float maxC = max(max(nRC.r, nRC.g), nRC.b);
