@@ -30,6 +30,13 @@
 
 #include "/lib/Utility.glsl"
 
+//======// SSBO //================================================================================//
+// [2026-08-18] 天光颜色按 SH（global.skySH，GenSkySH 采样 skyMapTex 生成）——
+// VoxelSkyColor 只取 SH 色度（傍晚淡粉/白天蓝，与 DeferredLight 环境光同源），
+// 消除 LUT 直接采样在傍晚的怪色调。需 SSBO 声明，且须在 Utility.glsl 之后
+//（HISTOGRAM_BIN_COUNT 来自 config.glsl）。
+#include "/lib/universal/SSBO.glsl"
+
 //======// Config //==============================================================================//
 
 #include "/config.glsl"

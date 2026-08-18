@@ -57,33 +57,21 @@ float VoxelSkyLeakGate(float lightmap) {
 // × 同样的地平线衰减与门控（方向性兜底，避免全黑）。
 // 函数内部已含地平线衰减与漏光门控，调用方不要再重复乘。
 vec3 VoxelSkyColor(vec3 dir, float lightmap) {
+    // 亮度：LUT（AtmosphereSkyView 物理值 ÷ 基准，方向性/昼夜衰减正确）
     vec3 lutSky = max(AtmosphereSkyView(atmosphereViewPos, dir, worldSunDir), vec3(0.0)) * rcp(VOXEL_SKY_REFERENCE);
     float fade = VoxelSkyHorizonFade(dir);
     float gate = VoxelSkyLeakGate(lightmap);
-    // [FIX 2026-08-18] 白天/傍晚用不同合并策略（用户实测校准）：
-    // - 白天（太阳高）：max 合并——LUT 物理值÷300 仅 ~0.4，比 MC skyColor（亮蓝 ~0.7+）
-    //   暗，LUT 优先会让白天所有天光砍暗（用户实测"太黑"）；max 保证白天亮度。
-    // - 傍晚/夜晚（太阳低）：LUT 优先——LUT 物理变暗变粉，max 会取到仍亮的蓝紫 skyColor
-    //   → 傍晚不衰减、不变粉（用户实测"SH 粉但 GI 蓝"）。此时用 LUT，颜色/亮度都正确。
-    // - skyColor 兜底：LUT 恒 0（GI pass 未绑定/未生成）时用 MC 天空色，避免全黑。
-    float dayBlend = saturate(worldSunDir.y * 6.0);   // 太阳仰角 0°→1.0，~9.6° 以上全白天
+    // [FIX 2026-08-18 傍晚发绿] 颜色完全按 SH（global.skySH，GenSkySH 采样 skyMapTex
+    // 生成，与 DeferredLight 环境光同源）：傍晚淡粉/白天蓝，不再用 LUT 直接采样
+    // 的色调（傍晚会出怪色）。只取 SH 色度（归一化），亮度仍由 LUT 提供——
+    // 避免 SH 尺度换算（skyMapTex 物理尺度 vs 0-1 光照尺度）改变亮度。
+    vec3 shSky = ConvolvedReconstructSH3(global.skySH, dir);
+    float shLuma = max(luminance(shSky), 1e-4);
+    vec3 shChroma = shSky / shLuma;
     vec3 sky = lutSky;
-    if (luminance(sky) < 1e-4) sky = skyColor;        // LUT 无值 → 兜底
-    sky = mix(sky, max(sky, skyColor), dayBlend);     // 傍晚用 LUT，白天过渡到 max
-    sky = max(sky * fade * gate, vec3(0.0));
+    if (luminance(sky) < 1e-4) sky = skyColor * 0.5;   // LUT 恒 0（GI pass 未绑定）→ skyColor 兜底
+    sky = max(sky * fade * gate * shChroma, vec3(0.0));
     sky *= 0.8;
-    // [2026-08-17] 阳光颜色混合（SH 环境光同款机制，用户需求）：天光随太阳高度染暖阳色，
-    // 正午金黄、黄昏渐变、夜晚关闭——消除"到处发蓝"。sunIrradiance 色度（settings.glsl 常量，
-    // 两个编译单元都可见；DeferredLight 版用 global.directIlluminance，色度相同）。
-    // 只染色调不动亮度；DEBUG 分支在其后，不影响红/黑判定。
-    #ifndef DIMENSION_THE_END
-        float timeBasedTint = saturate(worldSunDir.y * 2.5 - 0.15);
-        float tintStrength = AMBIENT_SUNLIGHT_TINT_RATIO * timeBasedTint;
-        if (tintStrength > 0.0) {
-            vec3 sunColorTint = sunIrradiance / max(luminance(sunIrradiance), 1e-4);
-            sky = mix(sky, sky * sunColorTint, tintStrength);
-        }
-    #endif
     #ifdef DEBUG_VOXEL_SKY
         // [2026-08-17] 染红改为"门控放行且有值才红"：洞穴/浅洞 gate≈0 → 黑，
         // 区分"路径被拦截"与"真实吃到天光"（此前无条件红 → 室内也全红）。
