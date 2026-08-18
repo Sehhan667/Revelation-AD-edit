@@ -502,9 +502,15 @@ void main() {
         // [2026-08-18] 最小环境光由 MINIMUM_AMBIENT_BRIGHTNESS 宏统一控制
         // （activeMinAmbient，法线权重与夜视同初始值），不再用 skyColor×lightmap
         // 硬编码保底——后者会绕过玩家滑条且与 GI 平涂冲突。
-        if (ambientInVoxelGrid)
-            ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
-        else
+        if (ambientInVoxelGrid) {
+            // [FIX 2026-08-18 封闭空间过亮] 网格内最小环境光底也必须乘 lightmap 门控：
+            // activeMinAmbient(0.03, 补偿后最高 0.43) 若无条件施加，全封闭无光房间
+            // （lightmap≈0）也恒定发光（用户实测"两个高的最小空间仍然亮"）。
+            // 与网格外 L510 同口径：lightmap≈0 → 底≈0（洞穴/封闭保持黑），
+            // 开阔阴影 lightmap.y 高 → 底全量。夜视底(5e-3*nightVision)不受影响。
+            ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision))
+                         * smoothstep(0.03, 0.15, lightmap.y);
+        } else
             // 网格外：洞穴/封闭室内不吃平铺底光（lightmap≈0 → 0），
             // 否则大洞穴远处的网格外墙壁会被均匀点亮（洞穴漏光根因之一）。
             ambientAccum *= smoothstep(0.10, 0.25, lightmap.y);
