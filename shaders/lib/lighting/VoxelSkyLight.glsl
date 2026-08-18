@@ -70,13 +70,17 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     if (luminance(sky) < 1e-4) sky = skyColor * 0.5;
     sky = mix(sky, max(sky, skyColor), dayBlend);
     float skyLuma = luminance(sky);   // 先取亮度（保持分时策略的亮度）
-    // [2026-08-18] 色度：白天 SH(正午蓝)，傍晚/夜晚 LUT(物理橙粉/蓝紫)。
-    // 全用 SH 傍晚发绿（3 阶低频展平太阳光晕）；切 LUT 与非光追不同源但傍晚物理正确。
-    // 注：待与用户核对非光追/光追傍晚实际观感后再统一色度链路。
+    // [FIX 2026-08-18 网格内外色差] 色度与非光追环境光完全同源、同处理：
+    // 非光追 = 灰白底 + ConvolvedReconstructSH3(skySH, worldNormal) + 暖假反弹。
+    // GI 此前白天 SH / 傍晚 LUT 分时段 → 傍晚与非光追不同源，偏绿/蓝且均匀（用户实测）。
+    // 统一为全天 SH 色度（与非光追同函数同系数），并复刻网格外的"灰白底稀释"：
+    // 非光追的 lm3=lightmap³ 让低 lightmap 处 SH 占比小（相当于被灰底中和），
+    // GI 用天空可见度 lightmap 做同样的稀释——洞穴/暗处色度被中和，不整片偏色。
     vec3 shSky = ConvolvedReconstructSH3(global.skySH, dir);
     vec3 shChroma = shSky / max(luminance(shSky), 1e-4);
-    vec3 lutChroma = lutSky / max(luminance(lutSky), 1e-4);
-    vec3 chroma = mix(lutChroma, shChroma, dayBlend);
+    // 灰白底稀释（复刻非光追 lm3 语义）：lightmap 低 → 色度被中和 → 不偏绿/蓝
+    float greyBlend = 1.0 - saturate(VoxelSkyLeakGate(lightmap));
+    vec3 chroma = mix(shChroma, vec3(1.0), greyBlend * 0.5);
     sky = chroma * skyLuma;
     // [2026-08-18] 网格外环境光含"暖色假反弹"（DeferredLight L511：
     // ambientAccum += CalculateFakeBouncedLight * lm3 * lm3 * sunlightBase，
