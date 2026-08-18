@@ -27,6 +27,12 @@ screen.Volumetric=体积雾
 screen.Rainbows=彩虹
 
 screen.GlobalIllumination=全局光照
+screen.SSILVB=SSILVB 屏幕空间GI
+screen.SSILVB.comment=屏幕空间体素化全局光照：基于屏幕空间的近似 GI，开销低，无需体素化
+screen.VXGI=VXGI 体素GI
+screen.VXGI.comment=体素全局光照：64³ 网格 + IRC 辐照度缓存 + 每像素漫反射追踪；与 SSILVB 互斥（体素优先）
+screen.voxel=体素调试
+screen.voxel.comment=体素 GI 调试可视化（仅诊断用；正常用户开关在 光照 → 全局光照 → VXGI）
 screen.AmbientOcclusion=环境光遮蔽
 screen.Reflections=反射
 screen.Refractions=折射
@@ -276,12 +282,22 @@ option.GTAO_DIRECTION_SAMPLES=GTAO步进采样数
 option.GTAO_RADIUS=GTAO半径
 
 option.SSILVB_ENABLED=SSILVB全局光照
+option.SSILVB_ENABLED.comment=开启屏幕空间体素化全局光照（基于屏幕缓冲的近似 GI，开销低）；与体素 GI（VXGI）互斥，体素优先
 option.SSILVB_SLICE_COUNT=方向采样数
 option.SSILVB_SAMPLE_COUNT=步进采样数
 option.SSILVB_SECTOR_COUNT=位掩码质量
 option.SSILVB_HIT_THICKNESS=命中厚度
 option.SSILVB_BLENDED_LIGHTMAP=Lightmap混合
 option.SSILVB_MAX_ACCUM_FRAMES=最大累积帧数
+option.SSILVB_DISTANCE_LIMIT=距离限制
+option.SSILVB_DISTANCE_LIMIT.comment=启用后 SSILVB 只影响距相机一定距离内的像素（远处保持原版光照）
+option.SSILVB_MAX_DISTANCE=最大距离
+option.SSILVB_FADE_START_DISTANCE=淡出起始距离
+option.SSILVB_PEAK_HOLD=峰值保持
+option.SSILVB_PEAK_HOLD.comment=保持辐照度峰值，移动时避免亮度骤降
+option.SSILVB_HOLD_DOWN_SPEED=衰减速度
+option.SSILVB_HOLD_UP_SPEED=上升速度
+option.SSILVB_TEMPORAL_MIX_SPEED=时域混合速度
 
 option.SVGF_ENABLED=时空方差导向过滤(SVGF)
 
@@ -661,5 +677,19 @@ option.VOXEL_GI_DIR_SAMPLES.comment=表面点沿法线方向采样体素的点�
 
 option.VOXEL_GI_DIR_DIST=查询采样距离
 option.VOXEL_GI_DIR_DIST.comment=沿法线方向采样的最大体素距离
+
+# ===== VXGI 用户开关（光照 → 全局光照 → VXGI 子菜单）=====
+option.ENABLE_VOXELIZATION=体素化
+option.ENABLE_VOXELIZATION.comment=体素化开关：shadow pass 直写 voxelData（3D 纹理）；关闭则无体素 GI。仅影响体素化本身，查看体素结果用 Debug → 体素 → 体素可视化
+
+option.VOXEL_GI_SELF_BOUNCE=自反弹强度
+option.VOXEL_GI_SELF_BOUNCE.comment=光线命中后从 IRC 缓存取上一帧辐照度作为反弹光的权重；决定阴影/室内光线传播深度（越大越亮但可能发闷）
+
+option.VOXEL_GI_BLEND=时域混合速度
+option.VOXEL_GI_BLEND.comment=IRC 辐照度缓存每帧接受新采样值的比例（0.99=慢速累积更平滑，低值响应快但噪声大）
+
+option.VOXEL_EDGE_BLEND_DISTANCE=网格边缘过渡带
+option.VOXEL_EDGE_BLEND_DISTANCE.comment=网格外环境光过渡进网格内的距离（格数）：新方块进入 64³ 范围时，从"网格外 SH 环境光"平滑过渡到"网格内 GI"，避免边缘暗→亮跳变。0=关闭过渡
+
 screen.help= Help (hover_mouse)
 screen.help.comment = There is a READ ME file in the shader.zip that explains things. Or visit patreon.com/timetravelbeard and watch the free video series there or on Youtube. ask questions on my discord linked in both. Have Fun!
