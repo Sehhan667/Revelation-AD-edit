@@ -237,8 +237,14 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
                  * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * absorption;
         // 间接光：命中体素处的 IRC 前帧缓存（相机重投影 +cDi，与注入端同款）
         ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
-        if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA))))
+        if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA)))) {
             contrib += alb * FetchVoxelRadiance(ircHit).rgb * 0.01 * VOXEL_GI_SELF_BOUNCE * absorption;
+        } else {
+            // [2026-08-18] itrp 同款消费端兜底：IRC 查询越界（新暴露/网格边缘）时，
+            // 用 SimpleSkyLighting 解析下限按命中法线补光，避免越界体素自反弹恒 0。
+            contrib += alb * SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
+                                               hitNormal.y, hitSkylight) * VOXEL_GI_SELF_BOUNCE * absorption;
+        }
         return contrib * weight;
     }
 

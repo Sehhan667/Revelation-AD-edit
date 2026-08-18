@@ -399,8 +399,13 @@ void main() {
         // 播种只给真正户外（skylight≥0.15）的体素，防止洞穴体素被写胜的
         // 中低 skylight 污染后整体点亮。
         float edgeSeedGate = step(0.15, edgeSky);
+        // [2026-08-18] itrp 同款解析下限播种：天顶方向天光与 SimpleSkyLighting 取 max。
+        // SimpleSkyLighting 不依赖射线出界，给新暴露/边缘体素一个由法线曲线 + lightmap
+        // 门控保证的底光（阴影侧也能亮），天顶项保留方向性；两者都受 EDGE_SEED 缩放。
         vec3 pRC = pValid ? FetchPrevRadiance(prevC)
-                          : (sld ? VoxelSkyColor(vec3(0.0, 1.0, 0.0), edgeSky) * VOXEL_IRC_EDGE_SEED * edgeSeedGate : nRC);
+                          : (sld ? max(VoxelSkyColor(vec3(0.0, 1.0, 0.0), edgeSky),
+                                       SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)), 0.0, edgeSky))
+                                       * VOXEL_IRC_EDGE_SEED * edgeSeedGate : nRC);
         // Phase 1：上一帧天空曝光度（新暴露固体格播种，同样乘门控）
         float pExp = pValid ? FetchPrevExposure(prevC)
                             : (sld ? VOXEL_IRC_EDGE_SEED * edgeSeedGate : nExp);

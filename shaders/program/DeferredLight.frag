@@ -486,9 +486,11 @@ void main() {
         // 网格内完全交给 GI（含最小环境光底）：否则平铺底光会把
         // 窗口逸散/遮挡 AO 的梯度盖成“死板固定亮度”（用户实测反馈）。
         // 仅保留夜视底光，避免夜视失效。
-        // [2026-08-17] 最小环境光底：随 lightmap.y 缩放（洞穴≈0 保持黑），避免阴影侧全黑
+        // [2026-08-18] 最小环境光由 MINIMUM_AMBIENT_BRIGHTNESS 宏统一控制
+        // （activeMinAmbient，法线权重与夜视同初始值），不再用 skyColor×lightmap
+        // 硬编码保底——后者会绕过玩家滑条且与 GI 平涂冲突。
         if (ambientInVoxelGrid)
-            ambientAccum = max(vec3(5e-3 * nightVision), skyColor * lightmap.y * 0.04);
+            ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
         else
             // 网格外：洞穴/封闭室内不吃平铺底光（lightmap≈0 → 0），
             // 否则大洞穴远处的网格外墙壁会被均匀点亮（洞穴漏光根因之一）。
@@ -498,35 +500,15 @@ void main() {
     #endif
 
     #ifndef SSILVB_ENABLED
-        // [2026-08-17] SH 天光 × 天空可见度：网格内也保留 SH，亮度由射线追踪的体素
-        // 天空可见度（IRC 缓存 alpha = Phase1 曝光）调制——开阔阴影 exposure≈1 → SH
-        // 全量（阴影亮）；室内深处 exposure≈0 → SH 关（暗）。解析 SH 无噪声。
-        // [2026-08-17 调整] 网格内 SH 降为"阴影补足"（×0.45）：GI 已提供方向天光，
-        // SH 全量叠加会双重计数 → 方块表面与 GI 冲突出现 z-fighting 感（用户实测）；
-        // exposure 用 6 邻居平滑，消除 1m 体素阶跃在表面的闪烁。
-        float skyVis = 1.0;
-        #ifdef VOXEL_GI_ENABLED
-        if (ambientInVoxelGrid) {
-            ivec3 vc = ivec3(ambientVoxelCoord);
-            ivec3 vcC = clamp(vc, ivec3(0), ivec3(int(VOXEL_AREA) - 1));
-            ivec3 vc1 = clamp(vc + ivec3(1, 0, 0), ivec3(0), ivec3(int(VOXEL_AREA) - 1));
-            ivec3 vc2 = clamp(vc + ivec3(-1, 0, 0), ivec3(0), ivec3(int(VOXEL_AREA) - 1));
-            ivec3 vc3 = clamp(vc + ivec3(0, 1, 0), ivec3(0), ivec3(int(VOXEL_AREA) - 1));
-            ivec3 vc4 = clamp(vc + ivec3(0, -1, 0), ivec3(0), ivec3(int(VOXEL_AREA) - 1));
-            ivec3 vc5 = clamp(vc + ivec3(0, 0, 1), ivec3(0), ivec3(int(VOXEL_AREA) - 1));
-            ivec3 vc6 = clamp(vc + ivec3(0, 0, -1), ivec3(0), ivec3(int(VOXEL_AREA) - 1));
-            skyVis = (FetchVoxelRadiance(vcC).a * 2.0
-                    + FetchVoxelRadiance(vc1).a + FetchVoxelRadiance(vc2).a
-                    + FetchVoxelRadiance(vc3).a + FetchVoxelRadiance(vc4).a
-                    + FetchVoxelRadiance(vc5).a + FetchVoxelRadiance(vc6).a) / 8.0;
-        }
-        #endif
-        if (lightmap.y > EPS) {
-            float lm3 = ambientInVoxelGrid ? 1.0 : cube(lightmap.y);
-            float shStrength = ambientInVoxelGrid ? 0.45 : 1.0; // 网格内 SH = 阴影补足
-            ambientAccum += ConvolvedReconstructSH3(global.skySH, worldNormal) * lm3 * skyVis * shStrength;
-            if (!ambientInVoxelGrid)
-                ambientAccum += CalculateFakeBouncedLight(worldNormal) * lm3 * (lightmap.y * lightmap.y) * sunlightBase;
+        // [2026-08-18] 抛弃"网格内 SH 阴影补足"：SH 平涂与 GI 方向天光双重计数，
+        // 方块表面出现 z-fighting 感（用户实测）。网格内天光完全交给 GI（出界射线
+        // 注入 IRC + 自反弹传播），SH 只在网格外按非光追样式渲染。最小环境光底
+        // （ambientAccum 的 skyColor×lightmap 项）保留作安全网；IRC alpha 曝光
+        // 计算保留但不消费（供后续天光方案复用）。
+        if (lightmap.y > EPS && !ambientInVoxelGrid) {
+            float lm3 = cube(lightmap.y);
+            ambientAccum += ConvolvedReconstructSH3(global.skySH, worldNormal) * lm3;
+            ambientAccum += CalculateFakeBouncedLight(worldNormal) * lm3 * (lightmap.y * lightmap.y) * sunlightBase;
         }
     #endif
 
