@@ -72,7 +72,8 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     // 网格内 GI 的 LUT 傍晚物理值很暗 → "暗淡的多"（用户实测）。加一个按天空可见度
     // 门控的 skyColor 底（傍晚/夜晚生效，白天被 dayBlend 盖掉），让网格内傍晚也有
     // 可见天光；色度随后用 SH 天顶统一，底只提亮度不染色。
-    vec3 skyColorFloor = skyColor * 0.25 * saturate(1.0 - worldSunDir.y * 2.5);
+    // [2026-08-18 傍晚过亮] 0.25 → 0.12：用户实测傍晚过亮，减半后傍晚仍有天光但不抢眼。
+    vec3 skyColorFloor = skyColor * 0.12 * saturate(1.0 - worldSunDir.y * 2.5);
     sky = max(sky, skyColorFloor);
     sky = mix(sky, max(sky, skyColor), dayBlend);
     float skyLuma = luminance(sky);   // 先取亮度（保持分时策略的亮度）
