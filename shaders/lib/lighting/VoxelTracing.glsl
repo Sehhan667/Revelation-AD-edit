@@ -100,7 +100,6 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
     vec3 totalStep = (sdir * (voxelCoord - origin + 0.5) + 0.5) * rdir;
     float rayLength = 0.0;
     vec3 contrib = vec3(0.0);
-    bool exitGrid = false;
     // 透明吸收累积（hitSurface）：首次命中水/玻璃/树叶时着色衰减，其后贡献全乘此系数
     vec3 absorption = vec3(1.0);
     bool traceTranslucent = true;
@@ -129,13 +128,20 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         vec3 tracingNext = step(totalStep, vec3(rayLength));
         voxelCoord += tracingNext * sdir;
         totalStep += tracingNext * rdir;
+        // [FIX 2026-08-18 阴影死黑根因] 射程用尽判定必须"步数走满"与"距离超限"都算：
+        // 纯向上射线每步恰好 1 格，第 VOXEL_TRACE_DISTANCE 次迭代 rayLength 恰好等于
+        // VOXEL_TRACE_DISTANCE → `>` 为 false → 循环自然结束 → exitGrid=false →
+        // 出界天空路径被跳过 → 开阔阴影（正上方就是天空）只有微弱 NOLIGHT → "阴影黑洞洞"、
+        // 只有网格边缘（真越界）才拿天光 → DEBUG_VOXEL_SKY"体素范围边缘才发红"（用户实测）。
+        // 射程用尽（距离超限）→ 提前退出，走循环后出界路径。
+        // 注：不能靠 `>` 判定"步数走满"——纯向上射线第 VOXEL_TRACE_DISTANCE 步
+        // rayLength 恰为 24.0（格心起点）或 23.x（格内起点），`>` 均不触发；
+        // 步数走满由循环自然结束覆盖，循环后无条件出界（见下方 FIX 注释）。
         if (rayLength > float(VOXEL_TRACE_DISTANCE)) {
-            exitGrid = true; // 射程用尽也走出界路径（exitTracing 语义：距离/越界统一出界）
             break;
         }
 
         if (any(lessThan(voxelCoord, vec3(0.0))) || any(greaterThanEqual(voxelCoord, vec3(VOXEL_AREA)))) {
-            exitGrid = true;
             break;
         }
 
@@ -255,7 +261,14 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
     // - blocklight 底 = 像素自己 lightmap 的方块光（光线出界不丢失光源信息）
     // - NOLIGHT 兜底：出界路径专有（NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)）
     // 射程用尽：仅返回发射光球形累积 + 底光。主底光仍由 IRC 阳光扩散提供。
-    if (exitGrid) {
+    // [FIX 2026-08-18 阴影死黑根因] 循环自然结束（24 步走完仍无命中）= 射程用尽，
+    // 视线一路畅通通向天空 → 走出界路径。此前只有"真越界"或"rayLength 严格 > 24"
+    // 才置 exitGrid：纯向上射线每步恰好 1 格，第 24 步 rayLength == 24 不触发 `>`，
+    // 斜方向射线每步距离可能 <1，累计更到不了 24 → 开阔阴影（正上方就是天空）的
+    // 射线走满后 exitGrid 仍 false → 天光路径被跳过，只剩微弱 NOLIGHT → "阴影黑洞洞"；
+    // 只有网格边缘（射线几步内真越界）才出界 → DEBUG_VOXEL_SKY"体素范围边缘才发红"。
+    // 命中路径提前 return，走到这里必然未命中 → 无条件视为出界。
+    {
         // 出界 → 方向天空光 + NOLIGHT 兜底：skyMapTex 方向辐射（内含地平线衰减
         // 与线性漏光门控）。洞穴（skyLightmap≈0）无天光，半遮挡按比例保留。
         contrib += VoxelSkyColor(dir, skyLightmap) * VOXEL_GI_TRACE_SKY_STRENGTH * absorption;
