@@ -420,7 +420,11 @@ void main() {
         float edgeSky = VoxelUnpack2xU8Y(vd.w);
         // 播种只给真正户外（skylight≥0.15）的体素，防止洞穴体素被写胜的
         // 中低 skylight 污染后整体点亮。
-        float edgeSeedGate = step(0.15, edgeSky);
+        // [FIX 2026-08-18 封闭小房间也亮] 阈值 0.15 → 0.7：封闭房间体素 skylight
+        // 是 shadow pass 写胜残留（室内 0.2~0.5），0.15 会误放行 → 新暴露格被播种
+        // 天光 → IRC 亮（用户实测"小房间也亮，不是射线"）。户外体素 skylight≈1.0，
+        // 0.7 阈值只放行真户外；封闭残留(≤0.5)全挡。
+        float edgeSeedGate = step(0.7, edgeSky);
         // [2026-08-18] itrp 同款解析下限播种：天顶方向天光与 SimpleSkyLighting 取 max。
         // SimpleSkyLighting 不依赖射线出界，给新暴露/边缘体素一个由法线曲线 + lightmap
         // 门控保证的底光（阴影侧也能亮），天顶项保留方向性；两者都受 EDGE_SEED 缩放。
@@ -444,10 +448,16 @@ void main() {
         // [2026-08-18] 解析下限必须在时间混合之后施加：0.99 混合下每帧只接受 1% 新值，
         // 若下限在采样后、混合前，冷启动缓存≈0 时会被稀释成 ≈0 永远爬不起来
         // → 阴影 IRC≈0 暗、只有网格边缘出界路径亮（用户实测"越接近边缘越亮"）。
-        // 混合后取 max 保证每帧结果至少 = SimpleSkyLighting（lightmap 门控，洞穴不漏光）。
+        // 混合后取 max 保证每帧结果至少 = SimpleSkyLighting。
+        // [FIX 2026-08-18 封闭小房间也亮] lightmap 参数必须用"射线真实天空可见度"
+        // （曝光度）而不是体素 skylight：封闭小房间的体素 skylight 是写胜残留
+        //（shadow pass 顶点 skylight，室内可能残留 0.2~0.5），SimpleSkyLighting
+        // ×8 曲线会把残留放大成可见下限 → IRC 不依赖射线就发光（用户实测
+        // "小房间也亮，不是射线是 IRC 照亮的"）。曝光度 = 射线能否出界，
+        // 封闭房间射线被墙挡 ≈0 → 下限归零；开阔阴影出界 → 下限正常。
         if (sld) {
             nRC = max(nRC, SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
-                                             0.0, VoxelUnpack2xU8Y(vd.w)));
+                                             0.0, FetchPrevExposure(c)));
         }
         nExp = mix(nExp, pExp, bw);      // Phase 1：曝光度恒用 bw，防二值跳变
 
