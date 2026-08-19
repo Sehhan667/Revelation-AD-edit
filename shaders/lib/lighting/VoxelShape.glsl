@@ -160,7 +160,14 @@ bool HitShape(VoxelRay ray, vec3 voxelCoord, float voxelID, inout float rayLengt
             hit = IsHitBox(ray, blockOrigin, vec3(0.0, 10.0 / 16.0, 14.0 / 16.0), vec3(1.0, 6.0 / 16.0, 2.0 / 16.0), rayLength, hitNormal) || hit;
             hit = IsHitBox(ray, blockOrigin, vec3(4.0 / 16.0, 4.0 / 16.0, 4.0 / 16.0), vec3(8.0 / 16.0, 6.0 / 16.0, 8.0 / 16.0), rayLength, hitNormal) || hit;
 
-        } else if (vID == 55.0) { // Top Trapdoor
+        } else if (vID == 51.0) { // Bottom Trapdoor (block.10201, 贴底部 3/16 水平薄片)
+            // [FIX 2026-08-18 底部活板门不挡光] 原实现 vID=51 落入下方 Top Cutted 分支
+            // （vID<=63），算出的 size.y = 51*0.0625-3.0 = 0.1875 本应正确，但用户实测
+            // 底部活板门不挡光。改为专门分支（与顶部 vID==55 对称），明确贴底 3/16 薄片，
+            // 排除 Top Cutted 分支的潜在边界/索引问题。MC 底部活板门 = y∈[0, 3/16]。
+            hit = IsHitBox(ray, blockOrigin, vec3(0.0, 0.0, 0.0), vec3(1.0, 3.0 / 16.0, 1.0), rayLength, hitNormal);
+
+        } else if (vID == 55.0) { // Top Trapdoor (block.10205)
             hit = IsHitBox(ray, blockOrigin, vec3(0.0, 13.0 / 16.0, 0.0), vec3(1.0, 3.0 / 16.0, 1.0), rayLength, hitNormal);
 
         } else if (vID == 59.0) { // Composter
