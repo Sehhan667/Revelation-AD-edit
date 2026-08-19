@@ -691,8 +691,5 @@ option.VOXEL_GI_BLEND.comment=IRC 辐照度缓存每帧接受新采样值的比�
 option.VOXEL_EDGE_BLEND_DISTANCE=网格边缘过渡带
 option.VOXEL_EDGE_BLEND_DISTANCE.comment=网格外环境光过渡进网格内的距离（格数）：新方块进入 64³ 范围时，从"网格外 SH 环境光"平滑过渡到"网格内 GI"，避免边缘暗→亮跳变。0=关闭过渡
 
-option.VOXEL_SHAPE_SOLID=不完整方块挡光
-option.VOXEL_SHAPE_SOLID.comment=楼梯/台阶/栅栏等不完整方块的挡光模式：开=子盒求交失败时按整格挡光（不漏光，视觉干净）；关=精确子盒（楼梯缺口可透光，但会漏光）
-
 screen.help= Help (hover_mouse)
 screen.help.comment = There is a READ ME file in the shader.zip that explains things. Or visit patreon.com/timetravelbeard and watch the free video series there or on Youtube. ask questions on my discord linked in both. Have Fun!

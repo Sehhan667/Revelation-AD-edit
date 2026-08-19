@@ -442,12 +442,14 @@ bool HitShape(VoxelRay ray, vec3 voxelCoord, float voxelID, inout float rayLengt
 //   （光线必须在本格退出前进入子盒），HitShape 子盒求交；未命中返回 false
 // totalStep/tracingNext/voxelCoord = DDA 步进状态（当前格已 advance 后的值）；
 // 命中后 rayLength = 子盒进入距离、hitNormal = 子盒命中面法线。
-// [FIX 2026-08-18 不完整方块漏光] 形状块子盒求交失败时（光线穿过楼梯缺角/栅栏缝/
-// 台阶空隙），旧实现返回 false → 光线继续穿透 → 所有不完整方块背后漏光（用户实测
-// "所有不完整方块都漏、边缘缝隙状漏光、楼梯/台阶漏光"）。体素化把形状块写为整格
-// 固体（Shadow.geom 不对 155-294 做 isFullBlock 检查），射线却用精确子盒——两者
-// 不一致是漏光根源。VOXEL_SHAPE_SOLID=1（默认）时子盒求交失败回退整格命中，
-// 形状块完全挡光不漏；=0 时保持精确子盒（物理正确但会漏光）。
+// [2026-08-18 回退] 此前 VOXEL_SHAPE_SOLID 整格兜底（3a8a631）在子盒求交失败时
+// 回退整格命中，虽堵住了"形状空缺漏光"，但带来更严重问题（用户实测）：
+//   1. 形状块内光源 → 光像完整方块（空缺也被整格反弹/发光）
+//   2. 活板门等薄片 → 光线从侧面穿过空缺被整格挡 → 格子整格发亮
+// 两者同源：整格兜底把"形状空缺"当成了"实心"，破坏了形状的物理形状。
+// 恢复纯子盒求交：命中子盒正确反弹、空缺穿透（物理正确，楼梯缺角/薄片侧面该透光）。
+// 用户最初反馈的"漏光"实为 体素化写整格 vs 求交子盒 的边缘不一致（CUTOUT 形状块
+// 未进体素导致完全穿透，已由 Shadow.geom 修复 4c13a1b 解决），非"空缺该透光"。
 bool IsHitBlock(VoxelRay ray, vec3 totalStep, vec3 tracingNext, vec3 voxelCoord, float voxelID, inout float rayLength, out vec3 hitNormal) {
     hitNormal = vec3(0.0);
 
@@ -459,19 +461,8 @@ bool IsHitBlock(VoxelRay ray, vec3 totalStep, vec3 tracingNext, vec3 voxelCoord,
         // rayLength 进入本函数时 = 本格进入距离（DDA 循环顶部已取，步进前）。
         // 子盒求交用"本格退出距离"（VoxelMin3(totalStep)，步进后）判定光线是否
         // 在退出本格前进入子盒；命中则 rayLength 被 HitShape 改写为子盒进入距离。
-        float enterDist = rayLength;
         rayLength = VoxelMin3(totalStep);
         hit = HitShape(ray, voxelCoord, voxelID, rayLength, hitNormal);
-        #if VOXEL_SHAPE_SOLID
-            if (!hit) {
-                // 子盒未命中（光线穿过形状空隙）→ 整格兜底：形状块按全块挡光。
-                // 命中点 = 本格进入面（enterDist），法线 = 进入面法线（与全块同款
-                // -tracingNext*sdir）。这样光线进入形状格即被挡，不再穿透空隙漏光。
-                hit = true;
-                rayLength = enterDist;
-                hitNormal = -tracingNext * ray.sdir;
-            }
-        #endif
     }
 
     return hit;
