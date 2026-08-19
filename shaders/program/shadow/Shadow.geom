@@ -105,12 +105,15 @@ void main() {
             // 只对 CUTOUT 阶段的光源块（voxelID==32）放行；草/花/门等普通 CUTOUT 方块
             // 仍不进体素（避免幻影块，同语义）。
             renderStage == MC_RENDER_STAGE_TERRAIN_SOLID || renderStage == MC_RENDER_STAGE_TERRAIN_TRANSLUCENT
-            // [FIX 2026-08-18 活板门无法挡光] CUTOUT 阶段也放行形状块(155-294)：
-            // 活板门/栅栏门等 non-full 方块在 Iris 走 CUTOUT 渲染阶段，原判定只放行
-            // 发光地衣(voxelID==32) → 形状块被排除出体素 → voxelData 无数据 → 光线
-            // 直接穿透 → 活板门完全无法阻挡光线（用户实测）。形状块有独立求交
+            // [FIX 2026-08-18 活板门无法挡光] CUTOUT/CUTOUT_MIPPED 阶段放行形状块(155-294)：
+            // 活板门/栅栏门等 non-full 方块在 Iris 走 CUTOUT_MIPPED 渲染阶段（非 CUTOUT），
+            // 原判定只放行发光地衣(voxelID==32) → 形状块被排除出体素 → voxelData 无数据
+            // → 光线直接穿透 → 活板门完全无法阻挡光线（用户实测）。形状块有独立求交
             // (VoxelShape)，应进体素；草/花等非形状 CUTOUT 仍排除（避免幻影块）。
+            // [2026-08-18 补 CUTOUT_MIPPED] 活板门/门/栅栏门是 MC_RENDER_STAGE_TERRAIN_CUTOUT_MIPPED，
+            // 只放行 TERRAIN_CUTOUT 覆盖不到（用户实测撤销兜底后活板门又不挡光）。
             || (renderStage == MC_RENDER_STAGE_TERRAIN_CUTOUT && (g_voxelID[0] == 32.0 || (g_voxelID[0] >= 155.0 && g_voxelID[0] <= 294.0)))
+            || (renderStage == MC_RENDER_STAGE_TERRAIN_CUTOUT_MIPPED && g_voxelID[0] >= 155.0 && g_voxelID[0] <= 294.0)
         ))) {
             // midCoord = 三角形纹理包围盒中心（语义；消费端 GetAtlasCoord 做精确纹素定位）
             vec2 maxTexCoord = max(texCoord[0], max(texCoord[1], texCoord[2]));
