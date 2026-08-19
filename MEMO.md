@@ -44,7 +44,8 @@ org.anarres.cpp.InternalException: Bad token [³@278,0]:"³"
 
 ## 以后怎么避免
 
-- **`shaders.properties` 只能写 ASCII**：不要放中文注释，更不要放 `³` `¼` `²` `→` `—` `×` `≥` 等特殊符号。
+- **`shaders.properties` / `block.properties` 只能写 ASCII**：不要放中文注释，更不要放 `³` `¼` `²` `→` `—` `×` `≥` 等特殊符号。
+- **`block.properties` 同理**：里面有 `#ifdef IRIS_TAG_SUPPORT` 等指令，同样走 Iris 的 C 预处理器（jcpp）。非 ASCII 字符会让解析中断，**该行之后的所有方块映射条目全部丢失**（不是只丢一行）。2026-08-19 实测：铁栏杆段的中文注释导致其后的楼梯/半砖/栅栏/墙/水平活板门等全部 fallback 到 `materialID=1` → 体素化丢失 → 光追漏光；门/竖直活板门因为排在中文注释之前所以没事。
 - `.glsl` 文件不受影响：`//` 注释在预处理时会被剥除，中文注释可以正常使用。
 - 排查同类问题先看日志：搜索 `Properties pre-processing failed` 或 `Bad token`，几秒钟即可定位。
 
@@ -399,6 +400,67 @@ return contrib * weight;
 - **体素 skylight(vd.w) 是写胜残留，不是可靠天空可见度**——封闭/室内残留
   0.2~0.5，用它当 lightmap 门控必漏。可靠判据：像素 MC lightmap（追踪端）或
   曝光度 exposure（IRC 端，射线真实出界比例）。
+
+---
+
+# 备忘：不完整方块漏光根因 + 非完整光源整格发光（2026-08-19）
+
+## 一、漏光根因：block.properties 非 ASCII（主根因）
+
+现象：光追模式下半砖/楼梯/栅栏/墙/水平活板门等不完整方块漏光（光线穿透），
+只门/竖直活板门正常；直射 + 反弹都漏。
+
+排查：用 DEBUG_VOXEL_GI（按体素 voxelID 标色）定位到**写端**：
+- 门/竖直活板门 → 青（正确映射 155-158）
+- 楼梯 → 黄（materialID=1，被当整块）
+- 半砖/栅栏/墙 → 蓝（空，根本没进体素）
+
+根因：block.properties 里新增的"铁栏杆"段用了**中文注释**（新增/铁栏杆/→/（）等非 ASCII）。
+block.properties 里有 `#ifdef IRIS_TAG_SUPPORT`，同样走 Iris 的 C 预处理器（jcpp），
+非 ASCII 让解析中断 → **其后所有方块映射条目全部丢失**（楼梯/半砖/栅栏/墙/水平活板门 → materialID=1），
+而门（block.10155-10158）排在中文之前所以没事。这和第 1 节 shaders.properties 非 ASCII 是同一个坑。
+
+修复：6 行中文注释改 ASCII 英文；改后 block.properties 全 ASCII（已验证非 ASCII 字节数=0）。
+
+## 二、DEBUG_VOXEL_GI 原本是坏的（排查工具本身有 bug）
+
+原 `#ifdef DEBUG_VOXEL_GI` 块有结构 bug（悬空 `} else if` + `lightData` 越界引用），
+启用即编译失败，所以一直没人真正打开过。已重写为：按像素所在体素直读 voxelID，
+青绿=活板门/门(155-158/201/205)、橙棕=其它形状块(155-294)、黄=全块(1-154)、蓝=空(<=0.5)、红=越界；
+并加 `-geoNormal*0.05` 内偏移，修"读格边界 → 黄蓝疯狂闪烁"（ivec3 截断在面边界逐帧跳格）。
+settings.glsl 保留为注释掉的备用开关 `//#define DEBUG_VOXEL_GI`。
+
+## 三、非完整光源"整格发光"（追尾问题）
+
+现象：火把/灯笼这类非完整光源，其所在体素被整格照亮、像完整光源；外围传播正常。
+
+根因：不是 materialID 误判（火把正确识别为 21/发射体素）。而是发射光**体素级**：
+Shadow.geom 对 20-31 光源写死 `emissive=0.995` 满亮度，整格标记发射，非完整形状在此丢失
+（itrp 同样是体素级小球，不保留形状）。对齐 itrp 的关键是两个参数，之前都偏大/带底：
+| | 半径 | 底保 |
+|---|---|---|
+| itrp | 0.5（格内切球） | 无（擦边/未命中=0） |
+| 本项目改前 | 1.0 | mix(hit,1.0,0.15) → 每条穿过格的射线至少 15% 光 |
+| 本项目改后 | 0.5 | 0（纯球命中） |
+
+修复：
+- `VOXEL_GI_LIGHT_RADIUS` 1.0 → 0.5（VoxelLighting.glsl）
+- `VoxelHitLightSphere` 去掉 `mix(hit,1.0,0.15)` 底保，改纯 `VoxelSphereHit`（VoxelData.glsl）
+
+要点：**"整格发光"不是 radius 单方面**，先看有没有 min/mix 底保再谈半径；0.15 底保才是主因，
+radius 单独减不够。
+
+## 经验
+
+- **block.properties 和 shaders.properties 一样只能写 ASCII**（jcpp）；排查"某段之后的方块全失效"
+  先 grep 非 ASCII 字节（`[^\x00-\x7F]`），几秒定位，别逐条对映射。
+- **debug 块写完先确认能编译**：悬空 else-if / 越界变量这类结构错误，会让 `#ifdef` 里的
+  调试代码一启用就崩，形同虚设反而误导。
+- **读体素做可视化时，别用面边界坐标 ivec3 截断**：沿表面法线向内偏移 ~0.05 格，落在方块内部，
+  否则会在"自身格/邻接格"间逐帧跳色。
+- **未完成/已知方向**：逐像素 PBR 发光（对齐 itrp 的 LABPBR_EMISSIVENESS）本轮未做。
+  要做需恢复 Shadow.frag 存 texRes+midCoord（当前固体块 w/xy 被染色 albedo 占用），
+  采样 atlasSpecular2D 的 emissive 通道；代价是 64³ 下"光源印子"风险（当初砍掉逐纹素的原因）。
 
 
 

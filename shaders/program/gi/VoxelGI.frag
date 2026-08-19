@@ -207,8 +207,12 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
         // 平滑贡献 + 穿透不挡光；普通固体命中停止）----
         vec3 hvoxel = floor(voxelPos);
         vec3 hsdir = sign(dir);
-        vec3 hrdir = 1.0 / max(abs(dir), vec3(1e-8));
-        vec3 htotalStep = (hsdir * (hvoxel - voxelPos + 0.5) + 0.5) * hrdir;
+        // [FIX 2026-08-19] 同 VoxelTracing.glsl：rdir 必须有符号 + 零分量用 1e-30
+        //（原 1/max(abs(dir),1e-8) 有双重 bug：无符号 → 负方向轴 t 值取反 →
+        // 漏判；1e-8 → 轴向射线 totalStep 零分量轴极小 → VoxelMin3 返回错误
+        // 退出距离 → 形状子盒求交范围≈0 → 楼梯/活板门等形状块 IRC 注入漏光）
+        vec3 hrdir = 1.0 / mix(dir, vec3(1e-30), lessThanEqual(abs(dir), vec3(1e-8)));
+        vec3 htotalStep = (hsdir * (hvoxel - voxelPos + 0.5) + 0.5) * abs(hrdir);
         bool exitGrid = false;
         bool hitSolid = false;
         vec3 contrib = vec3(0.0);
@@ -229,7 +233,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             rayLen = VoxelMin3(htotalStep);
             vec3 tracingNext = step(htotalStep, vec3(rayLen));
             hvoxel += tracingNext * hsdir;
-            htotalStep += tracingNext * hrdir;
+            htotalStep += tracingNext * abs(hrdir);
             if (rayLen > float(VOXEL_IRC_TRACE_DISTANCE)) break;
 
             if (any(lessThan(hvoxel, vec3(0.0))) || any(greaterThanEqual(hvoxel, vec3(VOXEL_AREA)))) {

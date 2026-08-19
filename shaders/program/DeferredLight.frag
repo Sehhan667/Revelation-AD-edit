@@ -686,46 +686,25 @@ void main() {
                     voxelGI *= albedo * VOXEL_GI_TRACE_STRENGTH;
                 #endif
                 #ifdef DEBUG_VOXEL_GI
-                    // 调试：压暗其余光照，七态区分（用于逐步验证链路）：
-                    // 品红 = 发射数据存在（真实自发光光源，如 火把/灯笼）
-                    // 青   = 固体体素（voxelData.z>0.5）但无发射/方块光 → 被当普通固体 → 挡光
-                    // 黄 = 仅方块光数据存在（非发射光源）
-                    // 橙 = 阳光直射面（阴影贴图判定）
-                    // 绿 = 接收到 GI 的表面（voxelGI 亮度 > 0.005）
-                    // 蓝 = 网格内但光源/阳光/GI 全不满足（查询端≈0）
-                    // 红 = dbgCoord 越界（坐标 bug）
+                    // [2026-08-19] 调试：按像素所在体素直读 voxelID，定位"目标方块有没有进体素 + ID 对不对 + 在不在正确格"。
+                    // 青绿 = 活板门(201/205)/门(155-158) 已体素化；橙 = 其他形状块(155-294) 已体素化；
+                    // 黄 = 非形状固体(1-154，全块/发光/反光/水玻璃叶) 已体素化；蓝 = 该格无固体数据(<=0，空气/漏写)；
+                    // 红 = 像素在 64³ 网格外。判读水平活板门：其表面应显青绿；显蓝(空)或黄(落成全块) = 没正确体素化(写端)。
                     sceneOut = sceneOut * 0.15;
-                    ivec3 dbgCoord = ivec3(camRelPos + cameraPositionFract + float(VOXEL_RADIUS));
+                    // 沿表面几何法线向内偏移 0.05 格：采样点落在像素所在方块【内部】，而非
+                    // 面边界（camRelPos 恰在格边界，ivec3 截断会在"自身格 / 邻接空气格"间
+                    // 逐帧跳变 → 黄蓝疯狂闪烁）。偏移后稳定读到该方块自己的体素。
+                    ivec3 dbgCoord = ivec3(camRelPos - geoNormal * 0.05 + cameraPositionFract + float(VOXEL_RADIUS));
                     if (all(greaterThanEqual(dbgCoord, ivec3(0))) && all(lessThan(dbgCoord, ivec3(VOXEL_AREA)))) {
-                        vec4 lightData = unpackUnorm4x8(texelFetch(voxelLightSampler, dbgCoord, 0).x);
                         float dbgVoxelID = texelFetch(voxelDataSampler, dbgCoord, 0).z;
-                        // [2026-08-18 调试活板门] 直接读出 voxelID：把 ID 数值编码到颜色。
-                        // R = 低位(ID % 5/5), G = 中位, B = 高位，便于读活板门实际 ID。
-                        // 同时保留形状块/发射标记：橙=形状块155-294，青绿=活板门，品红=发射。
                         if (dbgVoxelID >= 155.0 && dbgVoxelID <= 294.0) {
-                            sceneOut = vec3(1.0, 0.6, 0.0);   // 橙：形状块(155-294)
-                            if (dbgVoxelID == 201.0 || dbgVoxelID == 205.0 ||
-                                (dbgVoxelID >= 155.0 && dbgVoxelID <= 158.0)) {
-                                sceneOut = vec3(0.0, 1.0, 0.5);  // 青绿：活板门(201/205/155-158)
-                            }
+                            bool doorOrTrapdoor = (dbgVoxelID >= 155.0 && dbgVoxelID <= 158.0)
+                                               || dbgVoxelID == 201.0 || dbgVoxelID == 205.0;
+                            sceneOut = doorOrTrapdoor ? vec3(0.0, 1.0, 0.5) : vec3(1.0, 0.6, 0.0);
+                        } else if (dbgVoxelID > 0.5) {
+                            sceneOut = vec3(1.0, 1.0, 0.0);
                         } else {
-                            // 数值读出：R=(ID mod 16)/15, G=((ID/16) mod 16)/15, B=(ID/256)/15
-                            float r = mod(dbgVoxelID, 16.0) / 15.0;
-                            float g = mod(floor(dbgVoxelID / 16.0), 16.0) / 15.0;
-                            float b = floor(dbgVoxelID / 256.0) / 15.0;
-                            sceneOut = vec3(r, g, b);   // 灰阶/彩色编码 voxelID 数值
-                        }
-                        if (lightData.z > VOXEL_GI_EMISSIVE_THRESHOLD && dbgVoxelID > 0.5 && sceneOut == vec3(0.0)) {
-                            sceneOut = vec3(1.0, 0.0, 1.0);   // 品红：发射数据存在（仅当 voxelID 读不出时标记）
-                        }
-                        } else if (lightData.y > 0.1) {
-                            sceneOut = vec3(1.0, 1.0, 0.0);   // 黄：仅方块光数据存在
-                        } else if (VoxelPixelSunVisible(camRelPos + cameraPosition)) {
-                            sceneOut = vec3(1.0, 0.5, 0.0);   // 橙：真阳光直射面（阴影贴图判定）
-                        } else if (luminance(voxelGI) > 0.005) {
-                            sceneOut = vec3(0.0, 1.0, 0.0);   // 绿：纯接收 GI
-                        } else {
-                            sceneOut = vec3(0.0, 0.4, 1.0);   // 蓝：查询端≈0
+                            sceneOut = vec3(0.0, 0.4, 1.0);
                         }
                     } else {
                         sceneOut = vec3(1.0, 0.0, 0.0);       // 红：dbgCoord 越界

@@ -331,7 +331,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//   缺任一 → GUI 只占位不显示（"空格子"）。注意不能用 `#if defined A && defined B` 复合条件。
 	#define ENABLE_VOXELIZATION  // 体素化：shadow pass 直写 voxelData（3D 纹理）；关闭则无 GI
 	//#define VISUALIZE_VOXELS
-	//#define DEBUG_VOXEL_GI  // 调试：黄=光源体素 绿=接收 GI（链路末端，查询）
+	//#define DEBUG_VOXEL_GI  // 调试(备用)：按体素 voxelID 标色（青绿=活板门/门 橙棕=形状块[楼梯/半砖/栅栏/墙] 黄=全块 蓝=空 红=越界）
 	//#define DEBUG_VOXEL_RADIANCE  // 调试：直接显示传播后的体素辐照度（验证"体素化+传播"链路）
 	// 调试：天光路径命中时返回红色（验证路径是否跑通、门控是否放行）
 	//#define DEBUG_VOXEL_SKY

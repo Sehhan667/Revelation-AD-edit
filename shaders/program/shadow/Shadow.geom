@@ -31,7 +31,7 @@ in vec3 vectorData[];
 flat in uint isWater[];
 
 #ifdef ENABLE_VOXELIZATION
-in vec3 g_voxelCoord[];      // 含 toCenter*0.001 偏移（供 GS 质心平均 → voxelCoord）
+in vec3 g_voxelCoord[];      // 含 toCenter*0.015625 偏移（供 GS 质心平均 → voxelCoord）
 in vec3 g_voxelCoordBase[];  // 无偏移（供 posDiff 完整方块检测——不能有偏移，会腐蚀边长）
 flat in float g_voxelID[];
 flat in float g_notInVoxel[];
@@ -64,8 +64,8 @@ void main() {
     #ifdef ENABLE_VOXELIZATION
 
         // ---- 真阴影分支：bias + Shift ----
-        // 用无偏移 g_voxelCoordBase 计算边长（偏移版 g_voxelCoord 的 toCenter*0.001
-        // 会让面三角每条边缩短 ~0.001 → 总和偏离 3.4142 达 0.003+
+        // 用无偏移 g_voxelCoordBase 计算边长（偏移版 g_voxelCoord 的 toCenter*0.015625
+        // 会让面三角每条边缩短 ~0.016 → 总和偏离 3.4142 达 0.048+
         // → 完整方块检测全失败 → 所有默认方块被丢弃 → 体素网格只剩光源没有墙）
         vec3 posDiff = vec3(
             distance(g_voxelCoordBase[0], g_voxelCoordBase[1]),

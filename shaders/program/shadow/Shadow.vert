@@ -125,9 +125,14 @@ void main() {
         // 顶点坐标。toCenter = 中点 - 顶点，方向指向 block 内部。对于 block boundary
         // 上的面（如方块底面 = 下方方块顶面），不加偏移时 centroid 落在 grid cell 边界上，
         // floor() 可能跳到相邻格子 → 体素数据写错格 → "隐形同种光源印子"（2026-08-04 根因）。
-        // 乘 0.001 确保面心向内偏移 ~0.0005 格，远小于半格 → 不影响正确 cell。
-        // 无偏移坐标供 GS posDiff 完整方块检测（toCenter 偏移会让 face 三条边长度
-        // 都变短 ~0.001 → 总和偏离 3.4142 达 0.003+→ 检测全失败，所有默认方块被丢弃）
+        // [FIX 2026-08-19 偏移量对齐 itrp] 原 0.001 偏移过小（面心向内 ~0.0005 格），
+        // 对薄片/不完整方块（地毯/雪层/活板门/楼梯/栅栏）质心距格边界余量不足——
+        // 浮点误差 + GS 质心平均（3 顶点均值）后偏移被进一步稀释 → floor() 仍可能
+        // 跳格 → 体素写错位 → 形状块子盒空隙漏光。提升至 0.015625（=1/64，与 itrp
+        // Shadow.glsl at_midBlock.xyz * 0.015625 同量级），面心向内 ~0.0078 格，
+        // 仍远小于半格（0.5）→ 不影响正确 cell，但给薄片/边界面足够余量。
+        // 方向语义优于 itrp：toCenter 指向实际形状中心（非固定 +,+,+ 角），薄片
+        // 面心偏移更贴合形状。无偏移坐标供 GS posDiff 完整方块检测。
         // [FIX 2026-08-06 世界对齐根因] 恢复 cameraPositionFract（体素化端与追踪端
         // 同坐标系）：两端都用 (W−C)+cameraPositionFract+VOXEL_RADIUS，= W−floor(C)+VOXEL_RADIUS
         // （精确整数、与相机位置无关的世界对齐网格）。此前只在体素化端删掉 Cf 而追踪端
@@ -135,6 +140,6 @@ void main() {
         // 读偏真实地形（只命中形状块）。Iris shadow pass 的 cameraPositionFract 与主相机一致。
         g_voxelCoordBase = scenePos + cameraPositionFract + float(VOXEL_RADIUS);
         vec3 toCenter = at_midBlock.xyz - gl_Vertex.xyz;
-        g_voxelCoord = g_voxelCoordBase + toCenter * 0.001;
+        g_voxelCoord = g_voxelCoordBase + toCenter * 0.015625;
     #endif
 }

@@ -64,14 +64,59 @@ vec3 VoxelSunShadowMap(vec3 camRelPos, vec3 normal) {
 float VoxelSunShadowTracing(vec3 voxelPos, vec3 sunDir) {
     vec3 voxelCoord = floor(voxelPos);
     vec3 sdir = sign(sunDir);
-    vec3 rdir = 1.0 / max(abs(sunDir), vec3(1e-8));
-    vec3 totalStep = (sdir * (voxelCoord - voxelPos + 0.5) + 0.5) * rdir;
+    // [FIX 2026-08-19 rdir 符号根因] rdir 必须为有符号（1/sunDir），IsHitBox 的 slab
+    // 算法用 ray.rdir * boxMin/boxMax 计算每轴进出时间——有符号才能对负方向轴得到
+    // 正确符号的 t；无符号（1/|sunDir|）会把负方向射线的 t 整体取反 → 负方向轴
+    // tExit<0 → 命中被误判为"未命中"→ 漏光（朝阳/背阴方向的阳光射线穿透形状块
+    // 的子盒空隙，活板门/楼梯/栅栏等半块完全不挡阳光）。
+    // DDA 步进用 abs(rdir) 保持正步距；零分量用 1e-30 替代避免 inf/NaN。
+    // [FIX 2026-08-19 零分量值根因] 同 VoxelTracing.glsl：原 1e-8 → rdir=1e8 →
+    // totalStep 零分量轴极小 → VoxelMin3 返回错误退出距离 → 轴向阳光射线（正上方
+    // 太阳）子盒求交范围≈0 → 楼梯凹陷等形状块内遮挡漏判。改用 1e-30 修正。
+    vec3 rdir = 1.0 / mix(sunDir, vec3(1e-30), lessThanEqual(abs(sunDir), vec3(1e-8)));
+    vec3 totalStep = (sdir * (voxelCoord - voxelPos + 0.5) + 0.5) * abs(rdir);
+
+    // [FIX 2026-08-19 楼梯凹陷发光] 起始体素内形状遮挡检查（itrp SimpleShadowTracing
+    // 同款 check-then-step 的起始格检查部分）。原实现 step-then-check 跳过起始格 →
+    // 形状块（楼梯/活板门等）同体素内的实心部分不会遮挡阳光射线 → 楼梯凹陷处
+    // （y∈[0.5,1.0] 空缺区）的阳光射线穿过同格上层台阶（实心部分）未被检测到 →
+    // sunVis=1 → 凹陷处仍反弹阳光 → "楼梯中间凹陷部分发亮"。
+    // 对形状块（voxelID>154）：沿阳光方向偏移起点（防自交：起点在命中面上，偏移
+    // 使其离开命中子盒表面），检查阳光射线是否在本格内命中其他子盒 → 遮挡。
+    // 全块（<=154）跳过：起点在命中固体本身表面，全格自交无意义（itrp 用
+    // rayLength>0.0 门控起始格全块跳过同款）。
+    {
+        vec4 startHvd = texelFetch(voxelDataSampler, ivec3(voxelCoord), 0);
+        if (startHvd.z > 154.5) {
+            // 沿阳光方向偏移 1e-3：命中面朝向太阳时偏移离开表面（防自交）；
+            // 命中面背向太阳时偏移进入固体（自交命中），但 dot(sunDir,hitNormal)
+            // ≤0 → sunLighting=0 → 不影响最终阳光贡献（调用方已门控）。
+            vec3 offsetOri = voxelPos + sunDir * 1e-3;
+            vec3 offsetVC = floor(offsetOri);
+            // 偏移后仍在同格内才检查（偏移跳格 = 起点在格边界，罕见，跳过）
+            if (all(equal(offsetVC, voxelCoord))) {
+                VoxelRay vray;
+                vray.ori = offsetOri;
+                vray.dir = sunDir;
+                vray.rdir = rdir;
+                vray.sdir = sdir;
+                vec3 offsetTS = (sdir * (offsetVC - offsetOri + 0.5) + 0.5) * abs(rdir);
+                float exitDist = VoxelMin3(offsetTS);
+                vec3 offsetNext = step(offsetTS, vec3(exitDist));
+                vec3 hitNormal;
+                if (IsHitBlock(vray, offsetTS, offsetNext, offsetVC, abs(startHvd.z), exitDist, hitNormal)) {
+                    return 0.0;
+                }
+            }
+        }
+    }
+
     for (int i = 0; i < 3; ++i) {
-        // 先步进到下一格（起点格是命中固体本身，不算遮挡）
+        // 先步进到下一格（起点格已在上方形状检查中处理，不算遮挡）
         float rayLength = VoxelMin3(totalStep);
         vec3 tracingNext = step(totalStep, vec3(rayLength));
         voxelCoord += tracingNext * sdir;
-        totalStep += tracingNext * rdir;
+        totalStep += tracingNext * abs(rdir);
         if (any(lessThan(voxelCoord, vec3(0.0))) || any(greaterThanEqual(voxelCoord, vec3(float(VOXEL_AREA))))) break;
 
         vec4 hvd = texelFetch(voxelDataSampler, ivec3(voxelCoord), 0);

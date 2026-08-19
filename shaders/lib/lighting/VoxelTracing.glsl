@@ -96,38 +96,45 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
     // - 普通固体 → 命中停止（albedo/方块光/阳光/IRC 前帧）
     vec3 voxelCoord = floor(origin);
     vec3 sdir = sign(dir);
-    vec3 rdir = 1.0 / max(abs(dir), vec3(1e-8));
-    vec3 totalStep = (sdir * (voxelCoord - origin + 0.5) + 0.5) * rdir;
+    // [FIX 2026-08-19 rdir 符号根因] rdir 必须为有符号（1/dir），IsHitBox 的 slab
+    // 算法（移植自 itrp）用 ray.rdir * boxMin/boxMax 计算每轴进出时间——有符号
+    // 才能对负方向轴得到正确符号的 t；无符号（1/|dir|）会把负方向射线的 t 整体取反
+    // → 负方向轴 tExit<0 → 命中被误判为"未命中"→ 漏光（向下/向左/向后射线穿透
+    // 形状块的子盒空隙，活板门/楼梯/栅栏等半块完全不挡光）。
+    // DDA 步进用 abs(rdir) 保持正步距（与 itrp 同款）；零分量用 1e-30 替代避免
+    // inf/NaN（0*inf=NaN 会腐蚀 totalStep → DDA 死循环）。
+    // [FIX 2026-08-19 零分量值根因] 原 1e-8 → rdir=1e8 → totalStep 零分量轴≈5e7
+    // → VoxelMin3(totalStep) 返回零分量轴的极小值而非非零轴的真实退出距离 →
+    // IsHitBox 的 rayLength（本格退出距离）≈0 → 子盒求交在极小距离内判定 →
+    // 轴向射线（如正上方 GI 射线从地面起射穿水平活板门）漏判命中/未命中 →
+    // 水平活板门不挡光。改用 1e-30 → rdir=1e30 → totalStep 零分量轴≈5e29
+    // → VoxelMin3 正确返回非零轴退出距离（~1.0）→ 子盒求交范围正确 → 命中。
+    // 0*1e30=0（非 NaN），无 DDA 死循环风险。
+    vec3 rdir = 1.0 / mix(dir, vec3(1e-30), lessThanEqual(abs(dir), vec3(1e-8)));
+    vec3 totalStep = (sdir * (voxelCoord - origin + 0.5) + 0.5) * abs(rdir);
     float rayLength = 0.0;
     vec3 contrib = vec3(0.0);
     // 透明吸收累积（hitSurface）：首次命中水/玻璃/树叶时着色衰减，其后贡献全乘此系数
     vec3 absorption = vec3(1.0);
     bool traceTranslucent = true;
 
-    // ---- 起点格自发光（curEmissive；注入端 VoxelGI.frag
-    // 已有、追踪端此前缺失）----
-    // 贴光源的面（如贴火把的墙面）像素起点 = 面坐标 + vertexNormal 法线偏移（朝光源方向），
-    // 会把起点推进光源格内；DDA 只检查"经过"的格、不检查起点格 → 光线从光源内部出发，
-    // 拿不到光源自己的球形光 → "贴火把的面纯暗 / 停下来就灭"（2026-08-04 实测：火把格
-    // 品红=发射数据在、火把格本身不挡光，但贴面暗）。起点在光源格内时直接加球形光：
-    // 光源照亮其所在格的全部贴面（物理合理），且与 bob/坐标振荡无关 → 消除"走亮停灭"。
-    ivec3 startVc = ivec3(voxelCoord);
-    if (all(greaterThanEqual(startVc, ivec3(0))) && all(lessThan(startVc, ivec3(VOXEL_AREA)))) {
-        vec4 svd = texelFetch(voxelDataSampler, startVc, 0);
-        if (svd.z > 0.5) {
-            vec3 slD = unpackUnorm4x8(texelFetch(voxelLightSampler, startVc, 0).r).rgb;
-            if (slD.z > VOXEL_GI_EMISSIVE_THRESHOLD) {  // 新字节序：B=emissive
-                contrib += VoxelHitLightSphere(origin, dir, vec3(startVc), VoxelLightColor(abs(svd.z)))
-                         * absorption * VOXEL_GI_TRACE_LIGHT_STRENGTH;
-            }
-        }
-    }
+    // [FIX 2026-08-19 起始体素检查] itrp 同款 check-then-step：第一轮（i==0）不步进，
+    // 直接检查起始体素；后续轮先步进再检查。原 step-then-check 跳过起始体素 →
+    // 法线偏移把起点推入活板门/薄片方块所在体素（如活板门下方地面的上射 GI 射线）→
+    // DDA 跳过该体素 → 活板门/薄片完全不挡光（水平活板门漏光根因）。
+    // 改为 check-then-step 后，起始体素被检查：形状块（活板门/楼梯）子盒求交命中 →
+    // 射线被挡；全块（voxelID<=154）跳过防自交（itrp PT_DIFFUSE_FULLBLOCK_NO_SELF_INTERSECTION
+    // 同款：起点可能在自身方块内，检查会立即命中自身表面 → GI 射线不出门）。
+    // 起点格自发光（原循环前预检）合并进循环 i==0 的发射光分支，不再单独预检。
+    vec3 tracingNext = step(totalStep, vec3(VoxelMin3(totalStep)));
 
     for (int i = 0; i < VOXEL_TRACE_DISTANCE; ++i) {
-        rayLength = VoxelMin3(totalStep);
-        vec3 tracingNext = step(totalStep, vec3(rayLength));
-        voxelCoord += tracingNext * sdir;
-        totalStep += tracingNext * rdir;
+        if (i > 0) {
+            rayLength = VoxelMin3(totalStep);
+            tracingNext = step(totalStep, vec3(rayLength));
+            voxelCoord += tracingNext * sdir;
+            totalStep += tracingNext * abs(rdir);
+        }
         // [FIX 2026-08-18 阴影死黑根因] 射程用尽判定必须"步数走满"与"距离超限"都算：
         // 纯向上射线每步恰好 1 格，第 VOXEL_TRACE_DISTANCE 次迭代 rayLength 恰好等于
         // VOXEL_TRACE_DISTANCE → `>` 为 false → 循环自然结束 → exitGrid=false →
@@ -137,11 +144,12 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 注：不能靠 `>` 判定"步数走满"——纯向上射线第 VOXEL_TRACE_DISTANCE 步
         // rayLength 恰为 24.0（格心起点）或 23.x（格内起点），`>` 均不触发；
         // 步数走满由循环自然结束覆盖，循环后无条件出界（见下方 FIX 注释）。
-        if (rayLength > float(VOXEL_TRACE_DISTANCE)) {
+        // i==0 跳过此检查：起始体素已在循环前 origin 越界判定中验证在界内。
+        if (i > 0 && rayLength > float(VOXEL_TRACE_DISTANCE)) {
             break;
         }
 
-        if (any(lessThan(voxelCoord, vec3(0.0))) || any(greaterThanEqual(voxelCoord, vec3(VOXEL_AREA)))) {
+        if (i > 0 && (any(lessThan(voxelCoord, vec3(0.0))) || any(greaterThanEqual(voxelCoord, vec3(VOXEL_AREA))))) {
             break;
         }
 
@@ -179,6 +187,13 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 全块（voxelID<=154，含熔岩/发光/反光）：整格命中，法线 = -tracingNext*sdir；
         // 形状块（155-294，楼梯/门/栅栏/墙…）：HitShape 子盒判定，光线穿过子盒
         // 空隙（未命中）→ 继续步进（穿透式 DDA 语义）。hitNormal 由 IsHitBlock 输出。
+        // [FIX 2026-08-19 起始体素自交防护] 起始体素（i==0）内的全块跳过——
+        // itrp PT_DIFFUSE_FULLBLOCK_NO_SELF_INTERSECTION 同款：法线偏移虽把起点推离
+        // 表面，但起点可能仍在自身方块内（如贴面像素）→ 全块立即命中自身 → GI 射线
+        // 不出门。形状块（>154）不跳过：活板门/楼梯等形状可能正对起点（如活板门下方
+        // 地面的上射 GI 射线应被活板门挡住），需检查子盒求交。
+        if (i == 0 && abs(hvd.z) <= 154.0) continue;
+
         VoxelRay vray;
         vray.ori = origin;
         vray.dir = dir;
@@ -187,6 +202,9 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         vec3 hitNormal;
         if (!IsHitBlock(vray, totalStep, tracingNext, voxelCoord, abs(hvd.z), rayLength, hitNormal))
             continue;
+        // 起始体素形状命中：rayLength 可能为负（起点在子盒内部，tEnter<0）→
+        // 钳到 0，避免 hitVoxelPos 落到起点后方（阴影判定/IRC 重投影位置错误）
+        if (i == 0) rayLength = max(rayLength, 0.0);
 
         // 反弹 albedo：固体格 r/g=染过色中心色 RG、w 高 8 位=染过色 B（Shadow.frag 草方块
         // tint 修复）；不再采样 atlas2D（64³ 无法表达 16px 细节，中心色=体素平均反照率）。
