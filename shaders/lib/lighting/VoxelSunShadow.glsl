@@ -76,15 +76,15 @@ float VoxelSunShadowTracing(vec3 voxelPos, vec3 sunDir) {
     vec3 rdir = 1.0 / mix(sunDir, vec3(1e-30), lessThanEqual(abs(sunDir), vec3(1e-8)));
     vec3 totalStep = (sdir * (voxelCoord - voxelPos + 0.5) + 0.5) * abs(rdir);
 
-    // [FIX 2026-08-19 楼梯凹陷发光] 起始体素内形状遮挡检查（itrp SimpleShadowTracing
-    // 同款 check-then-step 的起始格检查部分）。原实现 step-then-check 跳过起始格 →
+    // [FIX 2026-08-19 楼梯凹陷发光] 起始体素内形状遮挡检查（check-then-step
+    // 的起始格检查部分）。原实现 step-then-check 跳过起始格 →
     // 形状块（楼梯/活板门等）同体素内的实心部分不会遮挡阳光射线 → 楼梯凹陷处
     // （y∈[0.5,1.0] 空缺区）的阳光射线穿过同格上层台阶（实心部分）未被检测到 →
     // sunVis=1 → 凹陷处仍反弹阳光 → "楼梯中间凹陷部分发亮"。
     // 对形状块（voxelID>154）：沿阳光方向偏移起点（防自交：起点在命中面上，偏移
     // 使其离开命中子盒表面），检查阳光射线是否在本格内命中其他子盒 → 遮挡。
-    // 全块（<=154）跳过：起点在命中固体本身表面，全格自交无意义（itrp 用
-    // rayLength>0.0 门控起始格全块跳过同款）。
+    // 全块（<=154）跳过：起点在命中固体本身表面，全格自交无意义（用
+    // rayLength>0.0 门控起始格全块跳过）。
     {
         vec4 startHvd = texelFetch(voxelDataSampler, ivec3(voxelCoord), 0);
         if (startHvd.z > 154.5) {

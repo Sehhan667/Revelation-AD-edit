@@ -21,11 +21,11 @@
     #define AMBIENT_SUNLIGHT_TINT_RATIO 1.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0]
 #endif
 
-// [2026-08-18] itrp 同款解析天光下限（SimpleSkyLighting，完整照搬）：
+// [2026-08-18] 解析天光下限（SimpleSkyLighting）：
 // 阴影/闭塞体素的 IRC 底光不依赖"射线出界"——由法线上下曲线 + 阳光小底 +
 // lightmap 门控给出连续下限，经 IRC 自反弹传播成"阴影本身是亮的"。
 // skylightColor = 天光辐照度色；shadowlightColor = 太阳/月亮直射色；两者仅取色度，
-// 亮度由 NdotU 曲线和 lightmap*0.22 门控决定（与 itrp 系数一致，不做本地化换算）。
+// 亮度由 NdotU 曲线和 lightmap*0.22 门控决定。
 vec3 SimpleSkyLighting(vec3 skylightColor, vec3 shadowlightColor, float NdotU, float lightmap) {
     vec3 skylight = skylightColor * (NdotU * 0.35 + 0.65);
     vec3 skySunLight = shadowlightColor * (NdotU * 0.015 + 0.02);

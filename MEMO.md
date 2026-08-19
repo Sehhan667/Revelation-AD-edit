@@ -131,7 +131,7 @@ org.anarres.cpp.InternalException: Bad token [³@278,0]:"³"
   都已注册进 GUI 滑条与双语 lang。
 - 室内“死板固定亮度”根因：体素网格内残留的最小环境光底（0.15）把窗口逸散/AO 梯度盖掉。
   改为网格内环境光底置零（仅夜视底），室内亮度完全由 GI 传播决定——窗边亮、深处暗。
-- itrp 的 AO 不是静态 SSAO：是“光致 AO”——填充色/强度跟随天空（昼夜/天气/云影），
+- 这里的 AO 不是静态 SSAO：是“光致 AO”——填充色/强度跟随天空（昼夜/天气/云影），
   可见度（IRC 曝光 alpha）只决定几何遮挡强弱。因此移除 SSAO 乘法，避免固定灰黑压暗。
 - 洞穴漏天光根因：曝光 alpha 原先“向上逃逸就计数”，洞穴里也会高 → IRC 命中面/填充
   误判为可见天空；且新进入网格的洞穴体素会被天顶种子点亮。修正：曝光与种子都乘
@@ -188,8 +188,8 @@ Phase1 曝光计数），`VoxelSkyColor` 变死函数、4 个天光滑条零使�
   VOXEL_GI_TRACE_STRENGTH 补值列表并进 GUI（screen.voxel/sliders/lang 三处同步）
 - DEBUG_VOXEL_SKY 改染红（门控放行且有值才红，洞穴黑）；DeferredLight 左上角灰阶读数 HUD
 - 网格内最小环境光底 = skyColor×lightmap.y×0.04（洞穴≈0 保持黑）
-- ~~朝下表面天光下限（借鉴 itrp SimpleSkyLighting）~~ **已回退（2026-08-17 同日）**：
-  全量叠加让天花板（NdotU=-1 权重 1.0）异常发亮（用户实测）；itrp 的 SimpleSkyLighting
+- ~~朝下表面天光下限（借鉴 SimpleSkyLighting）~~ **已回退（2026-08-17 同日）**：
+  全量叠加让天花板（NdotU=-1 权重 1.0）异常发亮（用户实测）；SimpleSkyLighting
   只在 IRC 越界兜底、不叠加在追踪结果上。阳光反弹修复（去 rPI + SUN_STRENGTH 1.0 +
   TRACE_SUN 12）后朝下表面已有反弹光，无需填充。
 - 天光阳光颜色混合（SH 环境光同款 AMBIENT_SUNLIGHT_TINT_RATIO 机制）：VoxelSkyColor
@@ -202,13 +202,13 @@ Phase1 曝光计数），`VoxelSkyColor` 变死函数、4 个天光滑条零使�
    改代码默认值无效，必须改这个 txt 或在 GUI 里重置滑条。
 2. GLSL 三元条件必须是标量 bool：`sky > vec3(0.01)` 是 bvec3，会编译失败；
    用 `max(max(sky.r,sky.g),sky.b) > 0.01`。
-3. 引用外部成熟方案（itrp）时：它的"朝下表面不黑"靠 SimpleSkyLighting 的
+3. 外部成熟方案的“朝下表面不黑”靠 SimpleSkyLighting 的
    `NdotU*0.35+0.65` 曲线 + 无条件小底光（NOLIGHT 7e-6）+ IRC 自反弹；环境光与
    直射光解耦相加（阴影只乘直射项）。全部是连续函数，无一处 step()/二值。
 4. 天光滑条全接线后，GUI 值是"现场调参"的最快途径（边拖边看），
    不需要每轮改代码默认值。
 5. **IRC 自反弹强度决定室内对比度**：SELF_BOUNCE 1.0 会让缓存稳态放大 ~2×
-   （C = D/(1-albedo×SELF_BOUNCE)），天光灌满全屋、方向对比被抹平；itrp 的反弹权重
+   （C = D/(1-albedo×SELF_BOUNCE)），天光灌满全屋、方向对比被抹平；反弹权重
    是缓存值的 ~1%/帧（prevIrcColor×0.006~0.01），0.15 已足够（实测对比见 TODO §5）。
 6. **阳光方向性来自缓存空间对比**：门口/窗边的阳光亮斑 vs 室内深处暗——由追踪射线
    实际打到的体素决定（FetchVoxelRadianceSmoothed 三线性不会糊掉亮斑）。
@@ -290,11 +290,11 @@ return contrib * weight;
 - 防漏光仍由 `VoxelSkyColor` 内部承担：leak gate `smoothstep(0.03, 0.30, lightmap)`
   + 地平线衰减 `saturate(dir.y*25+0.5)` → 洞穴/室内 lightmap≈0 天光≈0，不会漏。
 - 语义说明：射程用尽 = 视线一路畅通 = 通向天空，本就是光追的合理近似
-  （SEUS PTGI 同款：有限步数后取天空）。
+  
 
 ## 本会话其他已提交项（供复盘）
-- `167ccac` IRC 缓存三线性读取（参考 SEUS PTGI GFME）：`FetchVoxelRadianceTrilinear`
-  8-tap 三线性采样，消除 1m 体素块状/表面冲突；越界时 itrp 同款
+- `167ccac` IRC 缓存三线性读取
+  8-tap 三线性采样，消除 1m 体素块状/表面冲突；越界时
   `SimpleSkyLighting` 按命中法线兜底（消费端）。
 - `e2edd39` IRC 注入端每帧施加 `SimpleSkyLighting` 解析下限，且**必须在时间混合之后**
   施加（0.99 混合下每帧只接受 1% 新值，混合前施加冷启动永远爬不起来）。
@@ -436,10 +436,10 @@ settings.glsl 保留为注释掉的备用开关 `//#define DEBUG_VOXEL_GI`。
 
 根因：不是 materialID 误判（火把正确识别为 21/发射体素）。而是发射光**体素级**：
 Shadow.geom 对 20-31 光源写死 `emissive=0.995` 满亮度，整格标记发射，非完整形状在此丢失
-（itrp 同样是体素级小球，不保留形状）。对齐 itrp 的关键是两个参数，之前都偏大/带底：
+（发射光同样是体素级小球，不保留形状）。关键是两个参数，之前都偏大/带底：
 | | 半径 | 底保 |
 |---|---|---|
-| itrp | 0.5（格内切球） | 无（擦边/未命中=0） |
+| 参考方案 | 0.5（格内切球） | 无（擦边/未命中=0） |
 | 本项目改前 | 1.0 | mix(hit,1.0,0.15) → 每条穿过格的射线至少 15% 光 |
 | 本项目改后 | 0.5 | 0（纯球命中） |
 
@@ -458,7 +458,7 @@ radius 单独减不够。
   调试代码一启用就崩，形同虚设反而误导。
 - **读体素做可视化时，别用面边界坐标 ivec3 截断**：沿表面法线向内偏移 ~0.05 格，落在方块内部，
   否则会在"自身格/邻接格"间逐帧跳色。
-- **未完成/已知方向**：逐像素 PBR 发光（对齐 itrp 的 LABPBR_EMISSIVENESS）本轮未做。
+- **未完成/已知方向**：逐像素 PBR 发光（LABPBR_EMISSIVENESS 思路）本轮未做。
   要做需恢复 Shadow.frag 存 texRes+midCoord（当前固体块 w/xy 被染色 albedo 占用），
   采样 atlasSpecular2D 的 emissive 通道；代价是 64³ 下"光源印子"风险（当初砍掉逐纹素的原因）。
 

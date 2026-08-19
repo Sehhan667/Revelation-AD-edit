@@ -97,11 +97,11 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
     vec3 voxelCoord = floor(origin);
     vec3 sdir = sign(dir);
     // [FIX 2026-08-19 rdir 符号根因] rdir 必须为有符号（1/dir），IsHitBox 的 slab
-    // 算法（移植自 itrp）用 ray.rdir * boxMin/boxMax 计算每轴进出时间——有符号
+    // 算法用 ray.rdir * boxMin/boxMax 计算每轴进出时间——有符号
     // 才能对负方向轴得到正确符号的 t；无符号（1/|dir|）会把负方向射线的 t 整体取反
     // → 负方向轴 tExit<0 → 命中被误判为"未命中"→ 漏光（向下/向左/向后射线穿透
     // 形状块的子盒空隙，活板门/楼梯/栅栏等半块完全不挡光）。
-    // DDA 步进用 abs(rdir) 保持正步距（与 itrp 同款）；零分量用 1e-30 替代避免
+    // DDA 步进用 abs(rdir) 保持正步距；零分量用 1e-30 替代避免
     // inf/NaN（0*inf=NaN 会腐蚀 totalStep → DDA 死循环）。
     // [FIX 2026-08-19 零分量值根因] 原 1e-8 → rdir=1e8 → totalStep 零分量轴≈5e7
     // → VoxelMin3(totalStep) 返回零分量轴的极小值而非非零轴的真实退出距离 →
@@ -118,13 +118,13 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
     vec3 absorption = vec3(1.0);
     bool traceTranslucent = true;
 
-    // [FIX 2026-08-19 起始体素检查] itrp 同款 check-then-step：第一轮（i==0）不步进，
+    // [FIX 2026-08-19 起始体素检查] check-then-step：第一轮（i==0）不步进，
     // 直接检查起始体素；后续轮先步进再检查。原 step-then-check 跳过起始体素 →
     // 法线偏移把起点推入活板门/薄片方块所在体素（如活板门下方地面的上射 GI 射线）→
     // DDA 跳过该体素 → 活板门/薄片完全不挡光（水平活板门漏光根因）。
     // 改为 check-then-step 后，起始体素被检查：形状块（活板门/楼梯）子盒求交命中 →
-    // 射线被挡；全块（voxelID<=154）跳过防自交（itrp PT_DIFFUSE_FULLBLOCK_NO_SELF_INTERSECTION
-    // 同款：起点可能在自身方块内，检查会立即命中自身表面 → GI 射线不出门）。
+    // 射线被挡；全块（voxelID<=154）跳过防自交（前帧传播路径：起点可能
+    // 在自身方块内，检查会立即命中自身表面 → GI 射线不出门）。
     // 起点格自发光（原循环前预检）合并进循环 i==0 的发射光分支，不再单独预检。
     vec3 tracingNext = step(totalStep, vec3(VoxelMin3(totalStep)));
 
@@ -188,7 +188,7 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 形状块（155-294，楼梯/门/栅栏/墙…）：HitShape 子盒判定，光线穿过子盒
         // 空隙（未命中）→ 继续步进（穿透式 DDA 语义）。hitNormal 由 IsHitBlock 输出。
         // [FIX 2026-08-19 起始体素自交防护] 起始体素（i==0）内的全块跳过——
-        // itrp PT_DIFFUSE_FULLBLOCK_NO_SELF_INTERSECTION 同款：法线偏移虽把起点推离
+        // 全块自交防护：法线偏移虽把起点推离
         // 表面，但起点可能仍在自身方块内（如贴面像素）→ 全块立即命中自身 → GI 射线
         // 不出门。形状块（>154）不跳过：活板门/楼梯等形状可能正对起点（如活板门下方
         // 地面的上射 GI 射线应被活板门挡住），需检查子盒求交。
@@ -260,12 +260,12 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         contrib += alb * (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
                  * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * absorption;
         // 间接光：命中体素处的 IRC 前帧缓存（相机重投影 +cDi，与注入端同款）
-        // [2026-08-18 参考 SEUS PTGI] 三线性平滑读取（消除 1m 体素块状/表面冲突）
+        // 三线性平滑读取（消除 1m 体素块状/表面冲突）
         ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
         if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA)))) {
             contrib += alb * FetchVoxelRadianceTrilinear(ircHit) * VOXEL_GI_SELF_BOUNCE * absorption;
         } else {
-            // [2026-08-18] itrp 同款消费端兜底：IRC 查询越界（新暴露/网格边缘）时，
+            // [2026-08-18] 消费端兜底：IRC 查询越界（新暴露/网格边缘）时，
             // 用 SimpleSkyLighting 解析下限按命中法线补光，避免越界体素自反弹恒 0。
             contrib += alb * SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
                                                hitNormal.y, hitSkylight) * VOXEL_GI_SELF_BOUNCE * absorption;

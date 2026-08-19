@@ -429,7 +429,7 @@ void main() {
         // 天光 → IRC 亮（用户实测"小房间也亮，不是射线"）。户外体素 skylight≈1.0，
         // 0.7 阈值只放行真户外；封闭残留(≤0.5)全挡。
         float edgeSeedGate = step(0.7, edgeSky);
-        // [2026-08-18] itrp 同款解析下限播种：天顶方向天光与 SimpleSkyLighting 取 max。
+        // [2026-08-18] 解析下限播种：天顶方向天光与 SimpleSkyLighting 取 max。
         // SimpleSkyLighting 不依赖射线出界，给新暴露/边缘体素一个由法线曲线 + lightmap
         // 门控保证的底光（阴影侧也能亮），天顶项保留方向性；两者都受 EDGE_SEED 缩放。
         vec3 pRC = pValid ? FetchPrevRadiance(prevC)

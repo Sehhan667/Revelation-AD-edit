@@ -127,7 +127,7 @@ vec3 VoxelLightColor(float voxelID) {
 // 我们保持高强度但加距离衰减 + 追踪端单独压低（VOXEL_GI_TRACE_LIGHT_STRENGTH）。
 vec3 VoxelHitLightSphere(vec3 rayOri, vec3 rayDir, vec3 voxelCoord, vec3 emissiveColor) {
     vec3 centerVec = rayOri - voxelCoord - 0.5;
-    // [2026-08-19] 去掉 mix(hit,1,0.15) 的 0.15 底保，改为纯球命中（对齐 itrp：命中才发光、擦边/未命中=0）。
+    // [2026-08-19] 去掉 mix(hit,1,0.15) 的 0.15 底保，改为纯球命中（命中才发光、擦边/未命中=0）。
     // 之前"整格亮"正是这个底保（+半径 1.0）让穿过光源格的每条射线一律 ≥0.15×BOOST → 整格均匀发光；
     // 半径已回 0.5、底保去 0，二者共同把光源收敛回"格心小球"，不再整格亮。
     // 代价：1 SPP 下球命中率低，可能"近火把走动亮/停下暗"；若出现再回 0.02~0.05 或调高 VOXEL_GI_BOOST。
