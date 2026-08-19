@@ -699,18 +699,25 @@ void main() {
                     if (all(greaterThanEqual(dbgCoord, ivec3(0))) && all(lessThan(dbgCoord, ivec3(VOXEL_AREA)))) {
                         vec4 lightData = unpackUnorm4x8(texelFetch(voxelLightSampler, dbgCoord, 0).x);
                         float dbgVoxelID = texelFetch(voxelDataSampler, dbgCoord, 0).z;
-                        // [2026-08-18 调试活板门] 显示形状块 voxelID：155-294 形状块、
-                        // 活板门(201/205/155-158) 用专门颜色，便于确认体素化与求交。
+                        // [2026-08-18 调试活板门] 直接读出 voxelID：把 ID 数值编码到颜色。
+                        // R = 低位(ID % 5/5), G = 中位, B = 高位，便于读活板门实际 ID。
+                        // 同时保留形状块/发射标记：橙=形状块155-294，青绿=活板门，品红=发射。
                         if (dbgVoxelID >= 155.0 && dbgVoxelID <= 294.0) {
                             sceneOut = vec3(1.0, 0.6, 0.0);   // 橙：形状块(155-294)
                             if (dbgVoxelID == 201.0 || dbgVoxelID == 205.0 ||
                                 (dbgVoxelID >= 155.0 && dbgVoxelID <= 158.0)) {
                                 sceneOut = vec3(0.0, 1.0, 0.5);  // 青绿：活板门(201/205/155-158)
                             }
-                        } else if (lightData.z > VOXEL_GI_EMISSIVE_THRESHOLD) {  // 新字节序：B=emissive
-                            sceneOut = vec3(1.0, 0.0, 1.0);   // 品红：发射数据存在（真实自发光光源）
-                        } else if (dbgVoxelID > 0.5 && lightData.y <= 0.1) {  // 新字节序：G=block
-                            sceneOut = vec3(0.0, 1.0, 1.0);   // 青：固体但无光（=被当普通固体 → 挡光）
+                        } else {
+                            // 数值读出：R=(ID mod 16)/15, G=((ID/16) mod 16)/15, B=(ID/256)/15
+                            float r = mod(dbgVoxelID, 16.0) / 15.0;
+                            float g = mod(floor(dbgVoxelID / 16.0), 16.0) / 15.0;
+                            float b = floor(dbgVoxelID / 256.0) / 15.0;
+                            sceneOut = vec3(r, g, b);   // 灰阶/彩色编码 voxelID 数值
+                        }
+                        if (lightData.z > VOXEL_GI_EMISSIVE_THRESHOLD && dbgVoxelID > 0.5 && sceneOut == vec3(0.0)) {
+                            sceneOut = vec3(1.0, 0.0, 1.0);   // 品红：发射数据存在（仅当 voxelID 读不出时标记）
+                        }
                         } else if (lightData.y > 0.1) {
                             sceneOut = vec3(1.0, 1.0, 0.0);   // 黄：仅方块光数据存在
                         } else if (VoxelPixelSunVisible(camRelPos + cameraPosition)) {
