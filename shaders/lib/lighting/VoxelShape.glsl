@@ -87,36 +87,23 @@ bool HitShape(VoxelRay ray, vec3 voxelCoord, float voxelID, inout float rayLengt
 
         hit = IsHitBox(ray, blockOrigin, ori, size, rayLength, hitNormal);
 
-    } else if (vID <= 24.0) { // Stained Glass Pane
-
+    } else if (vID >= 9.0 && vID <= 24.0) { // Iron Bars（原 "Stained Glass Pane" 死代码，2026-08-19 复活为铁栏杆）
+        // [2026-08-19 修复铁栏杆漏光] 原分支是死代码：block.properties 无 10159-10174 定义
+        //（玻璃板走 block.10004 透明吸收路径），且原几何用 shapeID/rotID "象限对"表达，
+        // 无法表达铁栏杆独立的 N/S/E/W 连接（方向错乱）。铁栏杆完全未映射 → materialID=1
+        // → Shadow.geom 整块检测剔除 → 不进体素 → 光线完全穿透（用户实测漏光）。
+        // 重写为真正的铁栏杆连接几何：中柱 2/16 全高 + 四向独立薄片，vID-9 低 4 位
+        // = N/S/W/E 连接位（bit0=N bit1=S bit2=W bit3=E，对应 block.10159-10174）。
+        int conn = int(vID - 9.0);
         hit = IsHitBox(ray, blockOrigin, vec3(7.0 / 16.0, 0.0, 7.0 / 16.0), vec3(2.0 / 16.0, 1.0, 2.0 / 16.0), rayLength, hitNormal);
-
-        if (vID >= 10.0) {
-            int fenceID = int(vID - 10.0);
-            int shapeID = fenceID & 3;
-            int rotID = fenceID >> 2;
-            float rotCos = rotIndex[rotID];
-            float rotSin = rotIndex[rotID + 4];
-            mat2 rot = mat2(rotCos, rotSin, -rotSin, rotCos);
-
-            vec2 ori0 = vec2(-1.0 / 16.0, 0.0) * rot;
-            ori0 += vec2(0.5);
-            vec2 size0 = vec2(2.0 / 16.0, -0.5) * rot;
-
-            vec2 ori1 = vec2(0.5, -1.0 / 16.0) * rot;
-            ori1 += vec2(0.5);
-            vec2 size1 = vec2(shapeID <= 1 ? -0.5 : -1.0, 2.0 / 16.0) * rot;
-
-            if (shapeID <= 2) {
-                hit = IsHitBox(ray, blockOrigin, vec3(ori0.x, 0.0, ori0.y), vec3(size0.x, 1.0, size0.y), rayLength, hitNormal) || hit;
-            }
-            if (shapeID >= 1) {
-                hit = IsHitBox(ray, blockOrigin, vec3(ori1.x, 0.0, ori1.y), vec3(size1.x, 1.0, size1.y), rayLength, hitNormal) || hit;
-            }
-            if (vID == 21.0) {
-                hit = IsHitBox(ray, blockOrigin, vec3(7.0 / 16.0, 0.0, 0.0), vec3(2.0 / 16.0, 1.0, 1.0), rayLength, hitNormal) || hit;
-            }
-        }
+        if ((conn & 1) != 0) // north（-Z）
+            hit = IsHitBox(ray, blockOrigin, vec3(7.0 / 16.0, 0.0, 0.0), vec3(2.0 / 16.0, 1.0, 7.0 / 16.0), rayLength, hitNormal) || hit;
+        if ((conn & 2) != 0) // south（+Z）
+            hit = IsHitBox(ray, blockOrigin, vec3(7.0 / 16.0, 0.0, 9.0 / 16.0), vec3(2.0 / 16.0, 1.0, 7.0 / 16.0), rayLength, hitNormal) || hit;
+        if ((conn & 4) != 0) // west（-X）
+            hit = IsHitBox(ray, blockOrigin, vec3(0.0, 0.0, 7.0 / 16.0), vec3(7.0 / 16.0, 1.0, 2.0 / 16.0), rayLength, hitNormal) || hit;
+        if ((conn & 8) != 0) // east（+X）
+            hit = IsHitBox(ray, blockOrigin, vec3(9.0 / 16.0, 0.0, 7.0 / 16.0), vec3(7.0 / 16.0, 1.0, 2.0 / 16.0), rayLength, hitNormal) || hit;
 
     } else if (vID <= 48.0) { // Stairs
 
