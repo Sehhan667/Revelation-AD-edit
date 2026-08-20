@@ -81,6 +81,34 @@ vec2 CalculateRefractedCoord(in ivec2 texelPos, in vec3 viewPos, in vec3 screenP
     return mix(refractedCoord, screenPos.xy, edgeFade);
 }
 
+// [2026-08-20] 屏幕上太阳可见性：把世界太阳方向投影到屏幕，采样不透明深度。
+// 该处天空（≈1）→ 可见；被地形挡/出屏/在相机背后 → 不可见。
+// 供雾的太阳光晕遮蔽使用，替代 shadow map 精确采样（更轻、无 include 依赖）。
+// [2026-08-20 平滑过渡] 太阳位置周边 9 点软采样，跨地形轮廓 0→1 渐变，消除光晕瞬间亮灭。
+float CalcSunScreenVisibility() {
+    vec3 sunView = mat3(gbufferModelView) * worldSunDir;
+    if (sunView.z >= 0.0) return 0.0;                 // 太阳在相机背后/地平线下
+    vec2 sunUv = ViewToScreenPosRaw(sunView).xy;
+    // [2026-08-20] 太阳滑近屏幕边缘 → 平滑淡出（取代硬 if 的瞬间跳变，对齐太阳本体的滑动过程）
+    vec2 edge = min(sunUv, vec2(1.0) - sunUv);
+    float edgeFade = smoothstep(0.0, 0.08, min(edge.x, edge.y));
+    if (edgeFade <= 0.0) return 0.0;
+
+    const float r = 0.02;                              // 软采样半径（决定过渡的角宽度）
+    vec2 uvMax = vec2(1.0) - viewPixelSize;
+    float occ  = step(1.0 - 1e-4, loadDepth1(uvToTexel(sunUv)));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( r, 0.0), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-r, 0.0), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0,  r), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0, -r), vec2(0.0), uvMax))));
+    const float d = r * 0.70710678;
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( d,  d), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-d,  d), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( d, -d), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-d, -d), vec2(0.0), uvMax))));
+    return edgeFade * occ * (1.0 / 9.0);
+}
+
 void main() {
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
@@ -171,7 +199,7 @@ void main() {
 
     if (isEyeInWater == 1) {
         float LdotV = dot(worldLightDir, worldDir);
-        fogData = AnalyticWaterFog(eyeSkylightSmooth, viewDistance, LdotV);
+        fogData = AnalyticWaterFog(eyeSkylightSmooth, viewDistance, LdotV, CalcSunScreenVisibility());
     } else {
         #ifdef VOLUMETRIC_FOG
             float dither = BlueNoise(texelPos, frameCounter);
@@ -197,7 +225,7 @@ void main() {
                 }
             }
             
-            fogData = RaymarchAtmosphericFog(vec3(0.0), fogEndPos, dither, skyMask, 1u);
+            fogData = RaymarchAtmosphericFog(vec3(0.0), fogEndPos, dither, skyMask, 1u, CalcSunScreenVisibility());
         #endif
     }
 

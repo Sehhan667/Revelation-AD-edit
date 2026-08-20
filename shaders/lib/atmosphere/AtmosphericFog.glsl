@@ -79,7 +79,10 @@ vec2 CalculateFogDensity(in vec3 rayPos, in float uniformFog) {
     #undef VF_CLOUD_SHADOWS
 #endif
 
-mat2x3 RaymarchAtmosphericFog(in vec3 startPos, in vec3 endPos, in float dither, in bool skyMask, in uint steps) {
+// [2026-08-20] sunVisFactor = 屏幕上太阳可见性（0/1），由调用方计算。用于压制
+// 雾中正对太阳方向的 Mie 前向散射，避免"太阳被地形挡但仍有一团光晕"。天空背景雾
+// （GenSkyMap / skyMask）传 1.0，保留天空应有的太阳辉光，不参与遮蔽。
+mat2x3 RaymarchAtmosphericFog(in vec3 startPos, in vec3 endPos, in float dither, in bool skyMask, in uint steps, in float sunVisFactor) {
     vec3 dirDelta = endPos - startPos;
     float rayLengthSq = dot(dirDelta, dirDelta);
     if (rayLengthSq < 1e-6) {
@@ -198,7 +201,9 @@ mat2x3 RaymarchAtmosphericFog(in vec3 startPos, in vec3 endPos, in float dither,
     vec2 msV = 0.9 * oms(exp2(-8.0 * avgDensity));
 
     // ✨ 优化：exp 替换为 exp2
-    vec2 msEnergy = phase * exp2(-opticalDepthSun * 1.442695);
+    // [FIX 2026-08-20] sunVisFactor 只压前向散射相位（太阳光晕），保留均匀多散射环境项——
+    // 否则太阳出屏/被挡时整个 msEnergy 乘 0 → 整团雾变暗（同 WaterFog.glsl 约定）。
+    vec2 msEnergy = phase * exp2(-opticalDepthSun * 1.442695) * sunVisFactor;
     
     vec2 denom = max(oms(msV) * (1.0 + opticalDepthSun * 0.25), vec2(1e-4));
     msEnergy += uniformPhase * msV / denom;

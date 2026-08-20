@@ -84,6 +84,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define UW_VOLUMETRIC_FOG // Enables underwater volumetric fog
 	#define UW_VF_MAX_SAMPLES 16 // Maximum sample count of underwater volumetric fog. [2 4 6 8 9 10 12 14 15 16 18 20 22 24 26 28 30 40 50 70 100 150 200 300 500]
 
+	// [2026-08-20] 水雾太阳光晕受"屏幕上太阳是否被遮挡"影响（默认开）。太阳被地形挡/出屏/在背后 → 压掉水中正对太阳的模糊光晕。
+	#define UW_SUN_OCCLUSION // [OFF ON] 水中太阳光晕受太阳遮挡影响
+
 	#ifdef PER_BIOME_FOG
 	#endif
 	#ifdef VF_TIME_FADE

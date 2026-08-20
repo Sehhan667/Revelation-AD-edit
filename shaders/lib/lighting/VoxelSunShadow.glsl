@@ -23,7 +23,10 @@ uniform sampler2D shadowcolor0;
 // = AlbedoToAbsorption(玻璃颜色, 不透明度)，反弹光线带上玻璃染色。
 vec3 VoxelSunShadowMap(vec3 camRelPos, vec3 normal) {
     vec3 result = vec3(1.0);
-    if (sunPosition.y < 0.01) return vec3(0.0);
+    // [FIX 2026-08-20] sunPosition 是 eye space（视图空间，见 Uniform.glsl），背对太阳时 .y
+    // 会掉到 0 以下 → 此门控把 sunVis 全判 0 → 整个世界阳光反弹消失（亮面也黑）。
+    // 改用世界空间太阳方向 worldSunDir.y（白天>0 / 夜晚<0，与月光弹射的平滑门控衔接）。
+    if (worldSunDir.y < 0.0) return vec3(0.0);
     vec3 shadowClipPos = (shadowModelView * vec4(camRelPos, 1.0)).xyz;
     shadowClipPos = (shadowProjection * vec4(shadowClipPos, 1.0)).xyz;
     vec3 ssp = DistortShadowSpace(shadowClipPos) * 0.5 + 0.5;

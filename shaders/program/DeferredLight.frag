@@ -192,9 +192,12 @@ void main() {
     //   网格外强制默认颜色 RGB=1（亮度保留玩家设置）——无 GI 数据的区域
     //   以非光追样式渲染。
     vec3 activeBlocklightColor = blocklightColor;
+    // 是否位于体素网格内（网格内由 GI 提供方块光；网格外走原版方块光）
+    bool blocklightInVoxelGrid = false;
     #ifdef VOXEL_GI_ENABLED
         vec3 blocklightVoxelCoord = camRelPos + cameraPositionFract + float(VOXEL_RADIUS);
-        if (all(greaterThanEqual(blocklightVoxelCoord, vec3(0.0))) && all(lessThan(blocklightVoxelCoord, vec3(float(VOXEL_AREA))))) {
+        blocklightInVoxelGrid = all(greaterThanEqual(blocklightVoxelCoord, vec3(0.0))) && all(lessThan(blocklightVoxelCoord, vec3(float(VOXEL_AREA))));
+        if (blocklightInVoxelGrid) {
             activeBlocklightColor = vec3(0.0);
         } else {
             activeBlocklightColor = vec3(BLOCKLIGHT_BRIGHTNESS);
@@ -483,6 +486,11 @@ void main() {
 
     // 环境光累积
     vec3 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
+    // [2026-08-20 修复"傍晚背光侧方块底面冒光"] 朝下面几乎不收无向最小环境底光：
+    // 原式对底面(worldNormal.y≈-1)仍给 0.2×activeMinAmbient 灰白底，傍晚再被夕阳 tint
+    // 染成暖橙，在暗的背光侧异常扎眼。法线 y<0 时把这份底光渐进去除（一 0→-0.15 过渡），
+    // 顶/侧/水平面保持原状，不碰夜视窄差底光。
+    ambientAccum *= mix(1.0, 0.0, smoothstep(0.0, -0.15, worldNormal.y));
 
     // [2026-08-18 网格边缘过渡] 网格外环境光平滑过渡进网格内几格：
     // 新方块进入 64³ 范围时，从"网格外 SH 环境光"瞬间切到"网格内 GI"，
@@ -510,15 +518,24 @@ void main() {
         // （activeMinAmbient，法线权重与夜视同初始值），不再用 skyColor×lightmap
         // 硬编码保底——后者会绕过玩家滑条且与 GI 平涂冲突。
         if (ambientInVoxelGrid) {
-            // [2026-08-19 光追模式网格内屏蔽原版环境光] 去掉 activeMinAmbient 最小环境光底
-            //（它是 lightmap 门控的"原版光照"，与光追 GI 重复/污染）。环境光完全交给光追 GI(voxelGI)，
-            // 仅保留夜视底(5e-3*nightVision)避免夜视失效。网格外/关光追仍走原版环境光。
-            float nightVisionFloor = 5e-3 * nightVision;
-            ambientAccum = vec3((worldNormal.y * 0.4 + 0.6)) * nightVisionFloor;
-        } else
-            // 网格外：洞穴/封闭室内不吃平铺底光（lightmap≈0 → 0），
-            // 否则大洞穴远处的网格外墙壁会被均匀点亮（洞穴漏光根因之一）。
-            ambientAccum *= smoothstep(0.10, 0.25, lightmap.y);
+            // [2026-08-19 光追模式网格内屏蔽原版环境光] 主世界/末地：环境光交给光追 GI(voxelGI)，
+            // 屏蔽 activeMinAmbient 最小环境底（原版光照，与 GI 重复/污染），仅留夜视底。
+            // [2026-08-20 下界网格内保底] 下界无天空（worldId==-1 屏蔽 GI 天光），GI 只有
+            // 方块光/发光体——离光源稍远处网格内会黑死。下界网格内保留 MINIMUM_AMBIENT_BRIGHTNESS
+            // 最暗保底（activeMinAmbient 在此维度已不含 compensation），与网格外一致。
+            #ifdef DIMENSION_NETHER
+                ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
+            #else
+                float nightVisionFloor = 5e-3 * nightVision;
+                ambientAccum = vec3((worldNormal.y * 0.4 + 0.6)) * nightVisionFloor;
+            #endif
+        } else {
+            // 网格外：光追范围外无 GI 数据，MINIMUM_AMBIENT_BRIGHTNESS 作为全局最暗保底，
+            // 不随 lightmap 门控被压灭。此前主世界网格外洞穴/无光处 lightmap.y≈0 时，
+            // smoothstep 把底光乘成 0，调大 MINIMUM_AMBIENT_BRIGHTNESS 看似无效（8/20）。
+            // 天空 SH 平涂的洞穴漏光仍由下方 SH 块自身的 lightmap.y 门控拦截，此处只保
+            // 底光；默认保底极小（0.05×AMBIENT_BRIGHTNESS_MULTIPLIER），不会大面积点亮。
+        }
         // 网格内边缘的过渡权重（网格外恒 1.0 全 SH）
         if (ambientInVoxelGrid) {
             vec3 edgeDist = min(ambientVoxelCoord, vec3(float(VOXEL_AREA)) - ambientVoxelCoord);
@@ -591,9 +608,11 @@ void main() {
         #ifndef SSILVB_ENABLED
             if (emissive.a * lightmap.x > EPS) {
                 lightmap.x = CalculateBlocklightFalloff(lightmap.x);
-                // 体素 GI 开启时：按 VOXEL_GI_BLENDED_LIGHTMAP 屏蔽/混合原版方块光 Lightmap
+                // 体素 GI 开启时：仅在网格内按 VOXEL_GI_BLENDED_LIGHTMAP 屏蔽/混合原版方块光。
+                // 网格外无 GI 数据，原版方块光必须全量保留（否则 VOXEL_GI_BLENDED_LIGHTMAP=0
+                // 会把网格外方块光一起灭掉 → "网格外连方块光都没有"）。
                 #ifdef VOXEL_GI_ENABLED
-                    lightmap.x *= VOXEL_GI_BLENDED_LIGHTMAP;
+                    if (blocklightInVoxelGrid) lightmap.x *= VOXEL_GI_BLENDED_LIGHTMAP;
                 #endif
                 if (lightmap.x > EPS) {
                     sceneOut += lightmap.x * emissive.a * mix(finalAo, vec3(1.0), lightmap.x) * activeBlocklightColor;
@@ -603,8 +622,9 @@ void main() {
         sceneOut += emissive.rgb * EMISSIVE_BRIGHTNESS;
     #elif !defined SSILVB_ENABLED
         lightmap.x = CalculateBlocklightFalloff(lightmap.x);
+        // 仅在网格内屏蔽/混合原版方块光；网格外全量保留（同上方 EMISSIVE_MODE<2 分支）
         #ifdef VOXEL_GI_ENABLED
-            lightmap.x *= VOXEL_GI_BLENDED_LIGHTMAP;
+            if (blocklightInVoxelGrid) lightmap.x *= VOXEL_GI_BLENDED_LIGHTMAP;
         #endif
         sceneOut += lightmap.x * mix(finalAo, vec3(1.0), lightmap.x) * activeBlocklightColor;
     #endif
@@ -612,7 +632,11 @@ void main() {
     #ifdef HANDHELD_LIGHTING
         if (heldBlockLightValue + heldBlockLightValue2 > EPS) {
             float attenuation = rcp(1.0 + worldDistSquared) * saturate(dot(worldNormal, -worldDir));
-            sceneOut += max(heldBlockLightValue, heldBlockLightValue2) * HELD_LIGHT_BRIGHTNESS * attenuation * blocklightColor;
+            // 手持光源（玩家手上光源）在所有维度/网格内外都生效，不受原版方块光屏蔽影响：
+            // blocklightColor 在光追开启时被置 0（屏蔽原版方块光光晕），手持光需独立取
+            // 玩家设置的方块光颜色，否则连手持灯一起熄灭（2026-08-20）。
+            vec3 heldLightColor = vec3(BLOCKLIGHT_COLOR_R, BLOCKLIGHT_COLOR_G, BLOCKLIGHT_COLOR_B) * BLOCKLIGHT_BRIGHTNESS;
+            sceneOut += max(heldBlockLightValue, heldBlockLightValue2) * HELD_LIGHT_BRIGHTNESS * attenuation * heldLightColor;
         }
     #endif
 

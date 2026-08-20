@@ -126,6 +126,34 @@ vec3 rayTraceScene(in vec3 screenPos, in vec3 viewPos, in vec3 rayDir, in float 
 #endif
 
 // ---- 反射计算函数 ----
+// [2026-08-20] 屏幕上太阳可见性（与 IntegrateScene 同款、同平滑逻辑）：世界太阳方向投影到屏幕，
+// 采样不透明深度。屏幕边缘/地形轮廓均平滑过渡，供水中太阳光晕遮蔽。
+float CalcSunScreenVisibility() {
+    vec3 sunView = mat3(gbufferModelView) * worldSunDir;
+    if (sunView.z >= 0.0) return 0.0;                 // 太阳在相机背后/地平线下
+    vec2 sunUv = ViewToScreenPosRaw(sunView).xy;
+
+    // 太阳滑近屏幕边缘 → 平滑淡出（取代硬 if 的瞬间跳变）
+    vec2 edge = min(sunUv, vec2(1.0) - sunUv);
+    float edgeFade = smoothstep(0.0, 0.08, min(edge.x, edge.y));
+    if (edgeFade <= 0.0) return 0.0;
+
+    // 地形遮挡：太阳屏幕位置周边 9 点软采样，跨轮廓 0→1 渐变
+    const float r = 0.02;
+    vec2 uvMax = vec2(1.0) - viewPixelSize;
+    float occ  = step(1.0 - 1e-4, loadDepth1(uvToTexel(sunUv)));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( r, 0.0), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-r, 0.0), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0,  r), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0, -r), vec2(0.0), uvMax))));
+    const float d = r * 0.70710678;
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( d,  d), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-d,  d), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( d, -d), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-d, -d), vec2(0.0), uvMax))));
+    return edgeFade * occ * (1.0 / 9.0);
+}
+
 vec4 CalculateSpecularReflections(in vec3 screenPos, in vec3 viewPos, in vec3 worldNormal, in vec3 worldDir, in float dither, in float skylight, in bool waterMask) {
     float NdotV = abs(dot(worldNormal, worldDir));
     vec3 rayDir = worldDir + worldNormal * (NdotV * 2.0);
@@ -252,7 +280,7 @@ void main() {
         }
 
         if (waterMask) {
-            mat2x3 waterFog = AnalyticWaterFog(lightmap.y, waterData.x * 255.0, dot(worldLightDir, worldDir));
+            mat2x3 waterFog = AnalyticWaterFog(lightmap.y, waterData.x * 255.0, dot(worldLightDir, worldDir), CalcSunScreenVisibility());
             sceneOut = ApplyFog(sceneOut, waterFog);
 
             #ifdef TRANSLUCENT_SKY_REF

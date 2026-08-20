@@ -524,5 +524,49 @@ radius 单独减不够。
 - **排查"某处太亮/太暗"先定位是光追还是非光追路径**：DeferredLight 非光追环境光（SH 假反弹/最小底）
   与 IRC 是两套层，反复调光追层无果时，查非光追层是否仍在网格内灌原版光。
 
+---
+
+# 备忘：体素 GI 阳光漫反射「背对太阳即消失」修复（2026-08-20）
+
+## 现象
+光追（体素）GI 的阳光漫反射，在相机朝向背对太阳时**整个世界的阳光反弹完全消失**，
+连直接朝太阳的亮面也一起变黑（用户实测「亮面也黑」）；转回朝太阳又恢复。
+
+## 根因
+`VoxelSunShadowMap`（VoxelSunShadow.glsl）开头有一道硬门控：
+
+```glsl
+if (sunPosition.y < 0.01) return vec3(0.0);
+```
+
+`sunPosition` 是 **eye space（视图空间）**（Uniform.glsl:79 注释），背对太阳时它的 `.y`
+掉到 0 以下 → 这道门把 `sunVis` 全判 0 → 追踪端/注入端的阳光反弹整体归零（亮面也黑）。
+
+正确的世界空间太阳方向是 `worldSunDir.y`（shaders.properties 已带 sunlightSign，白天 >0、
+夜晚 <0），只随昼夜变化、不随视角。itrp 参考实现里的 GI 完全没有这道 `sunPosition.y` 门控，
+用的就是 `dot(sunDir, hitNormal)` + 阴影采样，昼夜判断靠 `worldSunDir`。
+
+## 修复
+- VoxelSunShadow.glsl `VoxelSunShadowMap`：`sunPosition.y < 0.01` → `worldSunDir.y < 0.0`。
+  该函数是两条链路（每像素追踪 VoxelTracing.glsl + IRC 注入 VoxelGI.frag）都经过的活函数，
+  一处修改同时生效。
+
+## 附：清理死代码
+排查中发现两个旧版「体素是否被太阳直射」判定函数从未被调用（已被共用函数
+`VoxelSunShadowMap` 取代），一并删除以免后人踩同一坑：
+- `VoxelTraceSunVisible`（VoxelTracing.glsl）
+- `VoxelGI_SunVisible`（VoxelGI.frag）
+- 顺带把追踪端注释里残留的 `VoxelGI_SunVisible` 引用改为 `VoxelSunShadowMap`。
+
+旧函数是 0/1 单点 shadowtex1 硬比较；返回 vec3 彩色阴影（玻璃染色）+ 命中面法线偏移防自阴影，
+是后来 `VoxelSunShadowMap` 才具备的能力，所以旧函数被弃用后成了死代码。
+
+## 经验
+- **「背对太阳整个世界的阳光 GI 消失、且亮面也黑」= 全局因子被视角相关量关死**，
+  先查所有 `sunPosition.y` / eye-space 变量做的门控。`sunPosition` 是视图空间，不能拿来做
+  昼夜判断——昼夜用 `worldSunDir.y`（太阳方向）或 `worldLightDir.y`（光源方向）。
+- 排查同类问题时，可开 `DEBUG_SUNBOUNCE_VIS`（VoxelTracing.glsl，R=sunVis / G=朝向太阳 /
+  B=lightmap 门控）三通道定位是否 shadow 采样失效。
+
 
 

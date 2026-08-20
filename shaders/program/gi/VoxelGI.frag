@@ -101,30 +101,11 @@ float FetchPrevExposure(ivec3 c) {
         : texelFetch(voxelRadianceSampler, c, 0)).a;
 }
 
-// 简化 SimpleShadow（2026-08-06）：命中体素是否被太阳照亮（阴影贴图判定）。
-// 用户发现"洞穴白天亮度受阳光反弹控制"的根因：阳光注入只靠 hitSkylight（原版 lightmap），
-// 洞穴口 hitSkylight 不为 0 → 阳光漏入洞穴。加阴影贴图判定后，洞穴/背阴体素 sunVis=0
-// → 不注入阳光。camRelPos = 相机相对世界坐标（体素坐标 − Cf − R）。
 uniform sampler2DShadow shadowtex1;
 
 // 阳光阴影判定（SimpleShadow 实时阴影贴图，带命中面法线偏移防自阴影）
 // 必须放在 shadow/Common.glsl（DistortShadowSpace）与 shadowtex1 声明之后。
 #include "/lib/lighting/VoxelSunShadow.glsl"
-
-float VoxelGI_SunVisible(vec3 camRelPos) {
-    if (sunPosition.y < 0.01) return 0.0;
-    vec3 shadowClipPos = (shadowModelView * vec4(camRelPos, 1.0)).xyz;
-    shadowClipPos = (shadowProjection * vec4(shadowClipPos, 1.0)).xyz;
-    vec3 ssp = DistortShadowSpace(shadowClipPos) * 0.5 + 0.5;
-    #ifdef ENABLE_VOXELIZATION
-        ShiftShadowScreenPos(ssp.xy);
-    #endif
-    ssp.z -= 4e-5;
-    if (all(equal(ssp, saturate(ssp)))) {
-        return textureLod(shadowtex1, vec3(ssp.xy, ssp.z), 0.0).x > 0.5 ? 1.0 : 0.0;
-    }
-    return 1.0;
-}
 
 // 单个体素的 IRC 随机注入语义：
 // - 表面判定（sampleHemisphere）：恰好 1 个空邻居（z<=0.5：空气/负 ID 透明体素）
@@ -307,11 +288,15 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             vec3 sunVis = VoxelSunShadowMap(hitWorldPos, hitNormal);
             // [2026-08-09 恢复] 阳光注入已恢复（删除临时 *0.0）。sunVis 阴影贴图判定
             // 保证只有真被太阳直射的体素才注入阳光，洞穴/背阴体素 sunVis=0，不会漏光。
-            contrib += alb * sunLight * sunLighting * sunVis * VOXEL_GI_SUN_STRENGTH * absorption;
+            // [2026-08-20] 下界（worldId == -1）无太阳：屏蔽阳光注入
+            if (worldId != -1)
+                contrib += alb * sunLight * sunLighting * sunVis * VOXEL_GI_SUN_STRENGTH * absorption;
             // [2026-08-19] 夜晚月光反弹注入（与追踪端 VoxelTracing 对称）：sunLight 夜晚因
             // moonlightMult(~0.001) 近 0 → IRC 无月光。独立补方向化月光，复用 sunVis(夜晚=月光投影)。
-            float moonAmt = smoothstep(0.0, -0.05, worldSunDir.y);
-            if (moonAmt > 0.0) {
+            // [2026-08-20] 月光反弹注入(与追踪端 VoxelTracing 同步)：只“深夜”生效，傍晚即 0——
+            // 太阳刚入夜(worldSunDir.y≈0~-0.1)天空未黑，若开会在黄昏背光向「朝月面接触缝喷蓝光」。
+            float moonAmt = smoothstep(-0.10, -0.25, worldSunDir.y);
+            if (worldId != -1 && moonAmt > 0.0) {  // 下界无月光
                 vec3 moonDir = -worldSunDir;
                 float moonLighting = saturate(dot(moonDir, hitNormal));
                 contrib += alb * vec3(0.30, 0.42, 0.85)
@@ -346,7 +331,9 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // 出界体素 sky 越高 → 换成 lightmap 平滑门控（VoxelSkyColor 内部 smoothstep），
             // 允许半遮挡（树冠/窗边）按比例保留；洞穴(sky≈0) → 天光归零不漏光。
             float ircSkyVis = saturate(hitSkylight * 2.0 - 1.0);
-            contrib += VoxelSkyColor(dir, hitSkylight) * VOXEL_GI_SKY_STRENGTH * ircSkyVis * absorption;
+            // [2026-08-20] 下界（worldId == -1）无天空：屏蔽出界天光
+            if (worldId != -1)
+                contrib += VoxelSkyColor(dir, hitSkylight) * VOXEL_GI_SKY_STRENGTH * ircSkyVis * absorption;
             // NOLIGHT 底光（出界路径专有：NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)；
             // 命中路径无此项，闭塞处底光由自反弹/方块光链路提供）
             contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS

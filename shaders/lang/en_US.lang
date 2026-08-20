@@ -175,6 +175,9 @@ option.COLORED_VOLUMETRIC_FOG=Colored Volumetric Fog
 option.UW_VOLUMETRIC_FOG=Underwater Volumetric Fog
 option.UW_VF_MAX_SAMPLES=Underwater Volumetric Fog Max Samples
 
+option.UW_SUN_OCCLUSION=Underwater Sun Halo Occlusion
+option.UW_SUN_OCCLUSION.comment=Whether the blurry halo toward the sun in underwater fog disappears when the sun is occluded on screen. If the sun is blocked/behind/off-screen the halo hides, keeping the uniform multi-scatter ambient fog
+
 option.BORDER_FOG=Border Fog
 option.BORDER_FOG_FALLOFF=Border Fog Falloff
 

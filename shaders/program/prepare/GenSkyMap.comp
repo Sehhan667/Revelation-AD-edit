@@ -65,7 +65,7 @@ void main() {
 
 		#ifdef VOLUMETRIC_FOG
 			if (isEyeInWater == 0) {
-				mat2x3 volFogData = RaymarchAtmosphericFog(vec3(0.0), worldDir * FLT_MAX, noise.x, true, VF_MAX_SAMPLES >> 1);
+				mat2x3 volFogData = RaymarchAtmosphericFog(vec3(0.0), worldDir * FLT_MAX, noise.x, true, VF_MAX_SAMPLES >> 1, 1.0);
 				skyRadiance = ApplyFog(skyRadiance, volFogData);
 			}
 		#endif

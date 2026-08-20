@@ -187,6 +187,9 @@ option.COLORED_VOLUMETRIC_FOG=彩色阴影
 option.UW_VOLUMETRIC_FOG=水下体积雾
 option.UW_VF_MAX_SAMPLES=水下体积雾最大采样数
 
+option.UW_SUN_OCCLUSION=水中太阳光晕遮挡
+option.UW_SUN_OCCLUSION.comment=水雾正对太阳方向的模糊光晕是否随"屏幕上太阳被遮挡"消失。太阳被地形挡/出屏/在相机背后 → 光晕隐藏，保留均匀多散射环境雾
+
 option.BORDER_FOG=边界雾
 option.BORDER_FOG_FALLOFF=边界雾衰减
 

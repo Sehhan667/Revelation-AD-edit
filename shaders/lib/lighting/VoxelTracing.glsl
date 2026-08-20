@@ -39,26 +39,6 @@
 // 阳光阴影判定（SimpleShadow 实时阴影贴图 + SimpleShadowTracing 体素 DDA 短程遮挡）
 #include "/lib/lighting/VoxelSunShadow.glsl"
 
-// [FIX 2026-08-06] 命中体素是否被太阳直射（阴影贴图判定，复刻 VoxelGI.frag VoxelGI_SunVisible）：
-// 追踪端阳光反弹此前无阴影判定，洞穴/背阴体素有微弱 skylight 残留（×444 门控阈值极低）
-// → 8.0 倍阳光反弹 → "阳光散射到处都是，连地下都很亮"。加 sunVis 后只有真被太阳照亮的
-// 体素才反弹阳光（与注入端一致）。camRelPos = 相机相对世界坐标（体素坐标 − Cf − R）。
-// 依赖：shadow/Common.glsl（DistortShadowSpace）+ shadowtex1（DiffuseIndirect.comp 已声明）。
-float VoxelTraceSunVisible(vec3 camRelPos) {
-    if (sunPosition.y < 0.01) return 0.0;
-    vec3 shadowClipPos = (shadowModelView * vec4(camRelPos, 1.0)).xyz;
-    shadowClipPos = (shadowProjection * vec4(shadowClipPos, 1.0)).xyz;
-    vec3 ssp = DistortShadowSpace(shadowClipPos) * 0.5 + 0.5;
-    #ifdef ENABLE_VOXELIZATION
-        ShiftShadowScreenPos(ssp.xy);
-    #endif
-    ssp.z -= 4e-5;
-    if (all(equal(ssp, saturate(ssp)))) {
-        return textureLod(shadowtex1, vec3(ssp.xy, ssp.z), 0.0).x > 0.5 ? 1.0 : 0.0;
-    }
-    return 1.0;
-}
-
 // 每像素漫反射追踪：
 // origin = 相机相对起点；normal = 世界法线（可能含法线贴图）；vertexNormal = 几何法线；
 // viewDist = 视距（-viewPos.z，供起点偏移）；skyLightmap = 像素天空 lightmap（泄漏衰减）；
@@ -239,7 +219,7 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 白天兜底：SSBO/本地重算都算不出直射辐照度时用常数（排除该变量后如仍无阳光即非此因）
         if (max(max(directIlluminance.r, directIlluminance.g), directIlluminance.b) < 1e-4 && worldLightDir.y > 0.01)
             directIlluminance = vec3(128.0);
-        // [FIX 2026-08-06] 阴影判定（sunVis，与注入端 VoxelGI_SunVisible 同逻辑）：命中体素真被
+        // [FIX 2026-08-06] 阴影判定（sunVis，与注入端同逻辑，均走 VoxelSunShadowMap）：命中体素真被
         // 太阳直射才反弹阳光。此前无 sunVis，洞穴/背阴体素有微弱 sky 残留（×444 门控也放行）
         // → 8.0 倍阳光反弹 → 地下/背阴处到处都是阳光散射。
         // [2026-08-09] 用连续命中点（对应 SimpleShadow/SimpleShadowTracing
@@ -255,18 +235,35 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
 
         // [2026-08-09 恢复] 追踪端阳光反弹已恢复（删除临时 *0.0）；sunVis 判定
         // 保证只有被太阳直射的体素才反弹阳光，洞穴/背阴处不会产生阳光散射。
-        contrib += alb * (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
-                 * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * absorption;
+        // [2026-08-20] 下界（worldId == -1）无太阳：屏蔽阳光反弹
+        if (worldId != -1) {
+            contrib += alb * (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
+                     * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * absorption;
+        }
         // [2026-08-19] 夜晚月光反弹：directIlluminance 里的 moon 项受 moonlightMult(~0.001)
         // 压到近 0 → 体素 GI 夜晚无间接月光。独立补方向化月光弹射：
         // 月亮 ≈ -worldSunDir，仅朝月面弹射，复用 sunVis（夜晚 shadow 贴图即月光投影）做遮挡。
-        float moonAmt = smoothstep(0.0, -0.05, worldSunDir.y);
-        if (moonAmt > 0.0) {
+        // [2026-08-20] 月光反弹只“深夜”生效：傍晚(太阳刚入夜 worldSunDir.y≈0~-0.1，天还亮着)
+        // 月光弹射=0，避免黄昏背光向「朝月面接触缝喷蓝光」(用户实测，关 VOXEL_MOON_STRENGTH 即消失)。
+        // 太阳沉到 -0.1 以下才开始渐起，-0.25 以下(纯黑夜)满强度。白天与薄暮都无月光反弹。
+        float moonAmt = smoothstep(-0.10, -0.25, worldSunDir.y);
+        if (worldId != -1 && moonAmt > 0.0) {  // 下界无月光
             vec3 moonDir = -worldSunDir;
             float moonLighting = saturate(dot(moonDir, hitNormal));
             contrib += alb * vec3(0.30, 0.42, 0.85)
                      * moonLighting * moonAmt * sunVis * VOXEL_MOON_STRENGTH * absorption;
         }
+        // [DEBUG] 复现"特定视角阳光/月光反弹消失"用：解除下行注释后 F3+R。
+        // 三通道定位：R = sunVis(shadow map 遮挡判定，0=采样失败)；
+        // G = 命中面朝向太阳(saturate(dot(sunDir,hitNormal)))；
+        // B = lightmap 门控(saturate(max(hitSkylight,skyLightmap)*444))。
+        // 到"反弹消失"的视角看各自变哪个通道变黑。
+        // #define DEBUG_SUNBOUNCE_VIS
+        #if defined DEBUG_SUNBOUNCE_VIS
+        return vec3(max(max(sunVis.r, sunVis.g), sunVis.b),
+                    saturate(dot(sunDir, hitNormal)),
+                    saturate(max(hitSkylight, skyLightmap) * 444.0));
+        #endif
         // 间接光：命中体素处的 IRC 前帧缓存（相机重投影 +cDi，与注入端同款）
         // 三线性平滑读取（消除 1m 体素块状/表面冲突）。DISABLE_IRC 时不做自反弹。
         #ifndef DISABLE_IRC
@@ -298,7 +295,9 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
     {
         // 出界 → 方向天空光 + NOLIGHT 兜底：skyMapTex 方向辐射（内含地平线衰减
         // 与线性漏光门控）。洞穴（skyLightmap≈0）无天光，半遮挡按比例保留。
-        contrib += VoxelSkyColor(dir, skyLightmap) * VOXEL_GI_TRACE_SKY_STRENGTH * absorption;
+        // [2026-08-20] 下界（worldId == -1）无天空：屏蔽出界天光
+        if (worldId != -1)
+            contrib += VoxelSkyColor(dir, skyLightmap) * VOXEL_GI_TRACE_SKY_STRENGTH * absorption;
         // [2026-08-09] 出界不再返回原版方块光底光：光追开启时体素网格内的原版方块光
         // （lightmap 光晕）应被屏蔽，由体素 GI 的方块光（命中/IRC 注入，lD.y 驱动）
         // 接管。保留此项会把 DeferredLight 已屏蔽的原版方块光又加回来（火把光晕
