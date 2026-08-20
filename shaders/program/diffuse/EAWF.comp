@@ -36,6 +36,24 @@ layout (rgba16f) restrict uniform image2D colorimg3;
 #include "/lib/universal/Fetch.glsl"
 #include "/lib/universal/Transform.glsl"
 
+//======// NRD 风格滤波参数 //==================================================================//
+// [2026-08-19] hit-distance 世界空间滤波半径（NRD ReBLUR 思路）：
+// 让每 pass 的空间滤波在"世界空间"近似恒定——近处物体每屏像素覆盖的世界范围小，
+// 步长相应放大以覆盖同等世界半径；远处每个像素本就覆盖大世界范围，则步长收窄防过度模糊。
+// 单位 = 米（目标世界半径）；0 = 关闭，用回固定的指数像素步长。
+//
+// 怎么调（值的效果随渲染分辨率/视角变化：pxPerWorldAtZ1 = halfViewSize.y * proj[1][1]）：
+//   0 ~ 0.15   = 保守：基本只做"远处收窄防过糊"，近处几乎不放，细节最保真。
+//   0.15 ~ 0.3 = 均衡（推荐 0.25）：近处温和放大 + 远处明显收窄，缓解近处欠滤波。
+//   0.3 ~ 0.5  = 偏强：近处模糊加大、噪声更干净；可能开始出现点状闪烁 / 边缘发糊。
+//   > 0.5      = 不建议：a-trous 每 pass 只有 9 个样本，步长过疏 → 点状闪烁。
+// 巡检方向：
+//   近景(底部/贴墙)出现闪烁小点   → 调小（说明步长已超 9-tap 支撑）。
+//   远景依旧太糊、没改善          → 确认已 ≥0.2，若设大后闪点则回小并接受轻微欠滤。
+#ifndef NRD_RADIUS
+    #define NRD_RADIUS 0.25 // [0.0 0.05 0.1 0.15 0.2 0.3 0.5 0.75 1.0] 世界空间滤波半径（米）
+#endif
+
 /*
 const uint padRadius = 1;
 const uvec2 sharedSize = gl_WorkGroupSize.xy + (padRadius << 1);
@@ -126,7 +144,20 @@ void main() {
 
 	float NdotV = abs(dot(geoNormal, viewDir));
 	// 各向异性滤波步长：随 pass 指数递增（1,2,4,8…）
-	vec2 offsetScale = oms(abs(geoNormal.xy) * oms(NdotV)) * ldexp(2.0, FILTER_PASS_INDEX);
+	vec2 offsetScaleBase = oms(abs(geoNormal.xy) * oms(NdotV)) * ldexp(2.0, FILTER_PASS_INDEX);
+	// [2026-08-19 NRD] hit-distance 自适应模糊半径：
+	// 目标是世界空间恒定滤波半径 → 像素步长 = NRD_RADIUS(m) × (深度1处每世界单位像素) / 视距。
+	// 近处(视距小)需更多像素才覆盖目标半径 → 步长放大；远处步长收窄，防远处过糊。
+	// gbufferProjection[1][1]=1/tan(fovY/2)，深度1处每世界单位像素 = halfViewSize.y / tanHalfFovY。
+	// NRD_RADIUS=0 → 保持原固定像素步长（不启用）。clamp 防近处爆步长 / 远处趋零。
+	float viewDist = max(-float(normalDepthData.z), 0.25);
+	float pxPerWorldAtZ1 = halfViewSize.y * gbufferProjection[1][1];
+	float depthFactor = NRD_RADIUS <= 0.0 ? 1.0
+	                    : clamp(NRD_RADIUS * pxPerWorldAtZ1 / viewDist, 0.5, 2.5);
+	vec2 offsetScale = offsetScaleBase * depthFactor;
+	// 抖动与大步长解耦：NRD 开启时 offsetScale 会被放大，若采样抖动也随 offsetScale
+	// 放大，每帧采样起始点会大跳 → 点状闪烁。故开启时抖动限制在 ≤1 像素。
+	float jitterSize = NRD_RADIUS <= 0.0 ? max(depthFactor, 1.0) : 1.0;
 
 	float invThresholdZ = 8.0 / normalDepthData.z;
 
@@ -140,7 +171,7 @@ void main() {
 
 	float16_t sumWeight = float16_t(1.0);
 	// filteredColVar *= vec4(vec3(sumWeight), sumWeight * sumWeight);
-	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, frameCounter + FILTER_PASS_INDEX) - 0.5) * offsetScale;
+	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, frameCounter + FILTER_PASS_INDEX) - vec2(0.5)) * jitterSize;
 
 	for (uint i = 0u; i < 9u; ++i) {
 		ivec2 sampleTexel = ivec2(round(sampleTexelBase + offset3x3[i] * offsetScale));

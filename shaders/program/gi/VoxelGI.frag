@@ -337,9 +337,12 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // 硬门槛（与 SimpleSkyLighting 同款 step 语义）——体素 skylight 是
             // 该格真实天空光，封闭空间写胜残留通常 <0.15 → 天光归零；
             // 开阔阴影 skylight 高 → 放行。曝光度计数同样乘 caveGate（封闭不计数）。
-            float ircCaveGate = step(0.15, hitSkylight);
+            // [2026-08-19] 出界门控改为连续锐化映射 saturate(x*2-1)：原
+            // step(0.15, hitSkylight) 在阈值处硬二值突变。连续映射只放行
+            // "足够能看到天"（<0.5 归零、稍高按比例增压），过渡平滑。
+            float ircSkyVis = saturate(max(hitSkylight, FetchPrevExposure(c)) * 2.0 - 1.0);
             contrib += VoxelSkyColor(dir, max(hitSkylight, FetchPrevExposure(c)))
-                     * VOXEL_GI_SKY_STRENGTH * ircCaveGate * absorption;
+                     * VOXEL_GI_SKY_STRENGTH * ircSkyVis * absorption;
             // NOLIGHT 底光（出界路径专有：NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)；
             // 命中路径无此项，闭塞处底光由自反弹/方块光链路提供）
             contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS
@@ -347,9 +350,9 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // Phase 1：该样本向上出界即计入曝光度（纯射线天空可见度，无 lightmap 门控——
             // [2026-08-17] SH×曝光设计：exposure = 真·能看到天空的比例，供 DeferredLight
             // 调制 SH 天光亮度；洞穴射线被岩层挡住不向上出界，天然不计）
-            // [2026-08-18] 计数乘 ircCaveGate：封闭空间(残留<0.15)不计数，
+            // [2026-08-18] 计数乘 ircSkyVis（连续门控）：封闭空间(残留<0.15)不计数，
             // 否则射程用尽也算出界 → exposure 高 → 天光门控被 max 绕过。
-            if (dir.y > 0.1) exposure += ircCaveGate;
+            if (dir.y > 0.1) exposure += ircSkyVis;
         }
         result += contrib * rcpPdf;
     }
@@ -424,17 +427,18 @@ void main() {
         float edgeSky = VoxelUnpack2xU8Y(vd.w);
         // 播种只给真正户外（skylight≥0.15）的体素，防止洞穴体素被写胜的
         // 中低 skylight 污染后整体点亮。
-        // [FIX 2026-08-18 封闭小房间也亮] 阈值 0.15 → 0.7：封闭房间体素 skylight
-        // 是 shadow pass 写胜残留（室内 0.2~0.5），0.15 会误放行 → 新暴露格被播种
-        // 天光 → IRC 亮（用户实测"小房间也亮，不是射线"）。户外体素 skylight≈1.0，
-        // 0.7 阈值只放行真户外；封闭残留(≤0.5)全挡。
-        float edgeSeedGate = step(0.7, edgeSky);
+        // [FIX 2026-08-18 封闭小房间也亮] 阈值保证真户外（skylight≥0.15）才播种：
+        // 封闭房间体素 skylight 是 shadow pass 写胜残留（室内 0.2~0.5），0.15 会误放行。
+        // [2026-08-19] 由 step(0.7) 硬门槛改为连续映射 saturate(edgeSky*2-1)，
+        // 户外(≈1)满开、封闭残留(<0.5)归零、中间平滑过渡，并作为 SimpleSkyLighting 的
+        // lightmap 参数（函数内部已是线性×0.22 底光）。
+        float edgeSeedGate = saturate(edgeSky * 2.0 - 1.0);
         // [2026-08-18] 解析下限播种：天顶方向天光与 SimpleSkyLighting 取 max。
         // SimpleSkyLighting 不依赖射线出界，给新暴露/边缘体素一个由法线曲线 + lightmap
         // 门控保证的底光（阴影侧也能亮），天顶项保留方向性；两者都受 EDGE_SEED 缩放。
         vec3 pRC = pValid ? FetchPrevRadiance(prevC)
                           : (sld ? max(VoxelSkyColor(vec3(0.0, 1.0, 0.0), edgeSky),
-                                       SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)), 0.0, edgeSky))
+                                       SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)), 0.0, edgeSeedGate))
                                        * VOXEL_IRC_EDGE_SEED * edgeSeedGate : nRC);
         // Phase 1：上一帧天空曝光度（新暴露固体格播种，同样乘门控）
         float pExp = pValid ? FetchPrevExposure(prevC)
@@ -453,15 +457,11 @@ void main() {
         // 若下限在采样后、混合前，冷启动缓存≈0 时会被稀释成 ≈0 永远爬不起来
         // → 阴影 IRC≈0 暗、只有网格边缘出界路径亮（用户实测"越接近边缘越亮"）。
         // 混合后取 max 保证每帧结果至少 = SimpleSkyLighting。
-        // [FIX 2026-08-18 封闭小房间也亮] lightmap 参数必须用"射线真实天空可见度"
-        // （曝光度）而不是体素 skylight：封闭小房间的体素 skylight 是写胜残留
-        //（shadow pass 顶点 skylight，室内可能残留 0.2~0.5），SimpleSkyLighting
-        // ×8 曲线会把残留放大成可见下限 → IRC 不依赖射线就发光（用户实测
-        // "小房间也亮，不是射线是 IRC 照亮的"）。曝光度 = 射线能否出界，
-        // 封闭房间射线被墙挡 ≈0 → 下限归零；开阔阴影出界 → 下限正常。
+        // [2026-08-19] lightmap 参数喂连续映射 saturate(exposure*2-1)：
+        // 曝光度=真·射线天空可见度；封闭房间 ≈0 → 0，开阔出界 → 线性增压。
         if (sld) {
             nRC = max(nRC, SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
-                                             0.0, FetchPrevExposure(c)));
+                                             0.0, saturate(FetchPrevExposure(c) * 2.0 - 1.0)));
         }
         nExp = mix(nExp, pExp, bw);      // Phase 1：曝光度恒用 bw，防二值跳变
 

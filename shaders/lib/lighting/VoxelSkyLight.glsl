@@ -31,14 +31,11 @@ vec3 SimpleSkyLighting(vec3 skylightColor, vec3 shadowlightColor, float NdotU, f
     vec3 skySunLight = shadowlightColor * (NdotU * 0.015 + 0.02);
     skylight += skySunLight;
     skylight = mix(skylight, shadowlightColor * (NdotU * 0.003 + 0.005), wetness * 0.6);
-    // [FIX 2026-08-18 暗处过亮/过渡生硬] 原 step(0.15) 硬门槛 + 线性 ×50：
-    // lightmap=0.5 → 0.5×0.22×50=5.5 保色压缩到 1.0，与白天(11→1)同样饱和
-    // → 暗处和明处一样亮、0.15 处硬跳变（用户实测）。改为：
-    // - 软门槛 smoothstep(0.15,0.40)：洞穴残留(<0.15)仍归零，过渡平滑
-    // - lightmap² 曲线：白天(≈1)仍饱和到 1.0（视觉与 ×50 一致，用户确认值），
-    //   暗处按平方衰减有梯度（0.6→0.63、0.4→0.28、0.2→0.07），不过量
-    float caveGate = smoothstep(0.15, 0.40, lightmap);
-    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * lightmap * 0.22 * caveGate) * 8.0;
+    // [2026-08-19] IRC 门控线性化：去掉平方曲线 / smoothstep 阈值 / ×8 增益，
+    // 恢复纯线性 lightmap×0.22 底光（不放大写入下限）。
+    // 需要更严格抑洞穴漏光时，应把喂进来的 lightmap 换成调用方的连续映射
+    // saturate(x*2-1)（见 VoxelGI.frag 出界/播种/解析下限三处），而非在函数内加压。
+    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * 0.22);
 }
 
 // 地平线衰减：上半球全开，略低于地平线即截止（与通用光追天空采样一致）
