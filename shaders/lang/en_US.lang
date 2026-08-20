@@ -439,6 +439,8 @@ option.DEBUG_NORMALS=DEBUG_NORMALS
 option.DEBUG_RESHADING=DEBUG_RESHADING
 option.DEBUG_SKY_MAP=DEBUG_SKY_MAP
 option.DEBUG_VOXEL_GI=DEBUG_VOXEL_GI
+option.OFFLINE_RENDER=Offline Render
+option.OFFLINE_RENDER.comment=Offline render: raise per-pixel diffuse tracing & IRC samples per frame (SPP 20/8), disable GI spatial denoise and keep accumulating temporally for fast convergence to low noise. Hold the camera still (don't orbit) for a while, then F2 for a clean still. Heavy cost; for screenshots. Off = real-time denoise, identical to before
 option.DEBUG_VOXEL_SKY=Sky Path Debug
 option.DEBUG_VOXEL_SKY.comment=Tints surfaces red where the sky light path is hit, to tell apart "path not reached" vs "value too dim to see"
 option.DEBUG_VOXEL_SKY_LEVEL=GI Sky Level Debug
@@ -449,6 +451,8 @@ option.VOXEL_GI_ENABLED.comment=Voxel GI: IRC propagation + per-pixel ray tracin
 
 option.VOXEL_GI_DENOISE=Voxel GI Denoise
 option.VOXEL_GI_DENOISE.comment=Spatio-temporal variance-guided filtering for voxel GI ray tracing. Disable to show raw half-res checkerboard signal (noisy).
+option.VOXEL_MOON_STRENGTH=Moon Bounce Strength
+option.VOXEL_MOON_STRENGTH.comment=Directional moonlight bounce in voxel GI at night (vanilla moonlightMult is too small so moon GI was missing). Moon-facing faces brighten, away faces stay dark; pairs with AO for shading. 0=off; higher = stronger moon GI
 option.NRD_RADIUS=Filter World Radius
 option.NRD_RADIUS.comment=Target world-space blur radius (m) for EAWF hit-distance adaptive step: near steps up, distant narrows, easing near under-filter & far over-blur. Tuning: 0=off (fixed pixel steps, baseline); 0-0.15 conservative/sharp; 0.15-0.3 balanced (default 0.25); 0.3-0.5 stronger but may spot-flicker/blur near; >0.5 not advised. Flicker near -> lower; far still blurry -> keep >=0.2. Scales with resolution; tune at your render scale
 option.NRD_RELIABILITY=Reliability Convergence Rate

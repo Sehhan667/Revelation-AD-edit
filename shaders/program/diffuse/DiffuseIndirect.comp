@@ -41,6 +41,13 @@ writeonly restrict uniform image2D colorimg3;
 #include "/lib/surface/BRDF.glsl"
 #include "/lib/lighting/SSILVB.glsl"
 
+//======// 离线渲染 SPP //==========================================================================//
+// [2026-08-19] 离线模式每像素漫反射追踪光线数（同帧多射线平均，降低棋盘时域依赖，更快更干净）。
+// 仅 OFFLINE_RENDER 时生效；实时模式仍为棋盘 1 SPP。
+#ifndef VOXEL_TRACE_OFFLINE_SPP
+    #define VOXEL_TRACE_OFFLINE_SPP 20
+#endif
+
 #ifdef VOXEL_GI_ENABLED
     // 体素 GI 信号源（阶段④：与 SSILVB 互斥，体素优先）：
     // IRC 采样器/查询 + 每像素漫反射追踪（VoxelTracing 内含 VoxelData/VoxelShape）
@@ -113,9 +120,20 @@ void main() {
 			// 种子：全分辨率像素索引哈希 + 帧计数（每帧不同方向，棋盘 offset 轮转 4 帧全覆盖）
 			uint traceSeed = triple32(uint(renderTexel.x + renderTexel.y * int(viewWidth)) * 0x9E3779B1u
 			                          + uint(frameCounter + 1) * 0x85EBCA77u);
+			// [2026-08-19 离线渲染] 同帧多 SPP 漫反射追踪平均（对齐 RENDERING_MODE 思路：多射线 + 帧累积，
+			// 而非仅屏噪靠时域磨）。seed inout 于循环内递增 → 每次独立方向。
+			#ifdef OFFLINE_RENDER
+				vec3 traceAcc = vec3(0.0);
+				for (int s = 0; s < VOXEL_TRACE_OFFLINE_SPP; ++s) {
+					traceAcc += VoxelTracePixel(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
+					                            -viewPos.z, skyLightmap, lightmap.x, traceSeed);
+				}
+				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_OFFLINE_SPP)) * VOXEL_GI_TRACE_STRENGTH, 1.0);
+			#else
 			result = vec4(VoxelTracePixel(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
 			                              -viewPos.z, skyLightmap, lightmap.x, traceSeed)
 			             * VOXEL_GI_TRACE_STRENGTH, 1.0);
+			#endif
 		#else
 			vec3 worldNormal = FetchSurfaceNormal(renderTexel);
 			float lightmapSky = Unpack2x8UY(loadMaterialPack(renderTexel).x);

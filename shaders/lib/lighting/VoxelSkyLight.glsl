@@ -21,20 +21,20 @@
     #define AMBIENT_SUNLIGHT_TINT_RATIO 1.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0]
 #endif
 
-// [2026-08-18] 解析天光下限（SimpleSkyLighting）：
-// 阴影/闭塞体素的 IRC 底光不依赖"射线出界"——由法线上下曲线 + 阳光小底 +
-// lightmap 门控给出连续下限，经 IRC 自反弹传播成"阴影本身是亮的"。
-// skylightColor = 天光辐照度色；shadowlightColor = 太阳/月亮直射色；两者仅取色度，
-// 亮度由 NdotU 曲线和 lightmap*0.22 门控决定。
+// [2026-08-19 恢复] 解析天光下限（SimpleSkyLighting，对齐参考实现）：阴影/闭塞体素的 IRC 底光，
+// 由法线上下曲线 + 阳光小底 + lightmap*0.22 门控给出连续下限，经 IRC 自反弹传播成"阴影本身是亮的"。
+// skylightColor = 天光辐照度色；shadowlightColor = 太阳/月亮直射色；亮度由 NdotU 曲线 + lightmap 门控决定。
 vec3 SimpleSkyLighting(vec3 skylightColor, vec3 shadowlightColor, float NdotU, float lightmap) {
+    // 昼夜感知直射色：白天用传入暖色，夜晚切冷蓝月光（配合月光方案）
+    float dayAmt = smoothstep(0.0, 0.05, worldSunDir.y);
+    vec3 nightChroma = vec3(0.022, 0.029, 0.055) * (1.0 - dayAmt);
+    vec3 direct = shadowlightColor * dayAmt + nightChroma;
+
     vec3 skylight = skylightColor * (NdotU * 0.35 + 0.65);
-    vec3 skySunLight = shadowlightColor * (NdotU * 0.015 + 0.02);
+    vec3 skySunLight = direct * (NdotU * 0.015 + 0.02);
     skylight += skySunLight;
-    skylight = mix(skylight, shadowlightColor * (NdotU * 0.003 + 0.005), wetness * 0.6);
-    // [2026-08-19] IRC 门控线性化：去掉平方曲线 / smoothstep 阈值 / ×8 增益，
-    // 恢复纯线性 lightmap×0.22 底光（不放大写入下限）。
-    // 需要更严格抑洞穴漏光时，应把喂进来的 lightmap 换成调用方的连续映射
-    // saturate(x*2-1)（见 VoxelGI.frag 出界/播种/解析下限三处），而非在函数内加压。
+    skylight = mix(skylight, direct * (NdotU * 0.003 + 0.005), wetness * 0.6);
+    // 纯净线性 lightmap*0.22 门控（对齐参考实现，不放大写入下限）
     return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * 0.22);
 }
 
@@ -43,10 +43,7 @@ float VoxelSkyHorizonFade(vec3 dir) {
     return saturate(dir.y * 25.0 + 0.5);
 }
 
-// 漏光门控：skylight 0.03-0.30 平滑过渡（2026-08-17 放宽：原 0.10-0.25 阈值太陡，
-// 室内/半遮挡出现硬分界线——低于 0.10 直接 0、高于 0.25 直接满，而 skylight 每格只降
-// 1/15，过渡带仅 1-2 格。放宽后部分遮挡（走廊/树冠）按比例保留天光，边界柔和。
-// 洞穴（≈0）仍为 0，不漏光。）
+// 漏光门控：skylight 0.03-0.30 平滑过渡（洞穴≈0 → 0，半遮挡按比例保留，户外全开）
 float VoxelSkyLeakGate(float lightmap) {
     return smoothstep(0.03, 0.30, lightmap);
 }
@@ -112,6 +109,15 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
             sky = mix(sky, sky * sunColorTint, tintStrength);
         }
     #endif
+    // [2026-08-19 v2] 月光方向化：月亮方向≈-worldSunDir；只对朝月亮的出界方向增强。
+    // 亮面有月光反射、背月面压暗 → 体素 GI 出界天光在夜晚有方向性与自然明暗(配 AO)。
+    float moonUp = saturate(-worldSunDir.y);
+    float moonAmt = smoothstep(0.05, 0.35, moonUp);
+    vec3 moonDir = -worldSunDir;
+    float moonFace = saturate(dot(dir, moonDir));
+    // 方向月光（朝月面 0.03·face）+ 背月面把均匀夜底压到 20%
+    sky = max(sky, vec3(0.30, 0.42, 0.85) * moonAmt * 0.03 * moonFace);
+    sky *= 1.0 - 0.80 * (1.0 - moonFace) * moonAmt;
     sky = max(sky * fade * gate, vec3(0.0));
     sky *= 0.8;
     #ifdef DEBUG_VOXEL_SKY

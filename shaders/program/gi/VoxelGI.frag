@@ -180,13 +180,9 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
     if (sampleHemisphere) voxelPos += sampleOffset * 0.49999;
 
     // 当前体素光数据（curEmissive = 起点本身是发射体素 → 起点自发光贡献；
-    // hitSkylight = SUNLIGHT_LEAK_FIX 的泄漏衰减用值：本项目 DDA 对透明体素
-    // 直接穿透、无中间命中记录，出界衰减用起点体素自己的天空光即可）
     vec4 curLight = unpackUnorm4x8(texelFetch(voxelLightSampler, c, 0).r);
-    // hitSkylight 改从 voxelData.w 解（Unpack2xU8_Y_from_U16，VoxelData.glsl）：
-    // voxelData.w = Pack2xU8(texRes, skylight)（Shadow.frag 打包），imageStore 写胜语义
-    // ——修 voxelLightData.R 的 atomicMax max 合并：洞内格被缝隙面抬高的 sky 会让泄漏
-    // 衰减失效（该压的没压）。curEmissive 仍读 lightData（emissive 取整格最大是正确语义）。
+    // 起点体素的天空光（voxelData.w 打包的 skylight，即原版 lightmap 写入体素的天空等级），
+    // 用作出界天光的 lightmap 门控（对齐参考实现）。
     float hitSkylight = VoxelUnpack2xU8Y(currVoxelData.w);
     bool curEmissive = curLight.z > VOXEL_GI_EMISSIVE_THRESHOLD;  // 新字节序：B=emissive
 
@@ -291,12 +287,9 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // [FIX 2026-08-06] 薄片/流体光源中心色可能为 0 → 用 min albedo 底（同追踪端）
             if (lD.y > 0.01)  // 新字节序：G=blocklight
                 contrib += max(alb, vec3(VOXEL_GI_BLOCK_MIN_ALBEDO)) * blocklightColor * lD.y * VOXEL_GI_BLOCK_STRENGTH * absorption;
-            // 真阳光：rPI 方向项（hitNormal 为命中面法线）× 命中体素天空 lightmap
-            // 平滑衰减（SUNLIGHT_LEAK_FIX；不用阴影贴图硬判定，避免阴影边缘 0/1 跳变）
-            // [FIX 2026-08-05] 门限改用 voxelData.w 写胜 skylight（同追踪端/一致）：
-            // lD.x 来自 imageAtomicMax 的 voxelLightData，sky 是最低字节被高位压掉 → 恒 0。
-            float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
-            float sunLighting = saturate(dot(sunDir, hitNormal)) * rPI * saturate(hitSkylight * 444.0);
+            // 真阳光：rPI 方向项（hitNormal 为命中面法线）。
+            // [2026-08-19 脱原版光照] 不再读体素 skylight 做阳光门控（sunVis 阴影贴图即遮挡判定）。
+            float sunLighting = saturate(dot(sunDir, hitNormal)) * rPI;
             // [FIX 2026-08-06 阳光色] 阳光项用暖阳色 sunLight（sunIrradiance 暖白
             // ×128×rcp(300) 归一化到 0-1，白天≈0.43，与注入端 sunLight/黑体色温一致 + 追踪端
             // directIlluminance），不再是天空蓝 VoxelSkyColor——蓝天空色导致阳光反弹偏蓝且暗，
@@ -315,6 +308,15 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // [2026-08-09 恢复] 阳光注入已恢复（删除临时 *0.0）。sunVis 阴影贴图判定
             // 保证只有真被太阳直射的体素才注入阳光，洞穴/背阴体素 sunVis=0，不会漏光。
             contrib += alb * sunLight * sunLighting * sunVis * VOXEL_GI_SUN_STRENGTH * absorption;
+            // [2026-08-19] 夜晚月光反弹注入（与追踪端 VoxelTracing 对称）：sunLight 夜晚因
+            // moonlightMult(~0.001) 近 0 → IRC 无月光。独立补方向化月光，复用 sunVis(夜晚=月光投影)。
+            float moonAmt = smoothstep(0.0, -0.05, worldSunDir.y);
+            if (moonAmt > 0.0) {
+                vec3 moonDir = -worldSunDir;
+                float moonLighting = saturate(dot(moonDir, hitNormal));
+                contrib += alb * vec3(0.30, 0.42, 0.85)
+                         * moonLighting * moonAmt * sunVis * VOXEL_MOON_STRENGTH * absorption;
+            }
             // 天空光不在此注入：与参考实现一致，天光只经“出界射线 + IRC 自反弹”
             // 进入缓存，才能自然衰减并产生 AO。命中面只处理方块光/阳光/自反弹。
             // 自反弹：前帧 IRC 在命中点的值（相机重投影；FetchPrevRadiance 内含 ×0.01 解码）
@@ -340,18 +342,16 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // [2026-08-19] 出界门控改为连续锐化映射 saturate(x*2-1)：原
             // step(0.15, hitSkylight) 在阈值处硬二值突变。连续映射只放行
             // "足够能看到天"（<0.5 归零、稍高按比例增压），过渡平滑。
-            float ircSkyVis = saturate(max(hitSkylight, FetchPrevExposure(c)) * 2.0 - 1.0);
-            contrib += VoxelSkyColor(dir, max(hitSkylight, FetchPrevExposure(c)))
-                     * VOXEL_GI_SKY_STRENGTH * ircSkyVis * absorption;
+            // [2026-08-19 恢复 lightmap 门控] 出界天光按起点体素 sky 做门控（对齐参考实现）：
+            // 出界体素 sky 越高 → 换成 lightmap 平滑门控（VoxelSkyColor 内部 smoothstep），
+            // 允许半遮挡（树冠/窗边）按比例保留；洞穴(sky≈0) → 天光归零不漏光。
+            float ircSkyVis = saturate(hitSkylight * 2.0 - 1.0);
+            contrib += VoxelSkyColor(dir, hitSkylight) * VOXEL_GI_SKY_STRENGTH * ircSkyVis * absorption;
             // NOLIGHT 底光（出界路径专有：NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)；
             // 命中路径无此项，闭塞处底光由自反弹/方块光链路提供）
             contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS
                      * saturate(rayLen * 0.2) * absorption;
-            // Phase 1：该样本向上出界即计入曝光度（纯射线天空可见度，无 lightmap 门控——
-            // [2026-08-17] SH×曝光设计：exposure = 真·能看到天空的比例，供 DeferredLight
-            // 调制 SH 天光亮度；洞穴射线被岩层挡住不向上出界，天然不计）
-            // [2026-08-18] 计数乘 ircSkyVis（连续门控）：封闭空间(残留<0.15)不计数，
-            // 否则射程用尽也算出界 → exposure 高 → 天光门控被 max 绕过。
+            // Phase 1：该样本向上出界即计入曝光度（乘 ircSkyVis 门控，封闭空间不计数）。
             if (dir.y > 0.1) exposure += ircSkyVis;
         }
         result += contrib * rcpPdf;
@@ -366,6 +366,13 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
 out vec4 dummyOut;
 
 void main() {
+    // [2026-08-19 暂时禁用 IRC] 关闭辐照度缓存更新：不投 IRC 射线、不写 voxelRadiance，
+    // 直接返回。照明只由 DiffuseIndirect 的每像素射线追踪提供。
+    #ifdef DISABLE_IRC
+        dummyOut = vec4(0.0);
+        return;
+    #endif
+
     ivec2 pix = ivec2(gl_FragCoord.xy);
 
     // 每个屏幕像素分摊处理若干连续体素（IRC 网格 = 64³，同 voxelRadiance 双缓冲）
@@ -422,20 +429,9 @@ void main() {
         // 直接采用本帧采样值（等价 bw=0），等下一帧旧帧有数据后再恢复时间混合。
         ivec3 prevC = c + cDi;
         bool pValid = all(greaterThanEqual(prevC, ivec3(0))) && all(lessThan(prevC, ivec3(VOXEL_AREA)));
-        // 新暴露固体格用平滑天空值播种（天顶方向辐射 × EDGE_SEED；函数内含门控），
-        // 避免前缘格每帧裸随机样本闪烁；空气格保持 0（不写入无用值）。
+        // 新暴露固体格播种：天顶天光 + SimpleSkyLighting 解析下限（按当前体素 sky 门控），避免前缘格闪烁。
         float edgeSky = VoxelUnpack2xU8Y(vd.w);
-        // 播种只给真正户外（skylight≥0.15）的体素，防止洞穴体素被写胜的
-        // 中低 skylight 污染后整体点亮。
-        // [FIX 2026-08-18 封闭小房间也亮] 阈值保证真户外（skylight≥0.15）才播种：
-        // 封闭房间体素 skylight 是 shadow pass 写胜残留（室内 0.2~0.5），0.15 会误放行。
-        // [2026-08-19] 由 step(0.7) 硬门槛改为连续映射 saturate(edgeSky*2-1)，
-        // 户外(≈1)满开、封闭残留(<0.5)归零、中间平滑过渡，并作为 SimpleSkyLighting 的
-        // lightmap 参数（函数内部已是线性×0.22 底光）。
         float edgeSeedGate = saturate(edgeSky * 2.0 - 1.0);
-        // [2026-08-18] 解析下限播种：天顶方向天光与 SimpleSkyLighting 取 max。
-        // SimpleSkyLighting 不依赖射线出界，给新暴露/边缘体素一个由法线曲线 + lightmap
-        // 门控保证的底光（阴影侧也能亮），天顶项保留方向性；两者都受 EDGE_SEED 缩放。
         vec3 pRC = pValid ? FetchPrevRadiance(prevC)
                           : (sld ? max(VoxelSkyColor(vec3(0.0, 1.0, 0.0), edgeSky),
                                        SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)), 0.0, edgeSeedGate))
@@ -453,12 +449,8 @@ void main() {
 
         // ---- 时间混合（实体/空体素统一；IRC 随机采样靠时域累积降噪）----
         nRC = max(mix(nRC, pRC, localBw), 1e-7);
-        // [2026-08-18] 解析下限必须在时间混合之后施加：0.99 混合下每帧只接受 1% 新值，
-        // 若下限在采样后、混合前，冷启动缓存≈0 时会被稀释成 ≈0 永远爬不起来
-        // → 阴影 IRC≈0 暗、只有网格边缘出界路径亮（用户实测"越接近边缘越亮"）。
-        // 混合后取 max 保证每帧结果至少 = SimpleSkyLighting。
-        // [2026-08-19] lightmap 参数喂连续映射 saturate(exposure*2-1)：
-        // 曝光度=真·射线天空可见度；封闭房间 ≈0 → 0，开阔出界 → 线性增压。
+        // 解析下限在时间混合之后施加：保证阴影 IRC 每帧至少 = SimpleSkyLighting（冷启动不黑死）；
+        // lightmap 参数用曝光度（射线自算天空可见度），封闭房间≈0 → 0，开阔出界 → 底光。
         if (sld) {
             nRC = max(nRC, SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
                                              0.0, saturate(FetchPrevExposure(c) * 2.0 - 1.0)));

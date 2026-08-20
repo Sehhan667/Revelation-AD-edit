@@ -325,6 +325,9 @@ void main() {
     float NdotL = saturate(dot(worldNormal, worldLightDir));
 
     if (sunlightFactor > EPS && (NdotL + sssAmount > EPS)) {
+        // [2026-08-19 无阳光处阳光高光/SSS 外泄修复] 真阳光直射可见度（shadow map 深度比较），
+        // 仅用于高光/SSS 防护；不改动原有 diffuse 软阴影（PCSS 可靠，避免整个场景阴影被硬 0/1 灭掉）。
+        float sunVis = VoxelPixelSunVisible(worldPos - cameraPosition) ? 1.0 : 0.0;
         vec3 shadow = vec3(NdotL);
         float surfaceDepth = 0.0;
         float normalOffsetBase = (approxSqrt(worldDistSquared) * 2e-3 + 2e-2) * (2.0 - NdotL);
@@ -371,6 +374,8 @@ void main() {
 
             float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
             sss *= mix(1.0, contactShadow, saturate(distanceFade + cutout * 0.75));
+            // 乘 sunVis：没有真阳光直射处也熄灭 SSS（修复无阳光处 SSS 外泄）
+            sss *= sunVis;
             sceneOut += sunlightBase * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
         }
 
@@ -396,6 +401,8 @@ void main() {
                 const vec3 f0 = vec3(DEFAULT_DIELECTRIC_F0);
             #endif
             specularDirect = shadow * SpecularGGX(LdotH, NdotV, NdotL, NdotH, material.roughness, f0);
+            // [2026-08-19 无阳光处高光外泄防护] 乘 sunVis：无真阳光直射处高光熄灭
+            specularDirect *= sunVis;
             specularDirect *= SPECULAR_BLOOM_BOOST;
         }
     }
@@ -503,13 +510,11 @@ void main() {
         // （activeMinAmbient，法线权重与夜视同初始值），不再用 skyColor×lightmap
         // 硬编码保底——后者会绕过玩家滑条且与 GI 平涂冲突。
         if (ambientInVoxelGrid) {
-            // [FIX 2026-08-18 封闭空间过亮] 网格内最小环境光底也必须乘 lightmap 门控：
-            // activeMinAmbient(0.03, 补偿后最高 0.43) 若无条件施加，全封闭无光房间
-            // （lightmap≈0）也恒定发光（用户实测"两个高的最小空间仍然亮"）。
-            // 与网格外 L510 同口径：lightmap≈0 → 底≈0（洞穴/封闭保持黑），
-            // 开阔阴影 lightmap.y 高 → 底全量。夜视底(5e-3*nightVision)不受影响。
-            ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision))
-                         * smoothstep(0.03, 0.15, lightmap.y);
+            // [2026-08-19 光追模式网格内屏蔽原版环境光] 去掉 activeMinAmbient 最小环境光底
+            //（它是 lightmap 门控的"原版光照"，与光追 GI 重复/污染）。环境光完全交给光追 GI(voxelGI)，
+            // 仅保留夜视底(5e-3*nightVision)避免夜视失效。网格外/关光追仍走原版环境光。
+            float nightVisionFloor = 5e-3 * nightVision;
+            ambientAccum = vec3((worldNormal.y * 0.4 + 0.6)) * nightVisionFloor;
         } else
             // 网格外：洞穴/封闭室内不吃平铺底光（lightmap≈0 → 0），
             // 否则大洞穴远处的网格外墙壁会被均匀点亮（洞穴漏光根因之一）。
@@ -518,7 +523,9 @@ void main() {
         if (ambientInVoxelGrid) {
             vec3 edgeDist = min(ambientVoxelCoord, vec3(float(VOXEL_AREA)) - ambientVoxelCoord);
             float minEdgeDist = min(min(edgeDist.x, edgeDist.y), edgeDist.z);
-            voxelEdgeBlend = 1.0 - saturate(minEdgeDist / VOXEL_EDGE_BLEND_DISTANCE);
+            // [2026-08-19 夜晚亮暗生硬] 线性渐隐在"网格外 SH(亮) ↔ 网格内 GI(暗)"落差大时仍显硬切，
+        // 改 smoothstep 平滑淡出（两端更缓）。仍硬就把 VOXEL_EDGE_BLEND_DISTANCE 调大。
+        voxelEdgeBlend = 1.0 - smoothstep(0.0, VOXEL_EDGE_BLEND_DISTANCE, minEdgeDist);
         } else {
             voxelEdgeBlend = 1.0;
         }

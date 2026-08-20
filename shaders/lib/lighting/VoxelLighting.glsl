@@ -93,7 +93,12 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 太低（0.6）时域噪声明显；相机移动时由整数重投影补偿，0.99 无鬼影。
 
 // ------ IRC 随机注入参数（随 VOXEL_GI_STRENGTH 整体缩放，不单独暴露滑条）------
-#define VOXEL_IRC_SPP 1                 // 每体素每帧投光线数（随机采样，时域累积等效提升 SPP）
+// [2026-08-19 离线渲染] 每体素每帧投光线数。离线模式提升到 8，同帧多采样更快收敛。
+#ifdef OFFLINE_RENDER
+    #define VOXEL_IRC_SPP 8
+#else
+    #define VOXEL_IRC_SPP 1
+#endif
 #define VOXEL_IRC_TRACE_DISTANCE 16     // 光线最大步进体素数（64³ 网格内足以跨过洞穴/房间）
 // 新暴露格天空播种倍率：相机移动时 64³ 前缘
 // 新进入网格的固体格 pValid=false，旧实现直接用裸 1-SPP 随机样本当初值 → 移动时
@@ -143,6 +148,9 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // [FIX 2026-08-05] 2.0 → 8.0：阳光项去掉 rPI 后仍比方块光弱，实测"阳光反弹不可见"；
 // 8.0 让阳光反弹 ≈ 0.4×cosθ×albedo×8 达到可见量级（过亮可调回 2-5）。
 // 已暴露为 GUI 滑条（shaders.properties sliders），可在光影设置里直接调。
+// [2026-08-19] 夜晚月光反弹强度：moonlightMult(~0.001) 让 directIlluminance 夜晚≈0 →
+// 体素 GI 无月光反弹。此为独立方向化月光反弹倍率（月亮向面弹射），夜晚才有间接月光 GI。
+#define VOXEL_MOON_STRENGTH 0.5 // [0.0 0.1 0.25 0.5 0.75 1.0 1.5 2.0] 夜晚月光反弹强度（0=关闭月光反弹）
 #define VOXEL_TRACE_SUN_STRENGTH 8.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
 // 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；

@@ -224,10 +224,9 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // imageAtomicMax（sky 是最低字节，max 比较被 block/emissive 高位压掉 → 门限常为 0
         // → 阳光反弹全无，这是最终根因）。hvd = 命中体素数据（voxelDataSampler）。
         vec3 sunDir = mat3(shadowModelViewInverse) * vec3(0.0, 0.0, 1.0);
+        // [2026-08-19 恢复 lightmap 门控] 阳光门限用命中体素 sky（写胜 skylight），半遮挡按比例放行。
         float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
-        // [FIX 2026-08-05] hitSkylight 可能因 imageStore 写胜（最后一片段覆盖）被背阴面写成 0 →
-        // 门限恒 0 → 阳光全无。用 max(体素sky, 像素自身skyLightmap) 兜底：体素 sky 可靠时仍用它，
-        // 不可靠（0）时退回像素自己的天光（也是先用像素 lightmap.y 再更新）。
+        float sunLighting = saturate(dot(sunDir, hitNormal)) * saturate(max(hitSkylight, skyLightmap) * 444.0);
         // [FIX 2026-08-05] 阳光项改用本地重算的直射辐照度：诊断确认 global.directIlluminance
         // 在计算端（DiffuseIndirect）读到 0（SSBO 跨 pass 屏障/绑定问题）→ 阳光项整体乘 0
         // → 阴影纯黑。本地重算（同 GlobalStorage.comp）；若 SSBO 有值则优先用 SSBO。
@@ -240,7 +239,6 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 白天兜底：SSBO/本地重算都算不出直射辐照度时用常数（排除该变量后如仍无阳光即非此因）
         if (max(max(directIlluminance.r, directIlluminance.g), directIlluminance.b) < 1e-4 && worldLightDir.y > 0.01)
             directIlluminance = vec3(128.0);
-        float sunLighting = saturate(dot(sunDir, hitNormal)) * saturate(max(hitSkylight, skyLightmap) * 444.0);
         // [FIX 2026-08-06] 阴影判定（sunVis，与注入端 VoxelGI_SunVisible 同逻辑）：命中体素真被
         // 太阳直射才反弹阳光。此前无 sunVis，洞穴/背阴体素有微弱 sky 残留（×444 门控也放行）
         // → 8.0 倍阳光反弹 → 地下/背阴处到处都是阳光散射。
@@ -259,17 +257,28 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 保证只有被太阳直射的体素才反弹阳光，洞穴/背阴处不会产生阳光散射。
         contrib += alb * (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
                  * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * absorption;
+        // [2026-08-19] 夜晚月光反弹：directIlluminance 里的 moon 项受 moonlightMult(~0.001)
+        // 压到近 0 → 体素 GI 夜晚无间接月光。独立补方向化月光弹射：
+        // 月亮 ≈ -worldSunDir，仅朝月面弹射，复用 sunVis（夜晚 shadow 贴图即月光投影）做遮挡。
+        float moonAmt = smoothstep(0.0, -0.05, worldSunDir.y);
+        if (moonAmt > 0.0) {
+            vec3 moonDir = -worldSunDir;
+            float moonLighting = saturate(dot(moonDir, hitNormal));
+            contrib += alb * vec3(0.30, 0.42, 0.85)
+                     * moonLighting * moonAmt * sunVis * VOXEL_MOON_STRENGTH * absorption;
+        }
         // 间接光：命中体素处的 IRC 前帧缓存（相机重投影 +cDi，与注入端同款）
-        // 三线性平滑读取（消除 1m 体素块状/表面冲突）
+        // 三线性平滑读取（消除 1m 体素块状/表面冲突）。DISABLE_IRC 时不做自反弹。
+        #ifndef DISABLE_IRC
         ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
         if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA)))) {
             contrib += alb * FetchVoxelRadianceTrilinear(ircHit) * VOXEL_GI_SELF_BOUNCE * absorption;
         } else {
-            // [2026-08-18] 消费端兜底：IRC 查询越界（新暴露/网格边缘）时，
-            // 用 SimpleSkyLighting 解析下限按命中法线补光，避免越界体素自反弹恒 0。
+            // [2026-08-19 恢复] IRC 查询越界（新暴露/网格边缘）时按命中法线补解析下限，避免越界黑死。
             contrib += alb * SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
                                                hitNormal.y, hitSkylight) * VOXEL_GI_SELF_BOUNCE * absorption;
         }
+        #endif
         return contrib * weight;
     }
 

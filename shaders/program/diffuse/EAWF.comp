@@ -147,6 +147,14 @@ void main() {
 		#endif
 	#endif
 
+	// [2026-08-19] 离线渲染（settings.glsl 取消注释 #define OFFLINE_RENDER）：
+	// 屏蔽空间降噪——透传 colortex3（Accumulate 的时域累积结果），不做边缘保持滤波；
+	// 靠时域持续累积收敛，F2 出高画质静帧。关闭宏则此分支不参与，与之前完全一致。
+	#ifdef OFFLINE_RENDER
+		imageStore(colorimg3, texelPos, imageLoad(colorimg3, texelPos));
+		return;
+	#endif
+
 	// [2026-08-19 NRD] 去遮挡：colortex14.a=1=不可靠(新暴露/重投影失效)，0=可靠。
 	f16vec4 normalDepthData = f16vec4(texelFetch(colortex14, texelPos, 0));
 	// disoccF = a × NRD_DISOCCLUSION（滑条=不可靠时最大强化量；0=关闭）。

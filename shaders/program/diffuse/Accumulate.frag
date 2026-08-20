@@ -113,7 +113,13 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
             sumWeight = 1.0 / sumWeight;
             prevDiffuse *= sumWeight;
 
-            integratedDiffuse.a = min(prevDiffuse.a + 1.0, SSILVB_MAX_ACCUM_FRAMES);
+            // [2026-08-19 离线渲染] 持续累计：把帧数上限拉高，让时域累积权重更均匀、收敛到更低噪声。
+            // 关闭宏时用原 SSILVB_MAX_ACCUM_FRAMES，与之前完全一致。
+            #ifdef OFFLINE_RENDER
+                integratedDiffuse.a = min(prevDiffuse.a + 1.0, 1024.0);
+            #else
+                integratedDiffuse.a = min(prevDiffuse.a + 1.0, SSILVB_MAX_ACCUM_FRAMES);
+            #endif
 
             if (integratedDiffuse.a < 8.0) {
                 float mipLevel = 3.0 * saturate(1.0 - integratedDiffuse.a * rcp(8.0));

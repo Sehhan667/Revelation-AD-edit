@@ -144,6 +144,13 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define SSILVB_ENABLED
 	#define SVGF_ENABLED // Enables spatiotemporal variance-guided filtering（SSILVB 降噪）
 	#define VOXEL_GI_DENOISE  // 光追降噪开关（SVGF 时域+空间）；注释此行或 GUI 关闭即关闭光追降噪
+	// 离线渲染：每像素/IRC 提高同帧采样(SPP)、屏蔽 GI 空间降噪并持续时域累积，F2 出静帧。
+	// 默认关（profile.Default !OFFLINE_RENDER），GUI(Debug→Voxel) 或取消下行注释开启。
+	// 关闭时 #ifdef OFFLINE_RENDER 全不参与，与未加此宏完全一致。
+	#define OFFLINE_RENDER
+	// [2026-08-19 暂时禁用 IRC] 完全禁用体素辐照度缓存（IR 缓存注入 + 自反弹传播），
+	// 画面照明只靠每像素射线追踪（出界天光 + 阳光/月光反弹）。取消下行注释即禁用；当前已恢复 IRC。
+	//#define DISABLE_IRC
 
 	#define SSPT_ENABLED // Enables screen-space path tracing
 	#define RSM_ENABLED // Enables reflective shadow maps
