@@ -54,6 +54,31 @@ layout (rgba16f) restrict uniform image2D colorimg3;
     #define NRD_RADIUS 0.25 // [0.0 0.05 0.1 0.15 0.2 0.3 0.5 0.75 1.0] 世界空间滤波半径（米）
 #endif
 
+//======// NRD 可靠性权重 //======================================================================//
+// [2026-08-19] 指数可靠性历史因子：1 - exp2(-N * rate)，N = 累积帧数(colortex2.a)、
+// rate = NRD_RELIABILITY。相比原 saturate(N*0.1-0.125)，曲线更平滑（去掉 0.125 硬截止），
+// 且收敛速率可调。可靠性越高 → sigma 越大 → 边缘保持越强；帧数少(刚出现/刚重投影)时
+// 可靠性低 → 放宽滤波快速收敛。
+// 怎么调：
+//   0        = 关闭，用回原 SVGF 线性历史因子。
+//   0.1~0.3  = 慢收敛：前期模糊重、收敛慢，边缘保持偏弱。
+//   0.5      = 均衡（推荐 0.5）：约 14 帧后基本稳定。
+//   1.0~2.0  = 快收敛：前期就强保边，早期更像"已稳定"（可能略欠降噪，可配降 NRD_RADIUS）。
+// 巡检方向：静态/远景保持干净不糊 → 可小幅调大；转动/平移时残留噪点拖尾严重 → 调小。
+#ifndef NRD_RELIABILITY
+    #define NRD_RELIABILITY 0.5 // [0.0 0.1 0.2 0.3 0.5 0.8 1.0 2.0] 可靠性收敛速率（指数历史因子；0=关闭用回原线性）
+#endif
+
+//======// NRD 去遮挡修复 //======================================================================//
+// [2026-08-19] 新暴露/遮挡消除区域的快速收敛（colortex14.a=1=不可靠，Accumulate 布位）：
+// 对不可靠像素放大空间步长(×1+滑条) + 降低边缘保持(÷1+滑条)，从周围可靠邻居快速补填，
+// 消除"转视角/移动时边缘糊块 + 长拖影"，几帧内收敛。
+// 怎么调：0=关闭；0.5=温和；1.0=均衡（推荐 1.0）；2.0+ 更强补填（可能轻微细节损失）。
+// 巡检：边缘新露出区域仍糊/拖影 → 调大；出现"修复痕迹/细节糊" → 调小。
+#ifndef NRD_DISOCCLUSION
+    #define NRD_DISOCCLUSION 1.0 // [0.0 0.5 1.0 2.0 4.0] 去遮挡修复强度（不可靠时放大步长+放松边缘；0=关闭）
+#endif
+
 /*
 const uint padRadius = 1;
 const uvec2 sharedSize = gl_WorkGroupSize.xy + (padRadius << 1);
@@ -122,7 +147,14 @@ void main() {
 		#endif
 	#endif
 
-	f16vec3 normalDepthData = f16vec3(texelFetch(colortex14, texelPos, 0).rgb);
+	// [2026-08-19 NRD] 去遮挡：colortex14.a=1=不可靠(新暴露/重投影失效)，0=可靠。
+	f16vec4 normalDepthData = f16vec4(texelFetch(colortex14, texelPos, 0));
+	// disoccF = a × NRD_DISOCCLUSION（滑条=不可靠时最大强化量；0=关闭）。
+	// 空间步长放大 (1+disoccF) 快速跨邻居补填；sigma 放松 (1/(1+disoccF)) 降边缘保持，
+	// 让该像素更多吸收周围可靠样本、几帧内收敛，避免"糊块+长拖影"。
+	float disoccF = float(normalDepthData.a) * NRD_DISOCCLUSION;
+	float stepBoost  = 1.0 + disoccF;
+	float sigmaRelax = 1.0 / (1.0 + disoccF);
 	// vec2 depthGradient = vec2(dFdx(normalDepthData.w), dFdy(normalDepthData.w));
 
 	// 0.0625 0.125 0.0625
@@ -137,7 +169,13 @@ void main() {
 
 	float frameIndex = texelFetch(colortex2, texelPos, 0).a;
 	// [2026-08-09 同步官方 SVGF] 历史帧因子：帧数越多信任度越高
-	float16_t historyFactor = float16_t(saturate(frameIndex * 0.1 - 0.125));
+	// [2026-08-19 NRD] 可靠性权重（见宏注释）：0=关闭用回原硬阈值线性；否则用指数可靠性。
+	float16_t historyFactor;
+	if (NRD_RELIABILITY <= 0.0) {
+	    historyFactor = float16_t(saturate(frameIndex * 0.1 - 0.125));
+	} else {
+	    historyFactor = float16_t(1.0 - exp2(-frameIndex * NRD_RELIABILITY));
+	}
 
 	vec3 viewDir  = ScreenToViewDirRaw(texelToUv(texelPos));
 	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(texelPos);
@@ -154,7 +192,7 @@ void main() {
 	float pxPerWorldAtZ1 = halfViewSize.y * gbufferProjection[1][1];
 	float depthFactor = NRD_RADIUS <= 0.0 ? 1.0
 	                    : clamp(NRD_RADIUS * pxPerWorldAtZ1 / viewDist, 0.5, 2.5);
-	vec2 offsetScale = offsetScaleBase * depthFactor;
+	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost;
 	// 抖动与大步长解耦：NRD 开启时 offsetScale 会被放大，若采样抖动也随 offsetScale
 	// 放大，每帧采样起始点会大跳 → 点状闪烁。故开启时抖动限制在 ≤1 像素。
 	float jitterSize = NRD_RADIUS <= 0.0 ? max(depthFactor, 1.0) : 1.0;
@@ -164,8 +202,9 @@ void main() {
 	// float variance = CalculateVariance(ivec2(localPos + padRadius));
 	float16_t variance = filteredColVar.a;
 	// [2026-08-09 同步官方 SVGF] 亮度/法线方差权重：随方差与历史因子缩放
-	float16_t sigmaL = float16_t(-0.5 * inversesqrt(variance + EPS) * historyFactor);
-	float16_t sigmaN = float16_t(32.0 * exp2(-0.5 * variance / sqr(centerLuma)) * historyFactor);
+	// [2026-08-19 NRD] 去遮挡：不可靠像素乘 sigmaRelax 降低边缘保持，多吸收周围样本
+	float16_t sigmaL = float16_t(-0.5 * inversesqrt(variance + EPS) * historyFactor) * float16_t(sigmaRelax);
+	float16_t sigmaN = float16_t(32.0 * exp2(-0.5 * variance / sqr(centerLuma)) * historyFactor) * float16_t(sigmaRelax);
 
 	f16vec3 centerNormal = f16vec3(OctDecodeSnorm(normalDepthData.xy));
 

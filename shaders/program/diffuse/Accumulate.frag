@@ -30,7 +30,8 @@ const bool colortex3MipmapEnabled = true;
 
 /* RENDERTARGETS: 2,14 */
 layout (location = 0) out vec4 integratedDiffuse;
-layout (location = 1) out vec3 encodedNormalDepth;
+// [2026-08-19 NRD] colortex14 升 RGBA16F，a 存 disocclusion 标记（1=不可靠/新暴露/重投影失效）。
+layout (location = 1) out vec4 encodedNormalDepth;
 
 //======// Uniform //=============================================================================//
 
@@ -69,7 +70,8 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
     vec2 prevCoord = prevNDCPos.xy * 0.5 + 0.5;
 
     vec2 currCoord = texelToUv(texelPos);
-    encodedNormalDepth = vec3(OctEncodeSnorm(worldNormal), viewPos.z);
+    // a 默认 0（可靠）；不可靠/重投影失效路径在下方置 1
+    encodedNormalDepth = vec4(OctEncodeSnorm(worldNormal), viewPos.z, 0.0);
 
     if (saturate(prevCoord) == prevCoord && !historyReset) {
         vec4 prevDiffuse = vec4(0.0);
@@ -138,7 +140,9 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
         }
     }
 
+    // [2026-08-19 NRD] 去遮挡标记：走到这里 = 不可靠（越界/historyReset/深度不匹配）→ a=1
     integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
+    encodedNormalDepth.a = 1.0;
 }
 
 float GetClosestDepthN(in ivec2 texel) {
@@ -171,7 +175,7 @@ void main() {
     #endif
 
     integratedDiffuse = vec4(0.0);
-    encodedNormalDepth = vec3(0.0);
+    encodedNormalDepth = vec4(0.0);
 
     // [FIX 2026-08-06] 光追降噪关闭（settings.glsl 注释 VOXEL_GI_DENOISE）时跳过时域累积：
     // 不写 colortex2/14（DeferredLight 走 texelFetch 半分辨率棋盘，不依赖它们）。

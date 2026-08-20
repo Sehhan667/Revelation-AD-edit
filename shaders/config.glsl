@@ -24,7 +24,7 @@
 	const int 	colortex11Format 			= RGB32UI;
 	const int 	colortex12Format 			= RG16;
 	const int 	colortex13Format 			= R8I;
-	const int 	colortex14Format 			= RGB16F;
+	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
 	const int 	colortex15Format 			= RGBA8;
 
 #ifdef VOXY
@@ -82,7 +82,7 @@
 	|	colortex11	|   rgb32ui         |	Half res  	|	Volumetric fog, linear depth
 	|	colortex12	|   rg16          	|	Full res	|	Water data
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
-	|	colortex14	|   rgb16f          |	Half res	|	Encoded normal, linear depth
+	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)
 	|	colortex15	|   RGBA8		    |	Full res	|	Voxel GI propagation output
 
 --------------------------------------------------------------------------------
