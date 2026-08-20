@@ -698,6 +698,9 @@ option.VOXEL_GI_SELF_BOUNCE.comment=光线命中后从 IRC 缓存取上一帧辐
 option.VOXEL_GI_BLEND=时域混合速度
 option.VOXEL_GI_BLEND.comment=IRC 辐照度缓存每帧接受新采样值的比例（0.99=慢速累积更平滑，低值响应快但噪声大）
 
+option.VOXEL_IRC_UPDATE_INTERVAL=IRC 注入降频
+option.VOXEL_IRC_UPDATE_INTERVAL.comment=每个体素每 N 帧才重新投一次 IRC 射线，中间帧沿用缓存值，算力降到约 1/N。体素间接光照变化慢，通常看不出差别；1=不降频，2/4=每 2/4 帧重注入 1 次。相机/世界快速移动时注入会滞后至多 N-1 帧
+
 option.VOXEL_EDGE_BLEND_DISTANCE=网格边缘过渡带
 option.VOXEL_EDGE_BLEND_DISTANCE.comment=网格外环境光过渡进网格内的距离（格数）：新方块进入 64³ 范围时，从"网格外 SH 环境光"平滑过渡到"网格内 GI"，避免边缘暗→亮跳变。0=关闭过渡
 

@@ -405,6 +405,22 @@ void main() {
         // 关体素 GI 后 IRC 不再运行（deferred22 也已按此条件启用；composite2 同样受益）
         #ifdef VOXEL_GI_ENABLED
 
+        // [2026-08-20 注入降频] 每 VOXEL_IRC_UPDATE_INTERVAL 帧才对当前体素重投 IRC 射线，
+        // 其余帧直接搬运上一帧旧值到当期缓冲（保持 ping-pong 一致，防下帧读到更旧垃圾）。
+        // 间隔需为 2 的幂：(vi + frameCounter) & (N-1) 让每个体素在 N 帧内恰好命中 1 次，
+        // 与时间混合（0.99）配合，体素低频变化慢 → 降频到 1/N 几乎无视觉代价。
+        // pOk=false（新暴露/网格边缘，旧帧无有效值）时不跳过 → 该格仍立即重注入播种，
+        // 避免前缘新地形延迟 N-1 帧才亮。
+        const int uIntv = VOXEL_IRC_UPDATE_INTERVAL;
+        ivec3 pC = ivec3(c) + cDi;
+        bool pOk = all(greaterThanEqual(pC, ivec3(0))) && all(lessThan(pC, ivec3(VOXEL_AREA)));
+        if (uIntv > 1 && pOk && (((vi + frameCounter) & (uIntv - 1)) != 0)) {
+            vec4 o = vec4(max(FetchPrevRadiance(pC), 1e-7) * 100.0, FetchPrevExposure(pC));
+            if ((frameCounter & 1) == 0) imageStore(voxelRadiance, c, o);
+            else                          imageStore(voxelRadiance2, c, o);
+            continue;
+        }
+
         // ---- 当前帧体素数据（begin1 已在 shadow 前清空，shadow pass 写入本帧数据）----
         vec4 vd = texelFetch(voxelDataSampler, c, 0);
         bool sld = vd.z > 0.5; // voxelID 原值（>0 即固体，0=空气）

@@ -462,5 +462,67 @@ radius 单独减不够。
   要做需恢复 Shadow.frag 存 texRes+midCoord（当前固体块 w/xy 被染色 albedo 占用），
   采样 atlasSpecular2D 的 emissive 通道；代价是 64³ 下"光源印子"风险（当初砍掉逐纹素的原因）。
 
+---
+
+# 备忘：NRD 降噪增强 + 离线渲染 + IRC 天光脱原版复盘（2026-08-19 起一轮，跨多轮）
+
+## 1. IRC 门控改连续曝光映射
+- 对比参考实现发现：IRC 出界/播种/下限原来用 `step(x)` 硬门槛 + lightmap 门控，界定处硬跳变。
+- VoxelGI.frag 三处统一改喂 `saturate(曝光 * 2 - 1)` 连续映射；`SimpleSkyLighting` 门控线性为 `max(水中, lightmap*0.22)`（去平方/阈值/*8）。
+
+## 2. NRD 风格降噪增强（SVGF 链 EAWF/Accumulate）
+三个新开关，均含 GUI slider + 双语 lang：
+- `NRD_RADIUS`（滤波世界半径，米）：hit-distance 自适应空间步长——近处放大、远处收窄；
+  值随 `pxPerWorldAtZ1 = halfViewSize.y * proj[1][1]`（分辨率相关）。默认 0.25；>0.5 会因
+  9-tap a-trous 步长过疏 → 点状闪烁。**抖动必须与步长解耦**（否则每帧采样起点大跳 → 闪）。
+- `NRD_RELIABILITY`（可靠性收敛速率）：历史因子 `1 - exp2(-N*rate)`，替代原 `saturate(N*0.1-0.125)`。
+  帧数少（新暴露/刚重投影）→ 放宽滤波快速收敛。
+- `NRD_DISOCCLUSION`（去遮挡修复）：colortex14 由 RGB16F 升 RGBA16F，alpha 存"不可靠"位
+  （Accumulate 布位：重投影失效/越界=1），EAWF 消费→不可靠像素放大空间步长 + 放松边缘保持，几帧收敛。
+  **DeepSeek 排查要点：改缓冲格式要同步 config.glsl 的 Format 声明 + 文档注释表。**
+
+## 3. 离线渲染（OFFLINE_RENDER）
+- 只做"提采样 + 持续累积 + 屏蔽空间滤波"，不改 SPP 之外的实时链路，关闭即与之前无差异。
+- 开启：EAWF 透传（不空间滤波）；Accumulate 累积上限提到 1024；每像素追踪同帧多 SPP
+  `VOXEL_TRACE_OFFLINE_SPP=20`、IRC SPP=8。参考实现是 `RENDERING_MODE_SPP`（同帧多射线），
+  **不是单纯"Mai 空间滤波靠时域磨"**——提采样才是干净的关键。
+- GUI（Debug → Voxel）可勾选；settings.glsl 用 `#define OFFLINE_RENDER` 默认关。
+
+## 4. 夜晚天光/月光（多轮反复后结论）
+- **thesis：问题根因不在 IRC 注入，而在 DeferredLight 的非光追环境光 + 弥漫高光**。
+  反复调 SimpleSkyLighting 月光色/亮度都无效，因 IRC 那层本就低。
+- 月光反弹 `VOXEL_MOON_STRENGTH`：`directIlluminance` 里 moon 项受 `moonlightMult(~0.001)` 压到近 0
+  → 体素 GI 夜晚无间接月光。独立补 `albedo * 月光色 * dot(moonDir,hitNormal) * sunVis`（VoxelTracing +
+  VoxelGI 两处对称），复用 sunVis（夜晚 shadow 贴图即月光投影）。
+- 光追模式下体素范围内屏蔽 DeferredLight 的原版环境光 `activeMinAmbient`（lightmap 门控），只留夜视底，
+  环境光交给光追 GI；网格外/关光追时保持原版环境光（非光追路径不动）。
+
+## 5. 阳光高光/SSS 外泄到"无阳光处"的修复
+- 现象：SSS 和方块表面阳光高光有时出现在没有阳光的地方（夜晚/洞穴口/背阴）。
+- 根因：`sunlightFactor` 用 lightmap.y 门控，而无阳光处 skylight 常 >0 → 误放行；且 SSS 分支原来
+  不乘完整 shadow。
+- 修复：用 `VoxelPixelSunVisible(worldPos - cameraPosition)`（shadow map 深度比较 + 太阳在地平线下判定）
+  只乘到**高光 specularDirect 和 SSS**（`*= sunVis`）。
+- **血泪坑：不要把 sunVis 乘进整个 diffuse shadow**——`VoxelPixelSunVisible` 是硬 0/1（越界默认 true），
+  乘进 shadow 会让**某视角下整个场景主阴影凭空消失**（用户实测）。diffuse 软阴影靠 PCSS+contactShadow，
+  可靠，别动它。
+
+## 6. IRC 天光是否靠原版光照 — 中途反复后的最终状态
+- 过程：先"脱原版光照"删了 `SimpleSkyLighting`/`VoxelSkyLeakGate`/阳光 lightmap 门控；
+  后又按用户要求"加回 itrp 同款 lightmap 门控"恢复三者。
+- 结论（教训）：**lightmap 门控本身不是夜晚/阴影问题的根因**（根因在 DeferredLight 非光追环境光 +
+  高光外泄），不要因误判而删掉它。光追出界/阳光反弹用 lightmap（体素 sky）做半遮挡/遮挡门控是合理且必要的。
+- IRC 天光链路（最终）：出界射线 → VoxelSkyColor（内部 lightmap gate+fade）→ 写入 64³ 缓存 →
+  时域累积(0.99) + 自反弹传播 → 每像素追踪命中时 Fetch…Trilinear 读回。洞穴不漏光由
+  "射程用尽 vs 真出界"区分 + lightmap 门控保证。
+
+## 教训速记
+- **改缓冲格式**：同步 config.glsl Format 声明 + 文档表 + 所有 texelFetch(.rgb) 读端（升 RGBA 后要补 .a 读取）。
+- **硬 0/1 门控谨慎**：`VoxelPixelSunVisible` 这类只有 0/1 + 越界默认的逻辑，别用来盖主阴影/环境光，
+  只适合做"专项防护"（高光/SSS）。
+- **"Mai 空间滤波靠时域磨"不是离线渲染**：先提采样（多 SPP）再谈累积。
+- **排查"某处太亮/太暗"先定位是光追还是非光追路径**：DeferredLight 非光追环境光（SH 假反弹/最小底）
+  与 IRC 是两套层，反复调光追层无果时，查非光追层是否仍在网格内灌原版光。
+
 
 

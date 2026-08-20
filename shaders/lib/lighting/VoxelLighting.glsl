@@ -100,6 +100,14 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
     #define VOXEL_IRC_SPP 1
 #endif
 #define VOXEL_IRC_TRACE_DISTANCE 16     // 光线最大步进体素数（64³ 网格内足以跨过洞穴/房间）
+// [2026-08-20 注入降频] 每个体素每 N 帧才重新投 IRC 射线一次（N 应为 2 的幂）。
+// 体素场低频近似静态，中间 N-1 帧沿用上次缓存的旧值。算力直接降到 ~1/N，几乎无视觉代价。
+// 1=不降频（默认，逐帧全量重注入）；2/4=每 2/4 帧重注入 1 次。配合时域混合（blend 0.99）
+// 与 IRC 长累积，体素间接光照变化慢，视觉差异极小；相机/世界快速移动时注入滞后至多 N-1 帧，
+// 由 IRC history 吸收。见 VoxelGI.frag 循环内 phase 过滤。
+#ifndef VOXEL_IRC_UPDATE_INTERVAL
+    #define VOXEL_IRC_UPDATE_INTERVAL 1 // [1 2 4] IRC 注入降频（每 N 帧重注入 1 次）
+#endif
 // 新暴露格天空播种倍率：相机移动时 64³ 前缘
 // 新进入网格的固体格 pValid=false，旧实现直接用裸 1-SPP 随机样本当初值 → 移动时
 // 前缘一圈格子每帧随机闪（且 0.99 混合要 ~100 帧才收敛）。播种平滑天空值消除该闪烁。

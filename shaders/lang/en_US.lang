@@ -501,6 +501,9 @@ option.VOXEL_GI_SELF_BOUNCE.comment=Weight of the previous-frame IRC radiance us
 option.VOXEL_GI_BLEND=Temporal Blend Speed
 option.VOXEL_GI_BLEND.comment=Fraction of new samples the IRC irradiance cache accepts per frame (0.99 = slow accumulation, smoother; lower = faster response but noisier)
 
+option.VOXEL_IRC_UPDATE_INTERVAL=IRC Inject Interval
+option.VOXEL_IRC_UPDATE_INTERVAL.comment=Re-inject IRC rays into each voxel every N frames, reusing cached values in between; trace cost drops to ~1/N. Voxel indirect light changes slowly, so usually no visible difference; 1 = every frame, 2/4 = every 2/4 frames. Fast camera/world motion lags injection by up to N-1 frames
+
 option.VOXEL_EDGE_BLEND_DISTANCE=Grid Edge Blend Distance
 option.VOXEL_EDGE_BLEND_DISTANCE.comment=Distance (in voxels) over which outside-grid ambient light blends into the grid: smoothly transitions from "outside SH ambient" to "inside GI" when new blocks enter the 64^3 range, avoiding dark-to-bright pops at the edge. 0 = disabled
 
