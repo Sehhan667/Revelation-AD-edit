@@ -143,7 +143,10 @@ uniform sampler2D atlas2D;
 // 真阳光直射可见度（像素版，与传播端 VoxelSunVisibility 同逻辑，供调试标色）
 // 阴影贴图单点硬件深度比较：0=被挡，1=直射；太阳在地平线以下=false
 bool VoxelPixelSunVisible(vec3 relPos) {
-    if (sunPosition.y < 0.01) return false;
+    // [FIX 2026-08-21 背对太阳 bug] sunPosition 是 eye space（视图空间，见 Uniform.glsl），
+    // 玩家背对太阳时其 .y 会掉到 0 以下 → 门控把 sunVis 全判 0 → SSS/高光全灭。
+    // 改用世界空间太阳方向 worldSunDir.y（白天>0 / 夜晚<0），与 VoxelSunShadow.glsl 同约定。
+    if (worldSunDir.y < 0.01) return false;
     float distortionFactor;
     vec3 ssp = WorldToShadowScreenSpace(relPos, distortionFactor);
     ssp.z -= 3e-8 * shadowProjInv1y * distortionFactor * SHADOW_BIAS_STRENGTH;
@@ -331,6 +334,8 @@ void main() {
         // [2026-08-19 无阳光处阳光高光/SSS 外泄修复] 真阳光直射可见度（shadow map 深度比较），
         // 仅用于高光/SSS 防护；不改动原有 diffuse 软阴影（PCSS 可靠，避免整个场景阴影被硬 0/1 灭掉）。
         float sunVis = VoxelPixelSunVisible(worldPos - cameraPosition) ? 1.0 : 0.0;
+        
+        
         vec3 shadow = vec3(NdotL);
         float surfaceDepth = 0.0;
         float normalOffsetBase = (approxSqrt(worldDistSquared) * 2e-3 + 2e-2) * (2.0 - NdotL);

@@ -235,6 +235,15 @@ void main() {
     if (viewDistance == 0.0) viewDistance = length(viewPos);
     RenderVanillaFog(sceneColor, fogMask, viewDistance);
 
+    // [2026-08-21] 体积光（God Rays）叠加：colortex11 为 1/4 分辨率 RGBA16F，
+    // 全屏 UV 与其 UV 范围一一对应（1/4 buffer 恰好铺满全屏），直接采样后上采样叠加。
+    // RGB = 散射，A = 透射率。噪声由后续全屏 TAA 时间累积平滑。
+    #ifdef VOLUMETRIC_LIGHT
+        vec4 volumeLight = textureLod(colortex11, screenCoord, 0);
+        sceneColor = sceneColor * volumeLight.a + volumeLight.rgb;
+    #endif
+
+
     #if defined TAA_ENABLED && RENDER_MODE == 1
         sceneColor = RGBToYCoCg(sceneColor);
     #endif

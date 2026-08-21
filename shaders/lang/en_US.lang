@@ -172,6 +172,12 @@ value.VF_NOISE_QUALITY.HIGH=High
 option.VF_TIME_FADE=Volumetric Fog Time Fade
 option.COLORED_VOLUMETRIC_FOG=Colored Volumetric Fog
 
+option.VOLUMETRIC_LIGHT=Volumetric Light (God Rays)
+option.VOLUMETRIC_LIGHT.comment=Quarter-res screen-space ray marching. Sun/moon beams pierce leaves, windows and openings, tinted by stained glass. Noise is smoothed by TAA
+option.VF_VOLUME_INTENSITY=Volumetric Light Intensity
+option.VF_VOLUME_MAX_STEPS=Volumetric Light Max Steps
+option.VF_VOLUME_MAX_STEPS.comment=Ray march steps at quarter resolution. Higher = finer beams, more cost
+
 option.UW_VOLUMETRIC_FOG=Underwater Volumetric Fog
 option.UW_VF_MAX_SAMPLES=Underwater Volumetric Fog Max Samples
 
@@ -490,6 +496,9 @@ option.VOXEL_GI_SKY_STRENGTH.comment=Sky light injection strength on IRC surface
 
 option.VOXEL_GI_TRACE_SKY_STRENGTH=Trace Sky Strength
 option.VOXEL_GI_TRACE_SKY_STRENGTH.comment=Directional sky strength when traced rays exit the voxel grid
+
+option.VF_SKY_AMBIENT_FLOOR=Ambient Scatter Floor
+option.VF_SKY_AMBIENT_FLOOR.comment=Isotropic scatter floor for downward-facing surfaces (where directional sky fade hits zero), approximating atmospheric multi-scatter / ambient bounce. Scaled by the leak gate: open/semi-occluded get the floor, caves stay black. Higher = brighter undersides, lower = closer to pure black
 
 option.VOXEL_SKY_REFERENCE=Sky Radiance Reference
 option.VOXEL_SKY_REFERENCE.comment=Divisor that maps the physical sky radiance map into the 0-1 lighting scale; larger = darker sky GI, smaller = brighter

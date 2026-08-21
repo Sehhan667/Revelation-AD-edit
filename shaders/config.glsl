@@ -21,7 +21,7 @@
 	const int 	colortex8Format 			= RGBA16_SNORM;
 	const int 	colortex9Format 			= RGBA16F;
 	const int 	colortex10Format 			= RG16F;
-	const int 	colortex11Format 			= RGB32UI;
+	const int 	colortex11Format 			= RGBA16F;	// 体积光散射(RGB) + 透射率(A)，1/4 分辨率
 	const int 	colortex12Format 			= RG16;
 	const int 	colortex13Format 			= R8I;
 	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
@@ -79,7 +79,7 @@
 	|	colortex8	|   rgba16_snorm    |	Full res  	|	Normal data
 	|	colortex9	|   rgba16f     	|	Full res	|	Cloud history
 	|	colortex10	|   RG16F           |	Full res	|	Hurt timer/ripple phase
-	|	colortex11	|   rgb32ui         |	Half res  	|	Volumetric fog, linear depth
+	|	colortex11	|   rgba16f         |	Quarter res	|	Volumetric light (scattering RGB + transmittance A)
 	|	colortex12	|   rg16          	|	Full res	|	Water data
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)

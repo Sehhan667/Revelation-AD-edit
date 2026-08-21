@@ -568,5 +568,68 @@ if (sunPosition.y < 0.01) return vec3(0.0);
 - 排查同类问题时，可开 `DEBUG_SUNBOUNCE_VIS`（VoxelTracing.glsl，R=sunVis / G=朝向太阳 /
   B=lightmap 门控）三通道定位是否 shadow 采样失效。
 
+---
+
+# 备忘：末地下界维度宏 + 批量写入编码损坏（2026-08-20）
+
+## 一、维度目录与宏约定
+
+- 三个维度目录后缀 = 维度 ID：`world0`=主世界、`world-1`=下界、`world1`=末地。
+- 维度宏在**入口 shader 文件**第二行 `#define`，紧跟 `#version 460 compatibility`：
+  - 下界：`world-1/*.fsh/.vsh/.csh/.gsh` 全部写 `#define DIMENSION_NETHER`
+  - 末地：`world1/*.fsh/.vsh/.csh/.gsh` 全部写 `#define DIMENSION_THE_END`
+  - 主世界：`world0/` **不写任何维度宏**（无宏即主世界默认）。
+- 需要标识的文件 = 独立的编译单元（入口 shader），扩展名 `*.fsh/*.vsh/*.csh/*.gsh/*.fsh1/*.vsh1/*.csh1`，
+  共 **103 个**/目录。注意 `voxy.json`（数据）、`voxy_opaque.glsl`/`voxy_translucent.glsl`
+  （被 include 的库，非独立编译单元）**不算入口，不要加宏**。
+- `DIMENSION_*` 宏被 DeferredLight.frag（网格内环境光保底、SSS 补偿、天光等）和
+  settings.glsl（大气/blocklightColor）等大量 `#ifdef` 引用，正确接线后末地/下界
+  才真正走专属分支，否则会被当主世界处理。
+
+## 二、坑 1：PowerShell `Set-Content`/`Get-Content` 用 ANSI 写坏 UTF-8 中文（主坑）
+
+现象：加宏后 Iris 报 `unexpected error: failed to read /world1/deferred.vsh`。
+
+根因：PowerShell 5.1 的 `Get-Content`/`Set-Content` 默认编码是 **ANSI**，读取时把原本
+UTF-8 的文件按 ANSI 解码，写回又按 ANSI 编码 → 所有中文注释的字节被破坏成乱码
+（如 `// 标准全屏四边形变?`）。文件字节含非法序列后 Iris 读不了 → failed to read。
+
+范围：当时用脚本 `Set-Content` 批量改了 world-1/world1 的 103 个文件，**全部**含
+中文注释的都中招。`world0` 未被我改过，是干净 UTF-8 源。
+
+## 三、坑 2：目录被误写成同名文件（Copy-Item 容器语义）
+
+连续复制却始终只有 1 个文件、`Copy-Item -Path "world*\*"` 报
+`Container cannot be copied onto existing leaf item` 的原因：目标路径 `world-1`/`world1`
+之前因某次 `Remove-Item` + 失败的复制残留，变成了**一个 41 字节的文件**（PSIsContainer=False），
+不是目录。`Copy-Item -Destination "world-1\"` 把反斜杠当文件名处理 → 写不进。
+修复：用 `New-Item -ItemType Directory` 确认是目录后，再**逐文件** `Copy-Item -LiteralPath`。
+
+## 四、正确做法（本次采用，已验证）
+
+1. 删除损坏目录 → 从干净 `world0` **字节级**逐文件复制（`Copy-Item -LiteralPath $srcFile -Destination dst`，
+   **不经任何文本编码处理**，UTF-8 内容原样保留）。
+2. 插入宏用 **.NET `[System.IO.File]::ReadAllText/WriteAllText` + `UTF8Encoding($false)`**
+   （UTF-8 无 BOM），**绝不碰 PowerShell ANSI 的 `Set-Content`**。
+3. 校验三件套（都通过）：
+   - world-1=103 / world1=103 个入口全部含本维度宏，无缺失
+   - 所有入口都有 `#version 4`（宏没顶掉 version 行）
+   - 中文注释完好（UTF-8 解码无 `?` 乱码）
+
+## 验证命令（UTF8 安全读，别用 Get-Content）
+```powershell
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$c = [System.IO.File]::ReadAllText("path\file.glsl", $utf8)
+$c -match '(?m)^#define\s+DIMENSION_THE_END\b'   # 有宏
+$c -notmatch '\?'                                  # 无乱码
+```
+
+## 经验速记
+- **给含中文注释的 glsl 批量加宏/改字，必须字节级或 UTF-8 编码写入**，PowerShell 默认
+  ANSI 会破坏中文 → Iris failed to read。用 .NET File + `UTF8Encoding($false)`。
+- **复制目录前先确认目标是目录不是同名文件**（`Get-Item | PSIsContainer`），否则容器
+  复制进 leaf 报错、静默失败只剩 1 文件。
+- 维度宏只在入口 shader 加，`voxy_*.glsl` 是被 include 的库、不加；world0 主世界无宏。
+
 
 

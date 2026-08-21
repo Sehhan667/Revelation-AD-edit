@@ -14,6 +14,13 @@
     #define VOXEL_SKY_REFERENCE 300.0
 #endif
 
+// [2026-08-21] 环境散射底光强度：朝下表面（dir.y<0 天光 fade 归 0）的环境散射补光下限，
+// 近似现实大气多次散射/环境光反弹。随漏光门控缩放（户外/半遮挡给底，洞穴保持黑）。
+// 与 VOXEL_GI_SKY_STRENGTH 不同：它是各向同性下限，不是方向天光倍率。
+#ifndef VF_SKY_AMBIENT_FLOOR
+    #define VF_SKY_AMBIENT_FLOOR 0.02 // [0.0 0.01 0.02 0.03 0.05 0.08 0.1 0.15 0.2 0.3 0.5]
+#endif
+
 // [2026-08-17] 阳光颜色混合（SH 环境光同款，DeferredLight 的 AMBIENT_SUNLIGHT_TINT_RATIO）：
 // 用暖阳色 sunIrradiance 的色度（归一化，只染色调不动亮度）；正午最强、日落/夜晚关闭。
 // 同一滑条（屏幕 Compensation 菜单「漫反射阳光染色强度」）控制，两处观感一致。
@@ -125,6 +132,11 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     sky *= 1.0 - 0.80 * (1.0 - moonFace) * moonAmt;
     #endif
     sky = max(sky * fade * gate, vec3(0.0));
+    // [2026-08-21 朝下表面死黑修复] 环境散射底：fade 对 dir.y<0（朝下）的射线归 0，
+    // 现实中大气多次散射 + 环境光反弹会补光，游戏里 IRC 传播距离有限 → 底部死黑。
+    // 加一个方向无关的环境散射下限（近似天空各向同性散射），随漏光门控缩放：
+    // 户外/半遮挡给底，洞穴（gate≈0）仍保持黑，不破坏 AO 与明暗层次。
+    sky += skyColor * VF_SKY_AMBIENT_FLOOR * gate;
     sky *= 0.8;
     #ifdef DEBUG_VOXEL_SKY
         // [2026-08-17] 染红改为"门控放行且有值才红"：洞穴/浅洞 gate≈0 → 黑，

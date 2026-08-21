@@ -184,6 +184,12 @@ value.VF_NOISE_QUALITY.HIGH=高
 option.VF_TIME_FADE=时段过渡
 option.COLORED_VOLUMETRIC_FOG=彩色阴影
 
+option.VOLUMETRIC_LIGHT=体积光（God Rays）
+option.VOLUMETRIC_LIGHT.comment=1/4 分辨率的屏幕空间光线步进，阳光/月光穿透树叶、窗户、洞口形成光束，穿过染色玻璃会带上玻璃颜色。噪声由 TAA 平滑
+option.VF_VOLUME_INTENSITY=体积光强度
+option.VF_VOLUME_MAX_STEPS=体积光最大步进数
+option.VF_VOLUME_MAX_STEPS.comment=1/4 分辨率下的光线步进次数。越高光束越细腻，性能开销越大
+
 option.UW_VOLUMETRIC_FOG=水下体积雾
 option.UW_VF_MAX_SAMPLES=水下体积雾最大采样数
 
@@ -666,6 +672,9 @@ option.VOXEL_GI_SKY_STRENGTH.comment=体素 GI 命中面的天空光注入倍率
 
 option.VOXEL_GI_TRACE_SKY_STRENGTH=追踪天光强度
 option.VOXEL_GI_TRACE_SKY_STRENGTH.comment=每像素漫反射追踪出界时的方向天光倍率
+
+option.VF_SKY_AMBIENT_FLOOR=环境散射底光
+option.VF_SKY_AMBIENT_FLOOR.comment=朝下表面（天光方向归零处）的环境散射补光下限，近似现实大气多次散射/环境光反弹。随漏光门控缩放：户外/半遮挡给底，洞穴仍保持黑。调大让底部变亮、调小更接近纯黑
 
 option.VOXEL_SKY_REFERENCE=天空辐射基准
 option.VOXEL_SKY_REFERENCE.comment=天空辐射贴图换算到 0-1 光照尺度的除数；调大天光变暗、调小变亮
