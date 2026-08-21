@@ -173,10 +173,16 @@ option.VF_TIME_FADE=Volumetric Fog Time Fade
 option.COLORED_VOLUMETRIC_FOG=Colored Volumetric Fog
 
 option.VOLUMETRIC_LIGHT=Volumetric Light (God Rays)
-option.VOLUMETRIC_LIGHT.comment=Quarter-res screen-space ray marching. Sun/moon beams pierce leaves, windows and openings, tinted by stained glass. Noise is smoothed by TAA
+option.VOLUMETRIC_LIGHT.comment=Sun/moon beams pierce leaves, windows and openings, tinted by stained glass. Noise is smoothed by TAA
+option.VOLUMETRIC_LIGHT_MODE=Volumetric Light Mode
+option.VOLUMETRIC_LIGHT_MODE.comment=0=Quarter-res ray marching: fine beams through leaves/window gaps, more cost; 1=Full-res screen-space sun shafts: simple radial beams toward the sun, less cost
+value.VOLUMETRIC_LIGHT_MODE.0=Ray Marching (Quarter Res)
+value.VOLUMETRIC_LIGHT_MODE.1=Screen-Space Sun Shafts (Full Res)
 option.VF_VOLUME_INTENSITY=Volumetric Light Intensity
 option.VF_VOLUME_MAX_STEPS=Volumetric Light Max Steps
 option.VF_VOLUME_MAX_STEPS.comment=Ray march steps at quarter resolution. Higher = finer beams, more cost
+option.VF_SHAFT_COLOR_BRIGHTNESS=Volumetric Light Color Brightness
+option.VF_SHAFT_COLOR_BRIGHTNESS.comment=Overall brightness of shafts / moon halo (unified intensity knob for daylight sun and night moonlight). Higher = brighter
 
 option.UW_VOLUMETRIC_FOG=Underwater Volumetric Fog
 option.UW_VF_MAX_SAMPLES=Underwater Volumetric Fog Max Samples

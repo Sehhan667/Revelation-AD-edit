@@ -98,6 +98,11 @@ void main() {
     if (isEyeInWater != 0) return;
     // 下界无太阳/月亮：无光束
     if (worldId == -1) return;
+    // [2026-08-21] 方案 1（全分辨率屏幕空间太阳光轴）在 composite4 内联计算，
+    // 不写 colortex11，本 pass 直接返回（composite 仍需启用以触发阴影采样依赖）。
+    #if VOLUMETRIC_LIGHT_MODE == 1
+        return;
+    #endif
 
     float depth = loadDepth0(uvToTexel(uv));
     // 天空方向（depth≈1.0）也参与步进：透过树叶/窗口缝隙望向天空时的光束

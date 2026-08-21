@@ -185,10 +185,16 @@ option.VF_TIME_FADE=时段过渡
 option.COLORED_VOLUMETRIC_FOG=彩色阴影
 
 option.VOLUMETRIC_LIGHT=体积光（God Rays）
-option.VOLUMETRIC_LIGHT.comment=1/4 分辨率的屏幕空间光线步进，阳光/月光穿透树叶、窗户、洞口形成光束，穿过染色玻璃会带上玻璃颜色。噪声由 TAA 平滑
+option.VOLUMETRIC_LIGHT.comment=阳光/月光穿透树叶、窗户、洞口形成光束，穿过染色玻璃会带上玻璃颜色。噪声由 TAA 平滑
+option.VOLUMETRIC_LIGHT_MODE=体积光方案
+option.VOLUMETRIC_LIGHT_MODE.comment=0=1/4分辨率光线步进：细腻、穿透树叶/窗缝形成光束，性能开销大；1=全分辨率屏幕空间太阳光轴：简单、正对太阳方向径向光束，性能开销小
+value.VOLUMETRIC_LIGHT_MODE.0=光线步进（1/4 分辨率）
+value.VOLUMETRIC_LIGHT_MODE.1=屏幕空间太阳光轴（全分辨率）
 option.VF_VOLUME_INTENSITY=体积光强度
 option.VF_VOLUME_MAX_STEPS=体积光最大步进数
 option.VF_VOLUME_MAX_STEPS.comment=1/4 分辨率下的光线步进次数。越高光束越细腻，性能开销越大
+option.VF_SHAFT_COLOR_BRIGHTNESS=体积光颜色亮度
+option.VF_SHAFT_COLOR_BRIGHTNESS.comment=光柱/月晕整体亮度倍率（白天阳光与夜晚月光的统一强度旋钮）。调大更亮、调小更暗
 
 option.UW_VOLUMETRIC_FOG=水下体积雾
 option.UW_VF_MAX_SAMPLES=水下体积雾最大采样数

@@ -89,8 +89,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 	// [2026-08-21] 体积光（God Rays）：1/4 分辨率光线步进，借助现有 TAA 降噪；穿透树叶/窗户/洞口形成光束。
 	#define VOLUMETRIC_LIGHT // Enables volumetric light (sunbeams / god rays)
+	#define VOLUMETRIC_LIGHT_MODE 1 // 体积光方案。 [0 1] 0=1/4分辨率光线步进（细腻，穿透树叶/窗缝形成光束，性能开销大） 1=全分辨率屏幕空间太阳光轴（简单，正对太阳方向径向光束，性能开销小）
 	#define VF_VOLUME_INTENSITY 1.0 // 体积光强度。 [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0 4.0 5.0]
 	#define VF_VOLUME_MAX_STEPS 32 // 体积光最大步进数（1/4 分辨率）。 [4 8 12 16 20 24 28 32 40 48 64 96 128]
+	#define VF_SHAFT_COLOR_BRIGHTNESS 1.0 // 体积光颜色亮度倍率（相对体积雾散射色，保持色相只提亮）。 [0.25 0.5 0.75 1.0 1.25 1.5 1.75 2.0 2.5 3.0 4.0 5.0 6.0 8.0 10.0]
 
 	#ifdef PER_BIOME_FOG
 	#endif
