@@ -1,4 +1,5 @@
 #version 460 compatibility
+#define DIMENSION_NETHER
 
 // Vertical blur pass
 #define OFFSET ivec2(0, 1)

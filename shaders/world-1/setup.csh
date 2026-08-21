@@ -1,4 +1,5 @@
 #version 460 compatibility
+#define DIMENSION_NETHER
 
 #define CLEAR_IMAGE skyMapImg
 #define CLEAR_COLOR vec4(0.0)

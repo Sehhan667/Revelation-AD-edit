@@ -111,6 +111,11 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     #endif
     // [2026-08-19 v2] 月光方向化：月亮方向≈-worldSunDir；只对朝月亮的出界方向增强。
     // 亮面有月光反射、背月面压暗 → 体素 GI 出界天光在夜晚有方向性与自然明暗(配 AO)。
+    // [2026-08-20 下界无月光] 下界时间固定夜晚(worldSunDir.y<0 → moonAmt>0)，VoxelSkyColor
+    // 会被 IRC"新暴露播种"路径调用（该路径无 worldId 守卫）。若不屏蔽，月光会作为下界
+    // 新体素的 IRC 种子被写入并自反弹放大 → "下界月光漫反射反弹"。下界屏蔽整段方向月光
+    //（主体方向化反弹已在 VoxelTracing/VoxelGI 用 worldId!=-1 屏蔽，此处补播种路径残漏）。
+    #ifndef DIMENSION_NETHER
     float moonUp = saturate(-worldSunDir.y);
     float moonAmt = smoothstep(0.05, 0.35, moonUp);
     vec3 moonDir = -worldSunDir;
@@ -118,6 +123,7 @@ vec3 VoxelSkyColor(vec3 dir, float lightmap) {
     // 方向月光（朝月面 0.03·face）+ 背月面把均匀夜底压到 20%
     sky = max(sky, vec3(0.30, 0.42, 0.85) * moonAmt * 0.03 * moonFace);
     sky *= 1.0 - 0.80 * (1.0 - moonFace) * moonAmt;
+    #endif
     sky = max(sky * fade * gate, vec3(0.0));
     sky *= 0.8;
     #ifdef DEBUG_VOXEL_SKY

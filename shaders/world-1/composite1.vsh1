@@ -1,4 +1,5 @@
 #version 460 compatibility
+#define DIMENSION_NETHER
 
 //#include "/program/Simple.vert"
 out vec2 texcoord;
