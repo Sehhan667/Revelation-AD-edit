@@ -330,7 +330,14 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // [2026-08-19 恢复 lightmap 门控] 出界天光按起点体素 sky 做门控（对齐参考实现）：
             // 出界体素 sky 越高 → 换成 lightmap 平滑门控（VoxelSkyColor 内部 smoothstep），
             // 允许半遮挡（树冠/窗边）按比例保留；洞穴(sky≈0) → 天光归零不漏光。
-            float ircSkyVis = saturate(hitSkylight * 2.0 - 1.0);
+            // [2026-08-21 门控开关] VOXEL_IRC_SKY_GATE：0=现有门控（ircSkyVis 用体素
+            // skylight 判定，封闭空间写胜残留压低）；1=只根据射线是否出界（出界即
+            // 满强度，不查 hitSkylight，洞穴也按出界方向上天光）。
+            #if VOXEL_IRC_SKY_GATE == 0
+                float ircSkyVis = saturate(hitSkylight * 2.0 - 1.0);
+            #else
+                const float ircSkyVis = 1.0;
+            #endif
             // [2026-08-20] 下界（worldId == -1）无天空：屏蔽出界天光
             if (worldId != -1)
                 contrib += VoxelSkyColor(dir, hitSkylight) * VOXEL_GI_SKY_STRENGTH * ircSkyVis * absorption;

@@ -494,6 +494,9 @@ option.VOXEL_GI_SUN_STRENGTH.comment=Sun bounce injection strength into the voxe
 option.VOXEL_TRACE_DISTANCE=Trace Distance
 option.VOXEL_TRACE_DISTANCE.comment=Maximum voxel steps for traced rays; larger = sun/block light travels farther (slightly slower)
 
+option.VOXEL_TRACE_SPP=Rays Per Pixel
+option.VOXEL_TRACE_SPP.comment=Diffuse trace rays per pixel per frame (SPP) in realtime mode. 1=current (checkerboard half-res + temporal accumulation); higher averages multiple rays per frame, cleaner and faster convergence, cost scales linearly
+
 option.VOXEL_GI_LIGHT_FALLOFF=Light Falloff
 option.VOXEL_GI_LIGHT_FALLOFF.comment=Distance attenuation of emissive light; smaller = wider light reach
 
@@ -503,8 +506,17 @@ option.VOXEL_GI_SKY_STRENGTH.comment=Sky light injection strength on IRC surface
 option.VOXEL_GI_TRACE_SKY_STRENGTH=Trace Sky Strength
 option.VOXEL_GI_TRACE_SKY_STRENGTH.comment=Directional sky strength when traced rays exit the voxel grid
 
-option.VF_SKY_AMBIENT_FLOOR=Ambient Scatter Floor
-option.VF_SKY_AMBIENT_FLOOR.comment=Isotropic scatter floor for downward-facing surfaces (where directional sky fade hits zero), approximating atmospheric multi-scatter / ambient bounce. Scaled by the leak gate: open/semi-occluded get the floor, caves stay black. Higher = brighter undersides, lower = closer to pure black
+option.VOXEL_TRACE_SKY_GATE=Trace Sky Gate
+option.VOXEL_TRACE_SKY_GATE.comment=0=Exit-only: any exiting ray gets directional sky, ignoring vanilla lightmap; 1=Exit+vanilla: lightmap leak gate attenuates caves/semi-occlusion
+value.VOXEL_TRACE_SKY_GATE.0=Exit Only
+value.VOXEL_TRACE_SKY_GATE.1=Exit + Vanilla
+option.VOXEL_IRC_SKY_GATE=IRC Sky Gate
+option.VOXEL_IRC_SKY_GATE.comment=0=Existing gate: voxel skylight visibility, suppressed by residual writes in enclosed spaces; 1=Exit-only: full strength on exit, ignores hitSkylight
+value.VOXEL_IRC_SKY_GATE.0=Existing Gate
+value.VOXEL_IRC_SKY_GATE.1=Exit Only
+
+option.VOXEL_GI_SH_MIX=In-Grid SH Ambient
+option.VOXEL_GI_SH_MIX.comment=Restore SH spherical-harmonics ambient inside the voxel grid (additive into GI ambient). SH includes lower-hemisphere irradiance so downward faces are no longer pitch black, and follows the day/night cycle automatically. 0=disabled (pure GI); low values (0.1-0.2) add a subtle floor without flattening GI directionality; 1=full SH flat lighting
 
 option.VOXEL_SKY_REFERENCE=Sky Radiance Reference
 option.VOXEL_SKY_REFERENCE.comment=Divisor that maps the physical sky radiance map into the 0-1 lighting scale; larger = darker sky GI, smaller = brighter

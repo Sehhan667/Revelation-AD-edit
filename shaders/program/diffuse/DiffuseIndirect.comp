@@ -41,11 +41,17 @@ writeonly restrict uniform image2D colorimg3;
 #include "/lib/surface/BRDF.glsl"
 #include "/lib/lighting/SSILVB.glsl"
 
-//======// 离线渲染 SPP //==========================================================================//
+//======// 追踪 SPP //==============================================================================//
 // [2026-08-19] 离线模式每像素漫反射追踪光线数（同帧多射线平均，降低棋盘时域依赖，更快更干净）。
 // 仅 OFFLINE_RENDER 时生效；实时模式仍为棋盘 1 SPP。
 #ifndef VOXEL_TRACE_OFFLINE_SPP
     #define VOXEL_TRACE_OFFLINE_SPP 20
+#endif
+// [2026-08-21] 实时模式每像素每帧漫反射追踪光线数（SPP）。默认 1 = 现状（棋盘半分辨率 + 时域累积）；
+// 调大同帧多射线平均 → 单帧更干净、时域收敛更快，但性能按比例下降（每射线一次 DDA 步进）。
+// 与 OFFLINE_RENDER 的 VOXEL_TRACE_OFFLINE_SPP 独立：实时用本宏，离线用离线宏。
+#ifndef VOXEL_TRACE_SPP
+    #define VOXEL_TRACE_SPP 1 // [1 2 4 8 16 32 64]
 #endif
 
 #ifdef VOXEL_GI_ENABLED
@@ -130,9 +136,14 @@ void main() {
 				}
 				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_OFFLINE_SPP)) * VOXEL_GI_TRACE_STRENGTH, 1.0);
 			#else
-			result = vec4(VoxelTracePixel(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
-			                              -viewPos.z, skyLightmap, lightmap.x, traceSeed)
-			             * VOXEL_GI_TRACE_STRENGTH, 1.0);
+			// [2026-08-21 实时 SPP] 实时模式也支持同帧多射线：VOXEL_TRACE_SPP 默认 1（现状），
+			// 调大后多射线平均 → 单帧降噪、时域收敛更快（性能按比例增）。与离线宏独立。
+				vec3 traceAcc = vec3(0.0);
+				for (int s = 0; s < VOXEL_TRACE_SPP; ++s) {
+					traceAcc += VoxelTracePixel(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
+					                            -viewPos.z, skyLightmap, lightmap.x, traceSeed);
+				}
+				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_SPP)) * VOXEL_GI_TRACE_STRENGTH, 1.0);
 			#endif
 		#else
 			vec3 worldNormal = FetchSurfaceNormal(renderTexel);

@@ -296,8 +296,16 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 出界 → 方向天空光 + NOLIGHT 兜底：skyMapTex 方向辐射（内含地平线衰减
         // 与线性漏光门控）。洞穴（skyLightmap≈0）无天光，半遮挡按比例保留。
         // [2026-08-20] 下界（worldId == -1）无天空：屏蔽出界天光
-        if (worldId != -1)
-            contrib += VoxelSkyColor(dir, skyLightmap) * VOXEL_GI_TRACE_SKY_STRENGTH * absorption;
+        // [2026-08-21 门控开关] VOXEL_TRACE_SKY_GATE：0=只有出界判定（gate 全开，
+        // 不乘 lightmap 漏光门控，只要出界就按方向天光）；1=出界+原版光照（现状，
+        // 传 skyLightmap 让 VoxelSkyLeakGate 按 lightmap 衰减洞穴/半遮挡）。
+        if (worldId != -1) {
+            #if VOXEL_TRACE_SKY_GATE == 0
+                contrib += VoxelSkyColor(dir, 1.0) * VOXEL_GI_TRACE_SKY_STRENGTH * absorption;
+            #else
+                contrib += VoxelSkyColor(dir, skyLightmap) * VOXEL_GI_TRACE_SKY_STRENGTH * absorption;
+            #endif
+        }
         // [2026-08-09] 出界不再返回原版方块光底光：光追开启时体素网格内的原版方块光
         // （lightmap 光晕）应被屏蔽，由体素 GI 的方块光（命中/IRC 注入，lD.y 驱动）
         // 接管。保留此项会把 DeferredLight 已屏蔽的原版方块光又加回来（火把光晕

@@ -218,11 +218,14 @@ vec3 ScreenSpaceSunShafts(vec2 uv, vec2 pixelSize, vec3 worldDir, float dither, 
         shafts += lightColor * miePhase * shd * (1.0 / float(shaftsSamples));
     }
 
-    // 强度 = 步进累积 × 雾密度门控 × 高度衰减 × 亮度倍率。
+    // 强度 = 步进累积 × 雾密度门控 × 高度衰减 × 亮度倍率 × 正午衰减。
     // 昼夜分开换算：白天阳光 ≈128 需压回可见范围（0.03），夜晚月光 ≈1 用更大系数
     // 保持月晕/光柱可见。VF_VOLUME_INTENSITY / VF_SHAFT_COLOR_BRIGHTNESS 仍独立可调。
+    // [2026-08-21 正午衰减] 正午太阳在头顶，光柱方向与视线几乎不交叉、天顶大气路径
+    // 最短 → 体积光不可见（与方案 0 同曲线）。worldSunDir.y 白天 0(日出)→1(正午)。
+    float noonFade = 1.0 - smoothstep(0.30, 0.60, max(worldSunDir.y, 0.0));
     float intensityScale = mix(0.03, 0.5, moonAmt);
-    return shafts * VF_VOLUME_INTENSITY * volumetricFogDensity * heightFade * VF_SHAFT_COLOR_BRIGHTNESS * intensityScale;
+    return shafts * VF_VOLUME_INTENSITY * volumetricFogDensity * heightFade * VF_SHAFT_COLOR_BRIGHTNESS * intensityScale * noonFade;
 }
 
 void main() {

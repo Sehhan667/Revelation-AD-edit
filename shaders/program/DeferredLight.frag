@@ -495,7 +495,12 @@ void main() {
     // 原式对底面(worldNormal.y≈-1)仍给 0.2×activeMinAmbient 灰白底，傍晚再被夕阳 tint
     // 染成暖橙，在暗的背光侧异常扎眼。法线 y<0 时把这份底光渐进去除（一 0→-0.15 过渡），
     // 顶/侧/水平面保持原状，不碰夜视窄差底光。
-    ambientAccum *= mix(1.0, 0.0, smoothstep(0.0, -0.15, worldNormal.y));
+    // [2026-08-21 洞穴死黑修复] 上述朝下抹除仅在"有天空光"时生效——关闭 VOXEL_GI 后
+    // 洞穴内（lightmap≈0）环境光只剩 activeMinAmbient 底光，若朝下面也被抹掉就全黑
+    //（用户实测：朝下死黑、其他面偏亮）。用 skyPresence 门控：洞穴保留底光、户外才抹除。
+    float downFade = mix(1.0, 0.0, smoothstep(0.0, -0.15, worldNormal.y));
+    float skyPresence = saturate(lightmap.y * 5.0);
+    ambientAccum *= mix(1.0, downFade, skyPresence);
 
     // [2026-08-18 网格边缘过渡] 网格外环境光平滑过渡进网格内几格：
     // 新方块进入 64³ 范围时，从"网格外 SH 环境光"瞬间切到"网格内 GI"，
@@ -528,11 +533,19 @@ void main() {
             // [2026-08-20 下界网格内保底] 下界无天空（worldId==-1 屏蔽 GI 天光），GI 只有
             // 方块光/发光体——离光源稍远处网格内会黑死。下界网格内保留 MINIMUM_AMBIENT_BRIGHTNESS
             // 最暗保底（activeMinAmbient 在此维度已不含 compensation），与网格外一致。
+            // [2026-08-21 网格内 SH 混入] 恢复体素范围内 SH 球谐光做环境底：GI 天光是方向性的
+            //（朝上/侧面亮、朝下 0），朝下表面只靠 GI 自反弹（距离有限）易死黑。加法混入
+            // SH 全空间辐照度（含下半球，昼夜/方向自动），由 VOXEL_GI_SH_MIX 控制强度——
+            // 默认 0.15 轻微补底不破坏 GI 方向性；调 0 完全屏蔽（旧行为）。
             #ifdef DIMENSION_NETHER
                 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
             #else
                 float nightVisionFloor = 5e-3 * nightVision;
                 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6)) * nightVisionFloor;
+            #endif
+            #if VOXEL_GI_SH_MIX > 0.0
+                // SH 全空间辐照度（含下半球）→ 朝下表面吃到环境光，随昼夜自动正确
+                ambientAccum += ConvolvedReconstructSH3(global.skySH, worldNormal) * VOXEL_GI_SH_MIX;
             #endif
         } else {
             // 网格外：光追范围外无 GI 数据，MINIMUM_AMBIENT_BRIGHTNESS 作为全局最暗保底，

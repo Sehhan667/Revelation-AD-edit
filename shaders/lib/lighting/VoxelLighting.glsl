@@ -166,4 +166,18 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #define VOXEL_GI_TRACE_SKY_STRENGTH 8.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 40.0 48.0] 追踪端出界方向天光倍率
 // （新增环境光控制宏已移除 2026-08-06：环境光还原旧版纯 skySH 行为）
 
+// [2026-08-21] 射线天光门控模式：出界天光是否乘原版 lightmap 漏光门控。
+// 0=只有出界判定（gate 全开，只要射线出界就上天光，不受 lightmap 影响）；
+// 1=出界+原版光照门控（VoxelSkyLeakGate，洞穴/半遮挡按 lightmap 衰减，现状）。
+#define VOXEL_TRACE_SKY_GATE 1 // [0 1] 射线天光门控：0=只有出界判定 1=出界+原版光照
+// [2026-08-21] IRC 天光门控模式：IRC 出界天光是否用体素 skylight 可见度判定。
+// 0=现有门控（ircSkyVis = saturate(hitSkylight*2-1)，封闭空间写胜残留会压低）；
+// 1=只根据射线是否出界（出界即满强度，不查 hitSkylight）。
+#define VOXEL_IRC_SKY_GATE 0 // [0 1] IRC 天光门控：0=现有门控 1=只根据射线出界
+// [2026-08-21] 网格内 SH 球谐光混合强度：体素网格内环境光原本完全交给 GI（方向性天光），
+// SH 被屏蔽 → 朝下表面只靠 GI 自反弹（距离有限）易死黑。恢复网格内 SH 加法混入——
+// 用 SH 全空间辐照度（含下半球）做环境底，补朝下表面，且随昼夜自动变化。
+// 0=完全屏蔽（现状）；1=完全 SH 平涂；低值（0.1-0.2）只轻微补底、不破坏 GI 方向性。
+#define VOXEL_GI_SH_MIX 0.15 // [0.0 0.05 0.1 0.15 0.2 0.3 0.5 0.75 1.0] 网格内 SH 球谐光混合强度（加法混入环境光）
+
 #endif // VOXEL_GI_LIGHTING_INCLUDED

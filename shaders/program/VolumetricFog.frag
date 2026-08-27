@@ -133,6 +133,10 @@ void main() {
     }
     float miePhase = AtmospherePhase(dot(lightDir, worldDir)).y * 4.0;
 
+    // [2026-08-21 正午衰减] 正午太阳在头顶，光柱方向与视线几乎不交叉、天顶大气路径最短
+    // → 体积光不可见。worldSunDir.y 白天 0(日出)→1(正午)→0(日落)，平滑衰减到 0。
+    float noonFade = 1.0 - smoothstep(0.30, 0.60, max(worldSunDir.y, 0.0));
+
     // 均匀低密度（纯光束形态：光束由阴影图案主导，而非整体雾）
     const float volumeDensity = 1.2e-4;
     const float volumeExtinction = 1.2e-4;
@@ -163,5 +167,5 @@ void main() {
     #ifdef VF_TIME_FADE
         scattering *= max(wetness, 1.5 - approxSqrt(max(timeNoon, 0.0)) * 1.5 - timeSunset * 0.75 - timeMidnight * 0.5);
     #endif
-    volumeData = vec4(scattering * VF_VOLUME_INTENSITY, transmittance);
+    volumeData = vec4(scattering * VF_VOLUME_INTENSITY * noonFade, transmittance);
 }
