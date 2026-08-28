@@ -65,7 +65,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // ------ 传播配置（风格 IRC 随机注入）------
 #define VOXEL_GI_SELF_BOUNCE 0.5       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 自反弹衰减比（光线命中点取前帧 IRC；[2026-08-17] 1.0→0.5 减小 IRC 亮度，避免整体过亮）
 #define VOXEL_GI_EMISSIVE_THRESHOLD 0.1 // [0.0 0.01 0.02 0.05 0.1 0.2] 发射度阈值（LabPBR 发射贴图，太低会把矿物误判为发光体）
-#define VOXEL_GI_BOOST 1.5              // [0.5 1.0 1.5 2.0 3.0 4.0] 发射体素能量倍率
+#define VOXEL_GI_BOOST 1.5              // [0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 发射体素能量倍率
 // 发射光球形光距离衰减（语义的补充，2026-08-04 #8）：远场（16 格外）偶发
 // "穿心"命中会闪现全强度 → 高对比可见闪烁；× rcp(1 + dist²×FALLOFF) 后远场命中大幅
 // 变弱（dist=8 → 9%），近场 1-2 格几乎不变。只影响球形光路径（发射体素），普通固体
@@ -78,7 +78,8 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // （sqrt((1-p)/p)）降 ~2-3 倍。半径 >0.5 即光晕溢出相邻格 = 物理合理（光源近场光晕）。
 
 // 的 TAA/IRC 收敛闪烁，折中调回 0.6~0.8，或再去掉 VoxelHitLightSphere 的 mix(...,1.0,0.15) 保底。
-#define VOXEL_GI_LIGHT_RADIUS 0.5
+// [0.5 = 格心小球（默认，防整格全亮）；调大 → 命中率↑ → 火把照亮更远，但光源格光晕溢出相邻格]
+#define VOXEL_GI_LIGHT_RADIUS 0.5    // [0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 发射光球命中半径
 // 追踪端发射光强度（架构：发射光主体由 IRC 时域累积承载——IRC 注入端用
 // VOXEL_GI_BOOST 强注入、时间混合 0.99 平滑；追踪端是每像素每帧 1 条随机光线的
 // 高方差采样，发射光脉冲必须压低，否则贴光源面"命中/未命中"跳变 → 闪烁）。
@@ -126,7 +127,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // vanilla 天空光 lightmap 降级为弱环境底，保留洞穴渐变。
 #define VOXEL_GI_SUN_STRENGTH 0.5      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显）
 #define VOXEL_GI_SKY_STRENGTH 1.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 2.0→1.0：室内天光略过量）
-#define VOXEL_GI_BLOCK_STRENGTH 0.8    // 方块光注入倍率（× blocklightColor，火把等光源）
+#define VOXEL_GI_BLOCK_STRENGTH 0.8    // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 方块光注入倍率（× blocklightColor，火把等光源）
 // 天空辐射贴图 → 0-1 尺度换算基准（skyViewTex 白天顶光 ≈110-130；与阳光基准同量级，
 // 调大=天光变暗、调小=天光变亮）。定义在 VoxelSkyLight.glsl 之前（VoxelLighting 先 include）
 #define VOXEL_SKY_REFERENCE 300.0   // [100.0 150.0 200.0 250.0 300.0 350.0 400.0 500.0 600.0 800.0 1000.0] 天空辐射贴图→0-1 尺度换算基准

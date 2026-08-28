@@ -58,12 +58,18 @@ vec3 CalculateBloomTile(in vec2 centerUV) {
     float radius = float(BLOOM_DOWNSAMPLE_BLUR_RADIUS);
     vec2 offset = vec2(radius) * viewPixelSize;
 
-    // 四个角点采样（以中心为基准，向外扩展 radius 个像素）
+    // 中心采样：恰好是对应 2x2 块的装箱降采样（硬件的双线性过滤）。
+    // 缺失中心是此前“半径过大 → 小体积光源变中空四瓣”的根因。
+    vec3 cCenter = textureLod(bloomTileTex, centerUV, 0.0).rgb;
+
+    // 四个角点采样（以中心为基准，向外扩展 radius 个像素，负责扩散）
     vec3 c00 = textureLod(bloomTileTex, centerUV + vec2(-offset.x, -offset.y), 0.0).rgb;
     vec3 c01 = textureLod(bloomTileTex, centerUV + vec2( offset.x, -offset.y), 0.0).rgb;
     vec3 c10 = textureLod(bloomTileTex, centerUV + vec2(-offset.x,  offset.y), 0.0).rgb;
     vec3 c11 = textureLod(bloomTileTex, centerUV + vec2( offset.x,  offset.y), 0.0).rgb;
-    return (c00 + c01 + c10 + c11) * 0.25;
+
+    // 中心加权更高，保证点光源核心连续，不分裂成四瓣
+    return (cCenter * 4.0 + c00 + c01 + c10 + c11) * 0.125;
 }
 
 //======// Main //================================================================================//

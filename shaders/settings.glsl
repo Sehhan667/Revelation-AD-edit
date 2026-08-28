@@ -341,7 +341,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// #define FORCE_DISABLE_SUBGROUP_OPS
 	// [FIX 2026-08-06 合并] 体素 GI = 单一开关（原 VOXEL_GI_ENABLED + VOXEL_GI_TRACE 已合并）：
 	// 开启 = IRC 传播 + 每像素漫反射追踪（棋盘半分辨率 + SVGF 时域累积/滤波）。
-	// 降噪由 SVGF_ENABLED 单独控制（GUI 手动开关；没开体素 GI 时 SVGF pass 自动不跑）。
+	// 降噪由 VOXEL_GI_DENOISE 单独控制（[2026-08-28 方案B] VXGI 与 SSILVB 的 SVGF_ENABLED 独立）。
 	#define VOXEL_GI_ENABLED
 	// ENABLE_VOXELIZATION 是 GUI 布尔开关（shaders.properties screen.voxel + profile.Default 默认开）。
 	// Iris 通过"注释/取消注释本行"来开关（setBooleanDefineValue）。要显示开关必须同时满足：

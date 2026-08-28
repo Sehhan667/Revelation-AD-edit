@@ -401,16 +401,26 @@ option.EXPOSURE_MODE=Exposure Mode
 value.EXPOSURE_MODE.MANUAL=Manual
 value.EXPOSURE_MODE.AUTO_BASIC=Auto Basic
 value.EXPOSURE_MODE.AUTO_HISTOGRAM=Auto Histogram
+option.EXPOSURE_MODE.comment=Exposure control mode. Manual = fixed EV value; Auto Histogram = auto-adjusts from a luminance histogram (follows day/night and indoor/outdoor brightness)
 
 option.EXPOSURE_SPEED_DOWN=Exposure Speed Down
+option.EXPOSURE_SPEED_DOWN.comment=Adaptation speed when the scene darkens (entering shade/caves). Higher = faster adaptation
 option.EXPOSURE_SPEED_UP=Exposure Speed Up
-option.AUTO_EV_BIAS=Auto EV Bais
+option.EXPOSURE_SPEED_UP.comment=Adaptation speed when the scene brightens (leaving indoors / facing strong light). Higher = faster
+option.AUTO_EV_BIAS=Auto EV Bias
+option.AUTO_EV_BIAS.comment=Overall brightness bias added to the auto-exposure target. Positive = brighter, negative = darker
 option.AUTO_EV_MAX=Auto EV Max
+option.AUTO_EV_MAX.comment=Maximum EV allowed for auto exposure (bright clamp). Higher lets bright scenes get brighter
 option.AUTO_EV_MIN=Auto EV Min
+option.AUTO_EV_MIN.comment=Minimum EV allowed for auto exposure (dark clamp). Lower lets night/interiors get darker
 option.HISTOGRAM_BIN_COUNT=Histogram Bin Count
+option.HISTOGRAM_BIN_COUNT.comment=Number of luminance histogram bins. Higher = finer brightness sampling (slightly higher cost)
 option.HISTOGRAM_LOWER_BOUND=Histogram Lower Bound
+option.HISTOGRAM_LOWER_BOUND.comment=Fraction of darkest pixels ignored by auto exposure (0.4 = ignore the darkest 40%). Higher avoids very dark pixels pulling exposure up
 option.HISTOGRAM_UPPER_BOUND=Histogram Upper Bound
+option.HISTOGRAM_UPPER_BOUND.comment=Fraction beyond which the brightest pixels are ignored (0.8 = ignore the brightest 20%). Lower reduces interference from strong lights (sun/torches)
 option.MANUAL_EV=Manual EV
+option.MANUAL_EV.comment=EV value used in Manual exposure mode. Higher = darker, lower = brighter (default 2.0 is neutral)
 
 option.PURKINJE_SHIFT=Purkinje Shift
 option.PURKINJE_SHIFT_STRENGTH=Purkinje Shift Strength
@@ -490,6 +500,8 @@ option.VOXEL_TRACE_SUN_STRENGTH.comment=Strength of the sun bounce in per-pixel 
 
 option.VOXEL_GI_SUN_STRENGTH=Sun Inject Strength
 option.VOXEL_GI_SUN_STRENGTH.comment=Sun bounce injection strength into the voxel GI (IRC) cache; raise to make warm golden diffuse light appear in shadowed areas
+option.VOXEL_GI_BLOCK_STRENGTH=Blocklight Inject Strength
+option.VOXEL_GI_BLOCK_STRENGTH.comment=Block light (torch, lava, etc.) injection strength into the voxel GI (IRC) cache; raise to make torches illuminate further
 
 option.VOXEL_TRACE_DISTANCE=Trace Distance
 option.VOXEL_TRACE_DISTANCE.comment=Maximum voxel steps for traced rays; larger = sun/block light travels farther (slightly slower)
@@ -499,6 +511,8 @@ option.VOXEL_TRACE_SPP.comment=Diffuse trace rays per pixel per frame (SPP) in r
 
 option.VOXEL_GI_LIGHT_FALLOFF=Light Falloff
 option.VOXEL_GI_LIGHT_FALLOFF.comment=Distance attenuation of emissive light; smaller = wider light reach
+option.VOXEL_GI_LIGHT_RADIUS=Light Hit Radius
+option.VOXEL_GI_LIGHT_RADIUS.comment=Hit radius of the emissive light sphere; raise so distant rays hit more easily - torches illuminate further, but the glow spills into adjacent voxels
 
 option.VOXEL_GI_SKY_STRENGTH=Sky Inject Strength
 option.VOXEL_GI_SKY_STRENGTH.comment=Sky light injection strength on IRC surface hits; higher = more visible outdoor sky GI

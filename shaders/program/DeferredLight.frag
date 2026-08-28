@@ -140,25 +140,8 @@ uniform sampler2D cloudOriginTex;
 // 无显式 binding：交由 Iris 按名字自动绑定（显式 binding 会与普通贴图纹理单元冲突）
 uniform sampler2D atlas2D;
 
-// 真阳光直射可见度（像素版，与传播端 VoxelSunVisibility 同逻辑，供调试标色）
-// 阴影贴图单点硬件深度比较：0=被挡，1=直射；太阳在地平线以下=false
-bool VoxelPixelSunVisible(vec3 relPos) {
-    // [FIX 2026-08-21 背对太阳 bug] sunPosition 是 eye space（视图空间，见 Uniform.glsl），
-    // 玩家背对太阳时其 .y 会掉到 0 以下 → 门控把 sunVis 全判 0 → SSS/高光全灭。
-    // 改用世界空间太阳方向 worldSunDir.y（白天>0 / 夜晚<0），与 VoxelSunShadow.glsl 同约定。
-    if (worldSunDir.y < 0.01) return false;
-    float distortionFactor;
-    vec3 ssp = WorldToShadowScreenSpace(relPos, distortionFactor);
-    ssp.z -= 3e-8 * shadowProjInv1y * distortionFactor * SHADOW_BIAS_STRENGTH;
-    if (all(equal(ssp, saturate(ssp)))) {
-        return textureLod(shadowtex1, vec3(ssp.xy, ssp.z), 0).x > 0.5;
-    }
-    return true;
-}
-
 // 每像素漫反射追踪已迁到 DiffuseIndirect.comp（棋盘半分辨率 1 SPP + SVGF 时域累积，
 // 阶段④）；此处只读回信号，不再 include VoxelTracing.glsl。
-// VoxelPixelSunVisible（真阳光直射可见度）供 DEBUG_VOXEL_GI 标色，独立于追踪端。
 
 
 //======// Main //================================================================================//
@@ -331,11 +314,6 @@ void main() {
     float NdotL = saturate(dot(worldNormal, worldLightDir));
 
     if (sunlightFactor > EPS && (NdotL + sssAmount > EPS)) {
-        // [2026-08-19 无阳光处阳光高光/SSS 外泄修复] 真阳光直射可见度（shadow map 深度比较），
-        // 仅用于高光/SSS 防护；不改动原有 diffuse 软阴影（PCSS 可靠，避免整个场景阴影被硬 0/1 灭掉）。
-        float sunVis = VoxelPixelSunVisible(worldPos - cameraPosition) ? 1.0 : 0.0;
-        
-        
         vec3 shadow = vec3(NdotL);
         float surfaceDepth = 0.0;
         float normalOffsetBase = (approxSqrt(worldDistSquared) * 2e-3 + 2e-2) * (2.0 - NdotL);
@@ -382,8 +360,6 @@ void main() {
 
             float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
             sss *= mix(1.0, contactShadow, saturate(distanceFade + cutout * 0.75));
-            // 乘 sunVis：没有真阳光直射处也熄灭 SSS（修复无阳光处 SSS 外泄）
-            sss *= sunVis;
             sceneOut += sunlightBase * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
         }
 
@@ -409,8 +385,6 @@ void main() {
                 const vec3 f0 = vec3(DEFAULT_DIELECTRIC_F0);
             #endif
             specularDirect = shadow * SpecularGGX(LdotH, NdotV, NdotL, NdotH, material.roughness, f0);
-            // [2026-08-19 无阳光处高光外泄防护] 乘 sunVis：无真阳光直射处高光熄灭
-            specularDirect *= sunVis;
             specularDirect *= SPECULAR_BLOOM_BOOST;
         }
     }

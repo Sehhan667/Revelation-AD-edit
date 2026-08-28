@@ -459,16 +459,26 @@ option.EXPOSURE_MODE=曝光模式
 value.EXPOSURE_MODE.MANUAL=手动
 value.EXPOSURE_MODE.AUTO_BASIC=自动-基础
 value.EXPOSURE_MODE.AUTO_HISTOGRAM=自动-直方图
+option.EXPOSURE_MODE.comment=曝光控制方式。手动=固定使用「手动曝光值」；自动-直方图=按画面亮度直方图自动调节，跟随昼夜与进出房间的明暗变化
 
 option.EXPOSURE_SPEED_DOWN=曝光速度 亮->暗
+option.EXPOSURE_SPEED_DOWN.comment=画面由亮变暗（进入幽暗处/洞穴）时曝光适应的速度。越大适应越快、明暗切换越迅速
 option.EXPOSURE_SPEED_UP=曝光速度 暗->亮
+option.EXPOSURE_SPEED_UP.comment=画面由暗变亮（走出房间/转向强光）时曝光适应的速度。越大适应越快
 option.AUTO_EV_BIAS=自动曝光值偏移
+option.AUTO_EV_BIAS.comment=自动曝光目标亮度的整体偏移。正值画面偏亮、负值偏暗（不动曝光范围的微调旋钮）
 option.AUTO_EV_MAX=最大曝光值
+option.AUTO_EV_MAX.comment=自动曝光允许的最大 EV（画面最亮的封顶）。越大强光场景允许越亮
 option.AUTO_EV_MIN=最小曝光值
+option.AUTO_EV_MIN.comment=自动曝光允许的最小 EV（画面最暗的底线）。越小允许夜景与室内越暗
 option.HISTOGRAM_BIN_COUNT=直方图阶数
+option.HISTOGRAM_BIN_COUNT.comment=直方图分箱数量。越高对亮度分布的刻画越精细（开销略增）
 option.HISTOGRAM_LOWER_BOUND=直方图下限
+option.HISTOGRAM_LOWER_BOUND.comment=自动曝光忽略最暗像素的比例（如 0.4=忽略最暗的 40%）。调高可避免个别极暗像素把画面拉亮
 option.HISTOGRAM_UPPER_BOUND=直方图上限
+option.HISTOGRAM_UPPER_BOUND.comment=自动曝光忽略最亮像素的比例（如 0.8=忽略最亮的 20%）。调低可减小太阳/火把等强光源对曝光的干扰
 option.MANUAL_EV=手动曝光值
+option.MANUAL_EV.comment=仅「手动」曝光模式下生效的曝光值(EV)。数值越大画面越暗、越小越亮；默认 2.0 为中性
 
 option.PURKINJE_SHIFT=浦肯野效应
 option.PURKINJE_SHIFT_STRENGTH=浦肯野效应强度
@@ -666,6 +676,8 @@ option.VOXEL_TRACE_SUN_STRENGTH.comment=追踪端阳光反弹（阳光从被照�
 
 option.VOXEL_GI_SUN_STRENGTH=阳光注入强度
 option.VOXEL_GI_SUN_STRENGTH.comment=体素 GI 缓存（IRC）的阳光反弹注入倍率；调大让阴影处出现金色阳光漫反射
+option.VOXEL_GI_BLOCK_STRENGTH=方块光注入强度
+option.VOXEL_GI_BLOCK_STRENGTH.comment=体素 GI 缓存（IRC）的方块光（火把、熔岩等）注入倍率；调大让火把等光源照亮更远
 
 option.VOXEL_TRACE_DISTANCE=光线传播距离
 option.VOXEL_TRACE_DISTANCE.comment=追踪光线最大步进体素数；越大阳光/方块光传播越远（性能略降）
@@ -675,6 +687,8 @@ option.VOXEL_TRACE_SPP.comment=实时模式下每像素每帧的漫反射追踪�
 
 option.VOXEL_GI_LIGHT_FALLOFF=光源衰减
 option.VOXEL_GI_LIGHT_FALLOFF.comment=发射光距离衰减系数；越小光源照亮范围越大
+option.VOXEL_GI_LIGHT_RADIUS=光源命中半径
+option.VOXEL_GI_LIGHT_RADIUS.comment=发射光球命中半径；调大让远处光线更易命中 → 火把照得更远，但光源格光晕会溢出相邻格
 
 option.VOXEL_GI_SKY_STRENGTH=天光注入强度
 option.VOXEL_GI_SKY_STRENGTH.comment=体素 GI 命中面的天空光注入倍率；调大让户外天光更明显
