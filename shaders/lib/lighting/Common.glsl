@@ -71,6 +71,12 @@ vec4 HardCodeEmissive(in uint materialID, in vec3 albedo, in vec3 worldPos, in v
             vec2 midBlockPosXZ = abs(fract(worldPos.xz + cameraPosition.xz) - 0.5);
             return vec4(vec3(step(maxOf(midBlockPosXZ), 0.063) * albedoLuminance), 1.0);
         }
+        // Copper torch & lantern (green flame)
+        case 35u:
+            return vec4(vec3(0.4, 0.9, 0.55) * (2.5 * albedoLuminance + 0.2), 0.2);
+        // Copper bulb (warm white, lit) - fixed bright tint so the block surface reads as a lamp
+        case 36u:
+            return vec4(vec3(1.0, 0.85, 0.6) * (2.0 + 2.5 * albedoLuminance), 0.2);
         // End glowing
         case 46u:
             return vec4(vec3(1e2 * albedoLuminance), 0.0);

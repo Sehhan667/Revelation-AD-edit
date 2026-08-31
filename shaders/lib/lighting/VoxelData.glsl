@@ -111,6 +111,9 @@ vec3 VoxelLightColor(float voxelID) {
     // 原版方块光 lightmap 关闭后岩浆/地衣作为体素发射源照亮周围，固定暖色/绿色。
     if (voxelID == 7.0) return vec3(1.00, 0.45, 0.18);   // 岩浆
     if (voxelID == 32.0) return vec3(0.55, 0.95, 0.35);  // 发光地衣
+    // [2026-08-28] Tiny Takeover 铜光源（Shadow.geom 已加入发射区）
+    if (voxelID == 35.0) return vec3(0.40, 0.90, 0.55);  // 铜火把/铜灯笼（绿色火焰）
+    if (voxelID == 36.0) return vec3(1.00, 0.85, 0.55);  // 铜灯（暖白）
     return vec3(1.0); // 兜底：白色（非发射体素不会走到此路径）
 }
 
