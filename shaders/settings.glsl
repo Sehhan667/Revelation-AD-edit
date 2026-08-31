@@ -154,6 +154,16 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define SSILVB_ENABLED
 	#define SVGF_ENABLED // Enables spatiotemporal variance-guided filtering（SSILVB 降噪）
 	#define VOXEL_GI_DENOISE  // 光追降噪开关（SVGF 时域+空间）；注释此行或 GUI 关闭即关闭光追降噪
+	// [2026-08-28] VXGI 降噪方案：0=SVGF(EAWF a-trous 空间×4，时域累积复用)；1=PTGI 风格(单次中值+深度/法线边缘，更省)。只影响 VXGI 链；SSILVB 不受影响。
+	#define VOXEL_GI_DENOISE_MODE 0 // [0 1] 降噪方案：0=SVGF  1=PTGI
+	// [2026-08-28] 派生布尔宏：mode==1 时启用 PTGI 降噪（供 shaders.properties program.enabled 用布尔判断，避免 Iris 对整数比较的解析问题）
+	#if VOXEL_GI_DENOISE_MODE == 1
+		#define VOXEL_GI_PTGI_DENOISE
+	#endif
+	// PTGI 风格中值降噪参数（GUI：光照→全局光照→PTGI 降噪；仅 VOXEL_GI_DENOISE_MODE==1 时用于 VXGI 空间降噪）
+	#define PTGI_MEDIAN_RADIUS 1 // [1 2] 中值滤波半径（1=3x3, 2=5x5）
+	#define PTGI_EDGE_STRENGTH 1.0 // [0.0 0.25 0.5 0.75 1.0] 边缘保持强度（0=全量中值偏糊，1=只在平坦区中值保边）
+	#define PTGI_BLEND_STRENGTH 0.85 // [0.0 0.1 0.3 0.5 0.7 0.85 1.0] 中值结果与原始混合强度（1=纯中值，0=原始）
 	// 离线渲染：每像素/IRC 提高同帧采样(SPP)、屏蔽 GI 空间降噪并持续时域累积，F2 出静帧。
 	// 默认关（profile.Default !OFFLINE_RENDER），GUI(Debug→Voxel) 或取消下行注释开启。
 	// 关闭时 #ifdef OFFLINE_RENDER 全不参与，与未加此宏完全一致。

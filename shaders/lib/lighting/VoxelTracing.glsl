@@ -39,6 +39,11 @@
 // 阳光阴影判定（SimpleShadow 实时阴影贴图 + SimpleShadowTracing 体素 DDA 短程遮挡）
 #include "/lib/lighting/VoxelSunShadow.glsl"
 
+// coarse occupancy（空洞跳跃）：VOXEL_COARSE_ACCEL 开启时读，R32UI bitmap
+#ifdef VOXEL_COARSE_ACCEL
+uniform usampler3D voxelCoarseSampler;
+#endif
+
 // 每像素漫反射追踪：
 // origin = 相机相对起点；normal = 世界法线（可能含法线贴图）；vertexNormal = 几何法线；
 // viewDist = 视距（-viewPos.z，供起点偏移）；skyLightmap = 像素天空 lightmap（泄漏衰减）；
@@ -62,9 +67,19 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
     }
 
     // 均匀半球采样：方向若落到几何法线背面 → 沿几何法线重采样（vertexNormal 回落）
-    vec3 dir = VoxelHemisphereUnitVector(normal, seed);
-    if (dot(dir, vertexNormal) <= 0.0)
-        dir = VoxelHemisphereUnitVector(vertexNormal, seed);
+    vec3 dir;
+    #ifdef VOXEL_LD_SAMPLING
+        // 低差异：Halton(2,3) 跨帧序号递进 + per-pixel 随机偏移（Cranley–Patterson 去相关）
+        uint _ldIdx = uint(frameCounter) + 1u;
+        vec2 _ldJit = vec2(nextFloat(seed), nextFloat(seed));
+        dir = VoxelHemisphereUnitVectorLD(normal, _ldIdx, _ldJit);
+        if (dot(dir, vertexNormal) <= 0.0)
+            dir = VoxelHemisphereUnitVectorLD(vertexNormal, _ldIdx, _ldJit);
+    #else
+        dir = VoxelHemisphereUnitVector(normal, seed);
+        if (dot(dir, vertexNormal) <= 0.0)
+            dir = VoxelHemisphereUnitVector(vertexNormal, seed);
+    #endif
     // 余弦 pdf：均匀采样 × 2cosθ = 漫反射辐照度核（无 1/cos 发散）
     float weight = saturate(dot(dir, normal)) * 2.0;
 
@@ -134,7 +149,22 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         }
 
         ivec3 vc = ivec3(voxelCoord);
-        vec4 hvd = texelFetch(voxelDataSampler, vc, 0);
+        #ifdef VOXEL_COARSE_ACCEL
+            // ---- coarse 空洞跳跃：所在 4³ 粗块全空 → 主轴向一步跨到粗块外，省逐格 fetch ----
+            if (texelFetch(voxelCoarseSampler, vc >> VOXEL_COARSE_SHIFT, 0).r == 0u) {
+                ivec3 _cc = vc >> VOXEL_COARSE_SHIFT;
+                vec3 _cb = vec3(_cc) * float(VOXEL_COARSE_GS);
+                vec3 _next = _cb + vec3(step(0.0, sdir)) * float(VOXEL_COARSE_GS);
+                vec3 _tE = mix(vec3(1e30), ((_next - voxelCoord) * sdir) * abs(rdir),
+                               greaterThan(abs(sdir), vec3(0.0)));
+                float _tM = VoxelMin3(_tE);
+                vec3 _grow = step(_tE, vec3(_tM));
+                voxelCoord += (_next - voxelCoord) * _grow;
+                totalStep = (sdir * (voxelCoord - origin + 0.5) + 0.5) * abs(rdir);
+                continue;
+            }
+#endif
+            vec4 hvd = texelFetch(voxelDataSampler, vc, 0);
         // 判空：voxelID 原值整数（>0 即固体，0=空气；半精度浮点整数精确）
         if (hvd.z <= 0.5) {
             // 透明体素：水/玻璃/树叶单层吸收着色（isTranslucent，只吸收一次；

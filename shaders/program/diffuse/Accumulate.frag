@@ -130,6 +130,10 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
 
             float alpha = rcp(integratedDiffuse.a);
 
+            // [2026-08-28 ReSTIR Phase A 增强] 该像素近似静止（重投影坐标几乎不变）→ 压低 alpha，
+            // 提高时域历史权重、进一步平滑静止噪底。转动/移动时坐标变化大 → 系数回 1，不引入拖影。
+            alpha *= 1.0 - 0.5 * (1.0 - smoothstep(0.0, 0.001, length(prevCoord - currCoord)));
+
             // ====== 峰值保持：亮度下降慢，上升快 ======
             #ifdef SSILVB_PEAK_HOLD
                 float currLuma = integratedDiffuse.r;
@@ -139,6 +143,12 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
                 } else {
                     alpha *= SSILVB_HOLD_UP_SPEED;
                 }
+            #endif
+
+            // [2026-08-28 PTGI 方案] 更强时域累积：压低 alpha → 等效更多帧累积，磨平 1SPP 密集噪。
+            // 代价：移动/转视角更糊、拖影更长（SEUS PTGI 同款取舍）。仅 PTGI(mode=1) 生效，SVGF 不受影响。
+            #ifdef VOXEL_GI_PTGI_DENOISE
+                alpha *= 0.25;
             #endif
 
             integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), integratedDiffuse.rgb, alpha);

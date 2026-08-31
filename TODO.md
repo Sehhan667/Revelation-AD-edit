@@ -31,8 +31,12 @@
 ## 3. ReSTIR RT
 
 - 现状：每像素 1 条随机光线 + 时域累积；STBN 蓝噪声已就位
-- 目标：时空重采样（RIS + 时域/空间 reservoir 复用）
-- 规模：大
+- **Phase A（时域 reservoir 复用）已完成（2026-08-28）**：去重向复用（均值+样本数、累积均值、
+  自适应稀疏——静止先全速重投至 THRESHOLD 再按 INTERVAL 稀疏）、像素级 viewPos 一致性、静止时
+  Accumulate 提高历史权重。image.reservoirA/B（均值·M）+ reservoirW（几何）。GUI：Debug→体素。
+- 余下：Phase B 空间复用（邻域 reservoir 合并 / 方向 WRS 重采样）——对一次弹射漫反射收益有限，
+  工程大、无法本地验证，暂缓。
+- 规模：大（Phase A 已完成）
 
 ## 4. 路径引导
 
@@ -57,3 +61,11 @@
     VoxelPropagate.glsl 死文件。
 - 注意坑：`shaderpacks/Revelation-AD-edit.txt` 的记住值会覆盖代码默认值（详见 MEMO 2026-08-17 节）。
 - 规模：中等（方向性 / 门控精度两项为主）
+
+## 6. coarse 最近实心格跳跃（待办，2026-08-28 暂停）
+
+- 现状：VOXEL_COARSE_ACCEL 只做"粗块全空 → 跳过"（4³ 粗块 occupancy，Shadow.frag 写入、VoxelClear 清零）。
+- 目标：对"非空但不全实心"的粗块，粗块标记"块内最近实心格距离"，让射线一次步进跳到该格，
+  省掉穿过稀疏内容物（栅栏/柱子/树枝）时的逐格空判。
+- 注：曾想"整块实心一次命中"，评估后收益很小（射线进第一实心格即命中返回，本就 O(1)），未做。
+- 规模：中

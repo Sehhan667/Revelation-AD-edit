@@ -37,6 +37,50 @@ vec3 VoxelHemisphereUnitVector(vec3 n, inout uint s) {
     return rv * (dot(rv, n) >= 0.0 ? 1.0 : -1.0);
 }
 
+//====== 低差异采样（Halton + Cranley-Patterson）================================================//
+// 同一像素跨帧方向的 Halton(2,3) 序号递进 → 半球上分布更均匀（无随机聚簇）；
+// 每个像素叠加一个 per-pixel 随机偏移（jitter, 模 1）→ 不相邻像素同帧采到同一低差异方向（消除条带）。
+// 仅 VOXEL_LD_SAMPLING 开启时在 VoxelTracing.glsl 采样处使用，默认关（与现随机采样一致）。
+// #define VOXEL_LD_SAMPLING
+
+float VoxelRadicalInverseVdC(inout uint bits) {
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10; // * (1.0/0x100000000)
+}
+float VoxelHaltonBase2(uint i) {
+    uint bits = i;
+    return VoxelRadicalInverseVdC(bits);
+}
+float VoxelHaltonBase3(uint i) {
+    float invBase = 1.0 / 3.0;
+    float denom = 1.0;
+    float result = 0.0;
+    uint rem = i;
+    while (rem > 0u) {
+        denom *= invBase;
+        result += denom * float(rem % 3u);
+        rem /= 3u;
+    }
+    return result;
+}
+// 低差异均匀球面方向：用 Halton(2,3)(idx) + per-pixel jitter（Cranley–Patterson 旋转）
+vec3 VoxelSphereUnitVectorLD(uint idx, vec2 jitter) {
+    float u = fract(VoxelHaltonBase2(idx) + jitter.x);
+    float v = fract(VoxelHaltonBase3(idx) + jitter.y);
+    float phi = TAU * u;
+    float z = 2.0 * v - 1.0;
+    float r = sqrt(max(0.0, 1.0 - z * z));
+    return vec3(sin(phi) * r, cos(phi) * r, z);
+}
+vec3 VoxelHemisphereUnitVectorLD(vec3 n, uint idx, vec2 jitter) {
+    vec3 rv = VoxelSphereUnitVectorLD(idx, jitter);
+    return rv * (dot(rv, n) >= 0.0 ? 1.0 : -1.0);
+}
+
 float VoxelMin3(vec3 v) {
     return min(min(v.x, v.y), v.z);
 }

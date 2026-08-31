@@ -31,6 +31,8 @@ screen.SSILVB=SSILVB Screen-Space GI
 screen.SSILVB.comment=Screen-space voxelized global illumination: approximate GI from the screen buffer, cheap, no voxelization needed
 screen.VXGI=VXGI Voxel GI
 screen.VXGI.comment=Voxel global illumination: 64^3 grid + IRC irradiance cache + per-pixel diffuse tracing; mutually exclusive with SSILVB (voxel wins)
+screen.PTGIDenoise=PTGI Denoise
+screen.PTGIDenoise.comment=PTGI-style median denoise parameters (only affects VXGI; requires Denoise Scheme = PTGI in VXGI)
 screen.voxel=Voxel Debug
 screen.voxel.comment=Voxel GI debug visualization (diagnostics only; user switches live under Lighting -> Global Illumination -> VXGI)
 screen.AmbientOcclusion=Ambient Occlusion
@@ -466,6 +468,18 @@ option.DEBUG_SKY_MAP=DEBUG_SKY_MAP
 option.DEBUG_VOXEL_GI=DEBUG_VOXEL_GI
 option.OFFLINE_RENDER=Offline Render
 option.OFFLINE_RENDER.comment=Offline render: raise per-pixel diffuse tracing & IRC samples per frame (SPP 20/8), disable GI spatial denoise and keep accumulating temporally for fast convergence to low noise. Hold the camera still (don't orbit) for a while, then F2 for a clean still. Heavy cost; for screenshots. Off = real-time denoise, identical to before
+option.VOXEL_COARSE_ACCEL=Voxel Empty-Space Skip
+option.VOXEL_COARSE_ACCEL.comment=Skipping tracing DDA over 4^3 coarse blocks that are pure air, avoiding per-voxel fetches. On boosts performance; disable if light leaks / inconsistent lighting appear
+option.VOXEL_LD_SAMPLING=Low-Discrepancy Sampling
+option.VOXEL_LD_SAMPLING.comment=Replaces pseudo-random sample directions with a Halton(2,3) low-discrepancy sequence, spreading rays more evenly over the hemisphere across frames and reducing clustering, usually lowering flicker/noise floor. Default off; disable if regular banding/grid artifacts appear
+option.VOXEL_REUSE=ReSTIR Temporal Reuse
+option.VOXEL_REUSE.comment=While the camera is still, re-trace a diffuse sample only every N frames and reuse the previous-frame reservoir in between, saving trace bandwidth. Improves performance and convergence when still/slow-moving; compatible with VOXY builds, only active when the camera is still (motion falls back to per-frame tracing)
+option.VOXEL_REUSE_INTERVAL=Re-trace Interval (frames)
+option.VOXEL_REUSE_INTERVAL.comment=Re-trace a real sample every N frames (reuse the reservoir mean for the other N-1). Smaller = cleaner still GI but saves less; larger = more frames saved but higher still noise floor. 2-8 is a good gameplay balance
+option.VOXEL_REUSE_MCAP=Mean Convergence Cap
+option.VOXEL_REUSE_MCAP.comment=Sample-count cap of the reservoir mean accumulation. Larger = lower still noise floor (variance = 1/sqrt(M)) but takes longer to reach; 64 for gameplay, up to 128/256 for screenshots
+option.VOXEL_REUSE_THRESHOLD=Full-Speed Convergence Threshold
+option.VOXEL_REUSE_THRESHOLD.comment=Until the sample count reaches this value at the start of a static view, re-trace every frame for fast convergence, then switch to sparse reuse. Larger = cleaner still but saves frames later; 16 is a balance
 option.DEBUG_VOXEL_SKY=Sky Path Debug
 option.DEBUG_VOXEL_SKY.comment=Tints surfaces red where the sky light path is hit, to tell apart "path not reached" vs "value too dim to see"
 option.DEBUG_VOXEL_SKY_LEVEL=GI Sky Level Debug
@@ -476,6 +490,14 @@ option.VOXEL_GI_ENABLED.comment=Voxel GI: IRC propagation + per-pixel ray tracin
 
 option.VOXEL_GI_DENOISE=Voxel GI Denoise
 option.VOXEL_GI_DENOISE.comment=Spatio-temporal variance-guided filtering for voxel GI ray tracing. Disable to show raw half-res checkerboard signal (noisy).
+option.VOXEL_GI_DENOISE_MODE=Denoise Scheme
+option.VOXEL_GI_DENOISE_MODE.comment=0=SVGF (EAWF a-trous spatial x4, reuses temporal accumulation); 1=PTGI style (single median + depth/normal edge, cheaper). Only affects VXGI; SSILVB unaffected
+option.PTGI_MEDIAN_RADIUS=Median Radius
+option.PTGI_MEDIAN_RADIUS.comment=1=3x3, 2=5x5. Larger = stronger denoise but blurs detail (targets fireflies/single-pixel noise)
+option.PTGI_EDGE_STRENGTH=Edge Preserve Strength
+option.PTGI_EDGE_STRENGTH.comment=0=median everywhere (strong denoise, bleeds across edges); 1=median only on flat areas, keeps geometry edges. Recommended 1.0
+option.PTGI_BLEND_STRENGTH=Median Blend Strength
+option.PTGI_BLEND_STRENGTH.comment=Blends median result with the original (1=pure median, 0=original). Lower keeps more detail but noisier
 option.VOXEL_MOON_STRENGTH=Moon Bounce Strength
 option.VOXEL_MOON_STRENGTH.comment=Directional moonlight bounce in voxel GI at night (vanilla moonlightMult is too small so moon GI was missing). Moon-facing faces brighten, away faces stay dark; pairs with AO for shading. 0=off; higher = stronger moon GI
 option.NRD_RADIUS=Filter World Radius
@@ -540,7 +562,7 @@ option.ENABLE_VOXELIZATION=Voxelization
 option.ENABLE_VOXELIZATION.comment=Voxelization toggle: shadow pass writes voxelData (3D texture) directly; off = no voxel GI. Only affects voxelization itself; to inspect voxels use Debug -> Voxel -> Voxel Visualization
 
 option.VOXEL_GI_SELF_BOUNCE=Self-Bounce Strength
-option.VOXEL_GI_SELF_BOUNCE.comment=Weight of the previous-frame IRC radiance used as bounce light on ray hits; determines how deep light propagates into shadows/interiors (higher = brighter but flatter)
+option.VOXEL_GI_SELF_BOUNCE.comment=Weight of the previous-frame IRC radiance used as bounce light on ray hits; determines how deep light propagates into shadows/interiors (higher = brighter but flatter). Values >1 over-amplify self-bounce per hop for propagation debugging / deliberate indirect-light boosting; recommended 0.3-0.8 normally
 
 option.VOXEL_GI_BLEND=Temporal Blend Speed
 option.VOXEL_GI_BLEND.comment=Fraction of new samples the IRC irradiance cache accepts per frame (0.99 = slow accumulation, smoother; lower = faster response but noisier)

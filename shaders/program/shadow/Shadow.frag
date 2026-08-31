@@ -38,6 +38,7 @@ flat in float v_isVoxel;     // 1=体素 tile 像素
 // 显式 binding 会与 Iris 给普通贴图分配的硬件纹理单元冲突（全黑根因，血泪教训 #1）。
 layout (rgba16f) uniform writeonly image3D voxelData;      // xy=atlas UV 中心 z=voxelID(原值) w=texRes(16)
 layout (r32ui) uniform uimage3D voxelLightData;            // x=emissive y=sky z=block（atomicMax 需读写权限，不能 writeonly）
+layout (r32ui) uniform uimage3D voxelCoarse;               // coarse occupancy 位图（imageAtomicOr 置位，需读写权限）
 #endif
 
 //======// Uniform //=============================================================================//
@@ -87,6 +88,8 @@ void main() {
             // 修复：发射光放 B 通道（byte 16-23），block光放 G（byte 8-15），sky放 R（byte 0-7）。
             uint lightPacked = packUnorm4x8(vec4(v_skylight, v_blocklight, v_emissive, 0.0));
             imageAtomicMax(voxelLightData, ivec3(v_voxelCoord), lightPacked);
+            // coarse occupancy：该 voxel 有内容（固体/透明/发光）→ 所在 4³ 粗块置位（供追踪空洞跳跃）
+            imageAtomicOr(voxelCoarse, ivec3(v_voxelCoord) >> VOXEL_COARSE_SHIFT, 1u);
             return;
         }
 

@@ -31,6 +31,8 @@ screen.SSILVB=SSILVB 屏幕空间GI
 screen.SSILVB.comment=屏幕空间体素化全局光照：基于屏幕空间的近似 GI，开销低，无需体素化
 screen.VXGI=VXGI 体素GI
 screen.VXGI.comment=体素全局光照：64³ 网格 + IRC 辐照度缓存 + 每像素漫反射追踪；与 SSILVB 互斥（体素优先）
+screen.PTGIDenoise=PTGI 降噪
+screen.PTGIDenoise.comment=PTGI 风格中值降噪参数（仅对 VXGI 生效，需 VXGI 里「降噪方案」选 PTGI）
 screen.voxel=体素调试
 screen.voxel.comment=体素 GI 调试可视化（仅诊断用；正常用户开关在 光照 → 全局光照 → VXGI）
 screen.AmbientOcclusion=环境光遮蔽
@@ -63,7 +65,7 @@ option.INFO.comment=一个目标为低端设备的改版，包含了一系列性
 value.INFO.0=§c§o§lAlpha
 value.INFO.1=§a§o§lBeta
 value.INFO.2=§b§o§lRelease
-value.INFO.3=§b§o§lPT 0.1.2
+value.INFO.3=§b§o§l1.1.0a
 option.AUTHOR=§f§o§l作者
 option.AUTHOR.comment=版权所有 (C) 2026 HaringPro. Apache-2.0 许可证
 value.AUTHOR.0=§o§lHaringPro
@@ -527,6 +529,18 @@ option.DEBUG_VOXEL_GI=体素 GI 调试可视化
 option.DEBUG_VOXEL_GI.comment=压暗其余光照并放大体素 GI 贡献，直观查看 GI 生效区域（火把光晕、天空渗入、岩浆泛光等）
 option.OFFLINE_RENDER=离线渲染
 option.OFFLINE_RENDER.comment=离线渲染：每像素漫反射追踪/IRC 提高同帧采样(SPP 20/8)、屏蔽空间降噪并持续时域累积，画面快速收敛到低噪声。开启后静止相机（勿转动）跑一段，用 F2 出高画质静帧；性能开销大，适合出图。关闭=实时降噪，与关闭前完全一致
+option.VOXEL_COARSE_ACCEL=体素空洞跳跃
+option.VOXEL_COARSE_ACCEL.comment=追踪端 DDA 跳过"纯空气"的 4³ 粗块，省逐格读体素。开启提升性能；若出现漏光/光照不一致请关闭
+option.VOXEL_LD_SAMPLING=低差异采样
+option.VOXEL_LD_SAMPLING.comment=用 Halton(2,3) 低差异序列代替伪随机采样方向，跨帧半球上分布更均匀、减少随机聚簇，通常能降低闪噪/交底噪。默认关；若出现规律性条带/网格伪影请关闭
+option.VOXEL_REUSE=ReSTIR 时域复用
+option.VOXEL_REUSE.comment=相机静止时每隔若干帧才重投一次漫反射样本，其余帧复用上帧 reservoir，省追踪带宽。开启提升静止/缓动时的性能并加快收敛；兼容 VOXY 编译、仅相机静止生效，移动时自动退回每帧追踪
+option.VOXEL_REUSE_INTERVAL=重投间隔帧数
+option.VOXEL_REUSE_INTERVAL.comment=每 N 帧重投一次真实样本（其余 N-1 帧复用 reservoir 均值）。越小静止 GI 越干净但省追踪越少；越大越省帧率但静止噪底越高。2~8 为游戏平衡，静止出图可拉到更小
+option.VOXEL_REUSE_MCAP=均值收敛上限
+option.VOXEL_REUSE_MCAP.comment=reservoir 均值累计的样本数封顶。越大静止时噪底越低（方差=1/√M），但到达该收敛上限需更久；游戏 64 即可，出图可到 128/256
+option.VOXEL_REUSE_THRESHOLD=全速收敛阈值
+option.VOXEL_REUSE_THRESHOLD.comment=静止开始时样本数达到此值前每帧都真实重投（快速收敛），达到后才转稀疏复用。越大静止越干净、省帧率来得越晚；16 平衡，想更快进省模式可调小
 option.DEBUG_VOXEL_SKY=天光路径调试
 option.DEBUG_VOXEL_SKY.comment=天光路径命中时把表面染成红色，用于排查“路径没跑通”还是“值太小看不到”
 option.DEBUG_VOXEL_SKY_LEVEL=GI 天光等级调试
@@ -645,6 +659,14 @@ option.VOXEL_GI_ENABLED.comment=开启基于体素的彩色光源间接光照（
 
 option.VOXEL_GI_DENOISE=光追降噪
 option.VOXEL_GI_DENOISE.comment=体素光追的 SVGF 时域+空间降噪；关闭后直接显示半分辨率棋盘信号（未降噪，较闪烁）
+option.VOXEL_GI_DENOISE_MODE=降噪方案
+option.VOXEL_GI_DENOISE_MODE.comment=0=SVGF(EAWF a-trous 空间×4，时域累积复用)；1=PTGI 风格(单次中值+深度/法线边缘，更省)。只影响 VXGI 降噪，SSILVB 不受影响
+option.PTGI_MEDIAN_RADIUS=中值半径
+option.PTGI_MEDIAN_RADIUS.comment=1=3×3，2=5×5。越大去噪越强、细节越糊（去孤点亮噪/firefly）
+option.PTGI_EDGE_STRENGTH=边缘保持强度
+option.PTGI_EDGE_STRENGTH.comment=0=全量中值(去噪强但跨边糊)；1=只在平坦区中值、保留几何边缘。建议 1.0
+option.PTGI_BLEND_STRENGTH=中值混合强度
+option.PTGI_BLEND_STRENGTH.comment=中值结果与原始混合比例(1=纯中值，0=原始)。调小保留细节但噪声变多
 option.VOXEL_MOON_STRENGTH=月光反弹强度
 option.VOXEL_MOON_STRENGTH.comment=夜晚月光在体素 GI 里的方向化反弹强度（原版 moonlightMult 太小导致夜晚无间接光）。朝月面亮、背月暗，配合 AO 出阴影。0=关闭月光反弹；值越大月光 GI 越明显
 option.NRD_RADIUS=滤波世界半径
@@ -737,7 +759,7 @@ option.ENABLE_VOXELIZATION=体素化
 option.ENABLE_VOXELIZATION.comment=体素化开关：shadow pass 直写 voxelData（3D 纹理）；关闭则无体素 GI。仅影响体素化本身，查看体素结果用 Debug → 体素 → 体素可视化
 
 option.VOXEL_GI_SELF_BOUNCE=自反弹强度
-option.VOXEL_GI_SELF_BOUNCE.comment=光线命中后从 IRC 缓存取上一帧辐照度作为反弹光的权重；决定阴影/室内光线传播深度（越大越亮但可能发闷）
+option.VOXEL_GI_SELF_BOUNCE.comment=光线命中后从 IRC 缓存取上一帧辐照度作为反弹光的权重；决定阴影/室内光线传播深度（越大越亮但可能发闷）。>1 为超强自反弹放大（每跳反增益），用于传播调试 / 刻意增强间接光；正常建议 0.3~0.8
 
 option.VOXEL_GI_BLEND=时域混合速度
 option.VOXEL_GI_BLEND.comment=IRC 辐照度缓存每帧接受新采样值的比例（0.99=慢速累积更平滑，低值响应快但噪声大）

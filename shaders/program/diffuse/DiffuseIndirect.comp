@@ -23,6 +23,12 @@ const vec2 workGroupsRender = vec2(0.5, 0.5);
 //======// Uniform //=============================================================================//
 
 writeonly restrict uniform image2D colorimg3;
+#ifdef VOXEL_REUSE
+    // ReSTIR reservoir 乒乓（image.reservoirA/B，imageLoad/imageStore，RGBA16F 半分辨率）
+    layout (rgba16f) restrict uniform image2D reservoirA;
+    layout (rgba16f) restrict uniform image2D reservoirB;
+    layout (rgba16f) restrict uniform image2D reservoirW;
+#endif
 
 #include "/lib/universal/Uniform.glsl"
 
@@ -107,6 +113,25 @@ void main() {
 
 		vec4 result;
 		#ifdef VOXEL_GI_ENABLED
+			#ifdef VOXEL_REUSE
+			// ---- ReSTIR Phase A：几何一致（viewPos 相同）且 reservoir 有效 → 复用上帧，省追踪 ----
+			ivec2 _rp = texelPos;
+			vec4 _prev = ((frameCounter & 1u) == 0u)
+			           ? imageLoad(reservoirB, _rp)
+			           : imageLoad(reservoirA, _rp);
+			// 像素级一致性：转动视角/移动时 viewPos 变化 → 不复用，避免复用错几何的辐照度
+			bool _consistent = (distance(viewPos, imageLoad(reservoirW, _rp).xyz) < 0.03);
+			// 自适应稀疏：样本数 < THRESHOLD 时每帧重投快速收敛；>= THRESHOLD 才启用 interval 稀疏复用
+			bool _sparse = (_prev.a >= VOXEL_REUSE_THRESHOLD);
+			if (_consistent && _sparse && ((frameCounter & (uint(VOXEL_REUSE_INTERVAL) - 1u)) != 0u)) {
+				// 复用：输出 reservoir 累积均值（低方差）；样本计数递增封顶
+				result = vec4(RGBToYCoCg(_prev.rgb), 1.0);
+				imageStore(colorimg3, texelPos, result);
+				vec4 _cr = vec4(_prev.rgb, min(_prev.a + 1.0, VOXEL_REUSE_MCAP));
+				if ((frameCounter & 1u) == 0u) imageStore(reservoirA, _rp, _cr); else imageStore(reservoirB, _rp, _cr);
+				return;
+			}
+			#endif
 			// 体素 GI 优先：信号源 = 每像素漫反射追踪（棋盘半分辨率 1 SPP，与 SSILVB 同套路：
 			// 每帧只更新 1/4 像素，时域由 Accumulate 补全；信号存 colortex3 左上象限）。
 			// 入射光（不乘 albedo）——albedo 在 DeferredLight 读回时补乘，
@@ -151,7 +176,21 @@ void main() {
 
 			result = CalculateSSILVB(screenCoord, viewPos, worldNormal, lightmapSky);
 		#endif
-		result.rgb = RGBToYCoCg(result.rgb); // Convert to YCoCg color space (for filtering)
+		#if defined VOXEL_GI_ENABLED && defined VOXEL_REUSE
+			// ---- 写 reservoir：几何一致才与上帧均值合并，否则重置为新样本（避免转动/移动把旧几何混入残影）；随后记录本像素几何 ----
+			{
+				vec4 _pW = ((frameCounter & 1u) == 0u) ? imageLoad(reservoirB, texelPos) : imageLoad(reservoirA, texelPos);
+				vec4 _wPrev = imageLoad(reservoirW, texelPos);
+				bool _geoMatch = (distance(viewPos, _wPrev.xyz) < 0.03);
+				bool _valid = _geoMatch && _pW.a > 0.5;
+				float _M = _valid ? min(_pW.a + 1.0, VOXEL_REUSE_MCAP) : 1.0;
+				vec3 _mean = _valid ? ((_pW.rgb * _pW.a) + result.rgb) / (_pW.a + 1.0) : result.rgb;
+				vec4 _crW = vec4(_mean, _M);
+				if ((frameCounter & 1u) == 0u) imageStore(reservoirA, texelPos, _crW); else imageStore(reservoirB, texelPos, _crW);
+				imageStore(reservoirW, texelPos, vec4(viewPos, 1.0));
+			}
+#endif
+			result.rgb = RGBToYCoCg(result.rgb); // Convert to YCoCg color space (for filtering)
 		imageStore(colorimg3, texelPos, result);
 	} else {
 		imageStore(colorimg3, texelPos, vec4(0.0));

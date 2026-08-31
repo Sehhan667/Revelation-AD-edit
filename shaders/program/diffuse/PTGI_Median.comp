@@ -1,0 +1,99 @@
+/*
+--------------------------------------------------------------------------------
+
+	Revelation Shaders
+
+	Copyright (C) 2026 HaringPro
+	Apache License 2.0
+
+    Pass: PTGI-style median denoise (VXGI alternad denoise, mode=1)
+	单次中值滤波（去 firefly/孤亮点噪）+ 深度/法线边缘混合保边。
+	只替代 SVGF 链的 EAWF(a-trous ×4) 空间滤波，时域累积(Accumulate)与方差
+	(VarianceEstimate) 复用。半分辨率，colortex14 提供法线/深度。
+
+	[2026-08-28] 棋盘感知：colortex3 是半分辨率棋盘(新旧相位交错)，故用 2*R
+	步长做同奇偶采样，避免中值混入另一相位旧值 → 消除"均匀密点"。
+
+---- [EXTRACTED] ---- */
+
+layout (local_size_x = 8, local_size_y = 8) in;
+const vec2 workGroupsRender = vec2(0.5, 0.5);
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+//======// Image //===============================================================================//
+
+layout (rgba16f) restrict uniform image2D colorimg3;
+
+//======// Uniform //=============================================================================//
+
+#include "/lib/universal/Uniform.glsl"
+
+//======// Function //============================================================================//
+
+#include "/lib/universal/Random.glsl"
+#include "/lib/universal/Fetch.glsl"
+#include "/lib/universal/Transform.glsl"
+
+//======// Main //================================================================================//
+void main() {
+	ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+
+	vec4 center = imageLoad(colorimg3, texel);
+	vec3 centerAux = texelFetch(colortex14, texel, 0).xyz;
+	float centerDepth = max(-centerAux.z, 1e-3);   // viewPos.z 为负 → 正的视距
+	vec3 centerN = OctDecodeSnorm(centerAux.xy);
+
+	// 同相位采样：步长 2*R 保持 x+y 奇偶不变（棋盘同相位），跨 5×5( R=1 ) / 9×9( R=2 )
+	int R = PTGI_MEDIAN_RADIUS;
+	int s = 2 * R;
+	const ivec2 offs[9] = ivec2[](
+		ivec2(0, 0), ivec2( s, 0), ivec2(-s, 0), ivec2(0,  s), ivec2(0, -s),
+		ivec2( s,  s), ivec2( s, -s), ivec2(-s,  s), ivec2(-s, -s));
+
+	vec3 cand[9];
+	float lum[9];
+	int cnt = 0;
+	int nearCnt = 0;
+
+	// EDGE_STRENGTH 放大深度衰减 → 越大越只认很近/同法线为"同表面"(保边)，越小越宽容(偏糊)
+	float invTh = PTGI_EDGE_STRENGTH * 8.0 / centerDepth;
+
+	for (int i = 0; i < 9; ++i) {
+		ivec2 q = clamp(texel + offs[i], ivec2(1), ivec2(halfViewSize) - 2);
+		vec4 cS = imageLoad(colorimg3, q);
+		vec3 aS = texelFetch(colortex14, q, 0).xyz;
+
+		// 同表面判定（中心始终命中：wd=1, nd=d(n,n)=1）
+		float wd = exp(-abs(-aS.z - centerDepth) * invTh);
+		float nd = saturate(dot(OctDecodeSnorm(aS.xy), centerN));
+		if (wd * nd > 0.5) {
+			cand[cnt] = cS.rgb;
+			lum[cnt] = dot(cS.rgb, vec3(1.0));
+			cnt++;
+			nearCnt++;
+		}
+	}
+
+	// 在"同表面"子集内取亮度中位数对应颜色（去孤点亮噪/firefly）
+	vec3 median = center.rgb;
+	if (cnt > 1) {
+		for (int i = 1; i < cnt; ++i) {
+			vec3 keyC = cand[i];
+			float keyL = lum[i];
+			int j = i - 1;
+			while (j >= 0 && lum[j] > keyL) { cand[j + 1] = cand[j]; lum[j + 1] = lum[j]; j--; }
+			cand[j + 1] = keyC;
+			lum[j + 1] = keyL;
+		}
+		median = cand[cnt >> 1];
+	}
+
+	// 边缘混合：平坦区多用中值，边缘少用（保边）
+	float flatness = float(nearCnt) / 9.0;
+	float alpha = PTGI_BLEND_STRENGTH * mix(1.0, flatness, PTGI_EDGE_STRENGTH);
+
+	imageStore(colorimg3, texel, vec4(mix(center.rgb, median, alpha), center.a));
+}

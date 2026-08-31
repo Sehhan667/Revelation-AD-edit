@@ -12,6 +12,34 @@
     #define VOXEL_RADIUS (VOXEL_AREA / 2)
 #endif
 
+// ------ Coarse Occupancy（空洞跳跃加速）------
+// coarse = 4³ 细格一块，coarse 网格边长 = VOXEL_AREA / VOXEL_COARSE_GS。
+// voxelCoarse (R32UI, bitmap) 每块 1 位：体素化时置位，清零时清空；
+// 追踪 DDA 命中"纯空气"的 coarse 块时整块跳过（省逐格 texelFetch）。开关见 VOXEL_COARSE_ACCEL。
+#ifndef VOXEL_COARSE_GS
+    #define VOXEL_COARSE_GS 4           // 粗块边长（4³=64 细格/块），VOXEL_AREA 必须整除
+#endif
+#define VOXEL_COARSE_SHIFT 2            // = log2(VOXEL_COARSE_GS)，coarse 坐标 = vc >> 2
+#define VOXEL_COARSE_N (VOXEL_AREA / VOXEL_COARSE_GS)   // coarse 网格边长（64/4=16）
+
+// [2026-08-28] 空洞跳跃开关：取消注释启用（追踪/注入端跳过纯空气粗块；不稳可关闭回退）
+// #define VOXEL_COARSE_ACCEL
+
+// [2026-08-28] ReSTIR Phase A：时域 reservoir 复用。相机静止时每隔
+// VOXEL_REUSE_INTERVAL 帧才重投一次，其余帧复用上帧 reservoir（省追踪带宽）。
+// reservoir 用独立 image.reservoirA/B（RGBA16F 半分辨率），与 colortex/voxy 完全无冲突。
+// 语义与现有 Accumulate 时域累积互补（这层"省追踪"，Accumulate 管累积）。默认关。
+// #define VOXEL_REUSE
+#ifndef VOXEL_REUSE_INTERVAL
+    #define VOXEL_REUSE_INTERVAL 8   // [2 4 8 16 32] 重投间隔帧数（复用 N-1 帧 / 重投 1 帧）
+#endif
+#ifndef VOXEL_REUSE_MCAP
+    #define VOXEL_REUSE_MCAP 64.0   // [32 64 128 256] 均值方差收敛上限（越大静止越干净，稳态后收敛越慢）
+#endif
+#ifndef VOXEL_REUSE_THRESHOLD
+    #define VOXEL_REUSE_THRESHOLD 16.0  // [4 8 12 16 24 32] 静止启动阶段全速重投直到样本数达此值，随后转稀疏复用（快速收敛 + 稳态省追踪）
+#endif
+
 // ------ Shadow Map 平铺布局 ------
 // 体素化迁到 shadow pass（2026-08-04）：阴影贴图拆成两块——
 //   - 真阴影：右上区（宽 VOXEL_SHADOW_WIDTH = RES - TILE_WIDTH）
@@ -63,7 +91,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #endif
 
 // ------ 传播配置（风格 IRC 随机注入）------
-#define VOXEL_GI_SELF_BOUNCE 0.5       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 自反弹衰减比（光线命中点取前帧 IRC；[2026-08-17] 1.0→0.5 减小 IRC 亮度，避免整体过亮）
+#define VOXEL_GI_SELF_BOUNCE 0.5       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 自反弹衰减比（光线命中点取前帧 IRC；[2026-08-17] 1.0→0.5 减小 IRC 亮度，避免整体过亮；[2026-08-28] 上限扩到 32，>1 为超强自反弹放大，用于传播调试/刻意增强）
 #define VOXEL_GI_EMISSIVE_THRESHOLD 0.1 // [0.0 0.01 0.02 0.05 0.1 0.2] 发射度阈值（LabPBR 发射贴图，太低会把矿物误判为发光体）
 #define VOXEL_GI_BOOST 1.5              // [0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 发射体素能量倍率
 // 发射光球形光距离衰减（语义的补充，2026-08-04 #8）：远场（16 格外）偶发
