@@ -509,7 +509,7 @@ radius 单独减不够。
 
 ## 6. IRC 天光是否靠原版光照 — 中途反复后的最终状态
 - 过程：先"脱原版光照"删了 `SimpleSkyLighting`/`VoxelSkyLeakGate`/阳光 lightmap 门控；
-  后又按用户要求"加回 itrp 同款 lightmap 门控"恢复三者。
+  后又按用户要求恢复门控。
 - 结论（教训）：**lightmap 门控本身不是夜晚/阴影问题的根因**（根因在 DeferredLight 非光追环境光 +
   高光外泄），不要因误判而删掉它。光追出界/阳光反弹用 lightmap（体素 sky）做半遮挡/遮挡门控是合理且必要的。
 - IRC 天光链路（最终）：出界射线 → VoxelSkyColor（内部 lightmap gate+fade）→ 写入 64³ 缓存 →
@@ -543,8 +543,8 @@ if (sunPosition.y < 0.01) return vec3(0.0);
 掉到 0 以下 → 这道门把 `sunVis` 全判 0 → 追踪端/注入端的阳光反弹整体归零（亮面也黑）。
 
 正确的世界空间太阳方向是 `worldSunDir.y`（shaders.properties 已带 sunlightSign，白天 >0、
-夜晚 <0），只随昼夜变化、不随视角。itrp 参考实现里的 GI 完全没有这道 `sunPosition.y` 门控，
-用的就是 `dot(sunDir, hitNormal)` + 阴影采样，昼夜判断靠 `worldSunDir`。
+夜晚 <0），只随昼夜变化、不随视角。 
+
 
 ## 修复
 - VoxelSunShadow.glsl `VoxelSunShadowMap`：`sunPosition.y < 0.01` → `worldSunDir.y < 0.0`。
