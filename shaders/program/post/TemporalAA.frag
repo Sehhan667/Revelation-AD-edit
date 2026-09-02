@@ -113,18 +113,19 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
 
     // --- 模式 1：高性能 MakeUp Fast TAA（固定高历史权重） ---
     #if TAA_QUALITY_MODE == 1
-        vec3 currentYCg = loadSceneMain(texel);
+        vec3 currentRGB = YCoCgToRGB(loadSceneMain(texel));   // colortex0 存 YCoCg，转回 RGB
 
         if (saturate(prevCoord) != prevCoord)
-            return vec4(YCoCgToRGB(currentYCg), 1.0);
+            return vec4(currentRGB, 1.0);
 
         vec4 temporalData = texture(colortex1, prevCoord);
-        // [2026-09-02] colortex1 按约定存 RGB；只在历史侧转 1 次 YCoCg 与当前帧统一
-        vec3 previousYCg = RGBToYCoCg(temporalData.rgb);
+        vec3 previousRGB = temporalData.rgb;                  // colortex1 存 RGB
 
-        // 中心与 8 邻居直接取 YCoCg（colortex0 本就是 YCoCg），凸包裁剪在 YCoCg 空间进行，
-        // 省掉原先 9 次 YCoCg->RGB；最终输出前统一转回 RGB，保持 colortex1 编码约定不变。
-        #define FETCH_NEIGHBOUR(off) texelFetch(colortex0, texel + (off), 0).rgb
+        // [2026-09-03 修复凸包色彩] colortex0 存 YCoCg；邻居与中心同样要 YCoCg->RGB
+        // 后再做凸包裁剪。凸包是逐通道 clamp，必须在 RGB（感知线性）空间进行——
+        // 在 YCoCg 空间对各通道独立 clamp 会破坏 RGB 耦合，低亮度红区(R高/B≈0)时
+        // Co/Cg 被强夹，转回 RGB 后 B 被挤出成蓝色拖影（性能模式专有）。
+        #define FETCH_NEIGHBOUR(off) YCoCgToRGB(texelFetch(colortex0, texel + (off), 0).rgb)
         vec3 up    = FETCH_NEIGHBOUR(ivec2( 0,  1));
         vec3 down  = FETCH_NEIGHBOUR(ivec2( 0, -1));
         vec3 left  = FETCH_NEIGHBOUR(ivec2(-1,  0));
@@ -135,7 +136,7 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
         vec3 dr    = FETCH_NEIGHBOUR(ivec2( 1, -1));
         #undef FETCH_NEIGHBOUR
 
-        vec3 previousClipped = convexHull(currentYCg, previousYCg, up, down, left, right, ul, ur, dl, dr);
+        vec3 previousClipped = convexHull(currentRGB, previousRGB, up, down, left, right, ul, ur, dl, dr);
 
         float accumFrames = min(++temporalData.a, TAA_MAX_ACCUM_FRAMES);
 
@@ -148,7 +149,7 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
             float blendFactor = historyWeight;
         #endif
 
-        return vec4(YCoCgToRGB(mix(currentYCg, previousClipped, blendFactor)), temporalData.a);
+        return vec4(mix(currentRGB, previousClipped, blendFactor), temporalData.a);
 
     // --- 模式 0：高画质 Playdead YCoCg TAA（裁剪默认关闭） ---
     #else

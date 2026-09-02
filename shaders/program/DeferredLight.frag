@@ -471,6 +471,11 @@ void main() {
 
     // 环境光累积
     vec3 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
+    // [2026-09-03 SH 缓存复用] 网格内(L528)与网格外(L561)两处均以相同参数
+    // (global.skySH, worldNormal) 调用 ConvolvedReconstructSH3。网格边缘像素
+    // (voxelEdgeBlend>0 且 ambInVoxelGrid) 会同时命中两处 → 同像素重复重建 9 项 SH。
+    // 提到此处一次计算，两处共用；无分支触发时仅多一次轻量重建，零画面影响。
+    vec3 skySHIrradiance = ConvolvedReconstructSH3(global.skySH, worldNormal);
     // [2026-08-20 修复"傍晚背光侧方块底面冒光"] 朝下面几乎不收无向最小环境底光：
     // 原式对底面(worldNormal.y≈-1)仍给 0.2×activeMinAmbient 灰白底，傍晚再被夕阳 tint
     // 染成暖橙，在暗的背光侧异常扎眼。法线 y<0 时把这份底光渐进去除（一 0→-0.15 过渡），
@@ -525,7 +530,7 @@ void main() {
             #endif
             #if VOXEL_GI_SH_MIX > 0.0
                 // SH 全空间辐照度（含下半球）→ 朝下表面吃到环境光，随昼夜自动正确
-                ambientAccum += ConvolvedReconstructSH3(global.skySH, worldNormal) * VOXEL_GI_SH_MIX;
+                ambientAccum += skySHIrradiance * VOXEL_GI_SH_MIX;
             #endif
         } else {
             // 网格外：光追范围外无 GI 数据，MINIMUM_AMBIENT_BRIGHTNESS 作为全局最暗保底，
@@ -558,7 +563,7 @@ void main() {
         // 也混入网格外同款 SH 环境光，权重随边缘距离渐隐——新方块进网格不再暗→亮跳变。
         if (lightmap.y > EPS && (!ambientInVoxelGrid || voxelEdgeBlend > 0.0)) {
             float lm3 = cube(lightmap.y);
-            ambientAccum += ConvolvedReconstructSH3(global.skySH, worldNormal) * lm3 * voxelEdgeBlend;
+            ambientAccum += skySHIrradiance * lm3 * voxelEdgeBlend;
             ambientAccum += CalculateFakeBouncedLight(worldNormal) * lm3 * (lightmap.y * lightmap.y) * sunlightBase * voxelEdgeBlend;
         }
     #endif
