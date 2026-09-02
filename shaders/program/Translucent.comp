@@ -170,7 +170,11 @@ vec4 CalculateSpecularReflections(in vec3 screenPos, in vec3 viewPos, in vec3 wo
         #else
             vec3 skyRadiance = textureBicubic(skyMapTex, ProjectSky(rayDir)).rgb;
         #endif
-        reflection = skyRadiance * smoothstep(0.3, 0.7, skylight);
+        // [2026-09-02 修复太阳光斑泄漏] 同 Reflection.glsl：背阳/阴影里的水面、玻璃
+        // 原只靠天光 lightmap.y 门控，会反射出本不该存在的太阳盘。用表面朝向太阳程度
+        // sunFace 衰减光斑，朝阳面保持；不新增采样。
+        float sunFace = saturate(dot(worldNormal, worldSunDir));
+        reflection = skyRadiance * smoothstep(0.3, 0.7, skylight) * sunFace;
     }
     #endif
 

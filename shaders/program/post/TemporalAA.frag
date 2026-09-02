@@ -10,9 +10,8 @@
 
 #define TAA_QUALITY_MODE 1 // [0 1] 0: 高画质模式 (原版 Playdead) | 1: 高性能模式 (MakeUp Fast TAA)
 
-#ifdef TAA_SHARPEN
-    #undef TAA_SHARPEN
-#endif
+// [2026-09-02] 移除硬性 #undef：TAA_SHARPEN 曾被此段强制锁死，无论 GUI/profile 如何设置都不生效。
+// 现交由 settings/profile 的 TAA_SHARPEN 开关控制，开启时历史采样走 Catmull-Rom 抗振铃锐化。
 
 //======// 基础引用 //===========================================================================//
 
@@ -109,15 +108,18 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
 
     // --- 模式 1：高性能 MakeUp Fast TAA（固定高历史权重） ---
     #if TAA_QUALITY_MODE == 1
-        vec3 currentRGB = YCoCgToRGB(loadSceneMain(texel));
+        vec3 currentYCg = loadSceneMain(texel);
 
         if (saturate(prevCoord) != prevCoord)
-            return vec4(currentRGB, 1.0);
+            return vec4(YCoCgToRGB(currentYCg), 1.0);
 
         vec4 temporalData = texture(colortex1, prevCoord);
-        vec3 previousRGB = temporalData.rgb;
+        // [2026-09-02] colortex1 按约定存 RGB；只在历史侧转 1 次 YCoCg 与当前帧统一
+        vec3 previousYCg = RGBToYCoCg(temporalData.rgb);
 
-        #define FETCH_NEIGHBOUR(off) YCoCgToRGB(texelFetch(colortex0, texel + (off), 0).rgb)
+        // 中心与 8 邻居直接取 YCoCg（colortex0 本就是 YCoCg），凸包裁剪在 YCoCg 空间进行，
+        // 省掉原先 9 次 YCoCg->RGB；最终输出前统一转回 RGB，保持 colortex1 编码约定不变。
+        #define FETCH_NEIGHBOUR(off) texelFetch(colortex0, texel + (off), 0).rgb
         vec3 up    = FETCH_NEIGHBOUR(ivec2( 0,  1));
         vec3 down  = FETCH_NEIGHBOUR(ivec2( 0, -1));
         vec3 left  = FETCH_NEIGHBOUR(ivec2(-1,  0));
@@ -128,7 +130,7 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
         vec3 dr    = FETCH_NEIGHBOUR(ivec2( 1, -1));
         #undef FETCH_NEIGHBOUR
 
-        vec3 previousClipped = convexHull(currentRGB, previousRGB, up, down, left, right, ul, ur, dl, dr);
+        vec3 previousClipped = convexHull(currentYCg, previousYCg, up, down, left, right, ul, ur, dl, dr);
 
         float accumFrames = min(++temporalData.a, TAA_MAX_ACCUM_FRAMES);
 
@@ -141,7 +143,7 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
             float blendFactor = historyWeight;
         #endif
 
-        return vec4(mix(currentRGB, previousClipped, blendFactor), temporalData.a);
+        return vec4(YCoCgToRGB(mix(currentYCg, previousClipped, blendFactor)), temporalData.a);
 
     // --- 模式 0：高画质 Playdead YCoCg TAA（裁剪默认关闭） ---
     #else
@@ -186,7 +188,12 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
         prevData = mix(prevData, currData, sdot(fract(prevCoord * viewSize) - 0.5) * 0.5);
 
         float blendWeight = min(++temporalData.a, TAA_MAX_ACCUM_FRAMES);
+        // [2026-09-02] 抗闪烁：contrast 增大时抱紧历史（blendWeight 增大 → rcp 减小）。
         blendWeight *= 1.0 + sqr(temporalContrast) * TAA_ANTIFLICKER;
+        // [2026-09-02 运动抗拖影] 运动速度大时降低历史权重、加速让位当前帧，缓解动
+        // 物体拖影。clamp 下界 1.0 保证 rcp(blendWeight)<=1，mix 不会外插 → 不重复蓝溢。
+        float motionPixels = length(motionVector * viewSize);
+        blendWeight = max(blendWeight * (1.0 - saturate(motionPixels * 0.02)), 1.0);
 
         currData = mix(perceptualWeight(prevData), perceptualWeight(currData), rcp(blendWeight));
         return vec4(YCoCgToRGB(perceptualWeightInv(currData)), temporalData.a);

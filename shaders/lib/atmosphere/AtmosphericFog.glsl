@@ -95,8 +95,15 @@ mat2x3 RaymarchAtmosphericFog(in vec3 startPos, in vec3 endPos, in float dither,
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!雾气最大累计距离
     float maxDist = min(lodRenderDist, 256.0); 
     if (skyMask) {
-        float safeDirY = max(abs(worldDir.y), 1e-5) * sign(worldDir.y + 1e-6);
-        rayLength = clamp((cumulusTopRadius - atmosphereViewHeight) / safeDirY, 0.0, maxDist);
+        // [2026-09-02 修复地平线圆环] 原式 safeDirY = max(|y|,1e-5)*sign(y+1e-6) 在视线
+        // 略微向下（worldDir.y<0）时除法为负 → clamp 归 0；接近水平时 safeDirY→0 除法发散
+        // → clamp 到 maxDist。这条 0 ↔ maxDist 的突变恰好落在地平线一圈，形成雾程圆环硬边。
+        // 改为只用绝对竖直分量算球壳雾程（变号不再把结果拉负），并在水平带内 smoothstep
+        // 平滑过渡，消除地平线硬接缝。
+        float absDirY = max(abs(worldDir.y), 1e-5);
+        float shellLength = clamp((cumulusTopRadius - atmosphereViewHeight) / absDirY, 0.0, maxDist);
+        float horizonSmooth = smoothstep(0.0, 0.06, abs(worldDir.y));
+        rayLength = mix(maxDist, shellLength, horizonSmooth);
     }
 
     vec3 midPos = startPos + worldDir * (rayLength * 0.5);

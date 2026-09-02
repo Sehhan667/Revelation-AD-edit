@@ -111,12 +111,8 @@ float CalcSunScreenVisibility() {
     occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-r, 0.0), vec2(0.0), uvMax))));
     occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0,  r), vec2(0.0), uvMax))));
     occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0, -r), vec2(0.0), uvMax))));
-    const float d = r * 0.70710678;
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( d,  d), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-d,  d), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( d, -d), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-d, -d), vec2(0.0), uvMax))));
-    return edgeFade * occ * (1.0 / 9.0);
+    // [P1 2026-09-02] 9 点 -> 5 点（十字，去掉对角线采样）：每像素省 4 次深度读取；光晕过渡由 edgeFade 平滑，几乎无感
+    return edgeFade * occ * (1.0 / 5.0);
 }
 
 // 阴影贴图彩色可见性（与 VolumetricFog.frag 的 SampleVolumetricShadow 同逻辑）：
@@ -206,7 +202,8 @@ vec3 ScreenSpaceSunShafts(vec2 uv, vec2 pixelSize, vec3 worldDir, float dither, 
     float miePhase = mix(1.0, AtmospherePhase(dot(lightDir, worldDir)).y, 0.5);
 
     // ---- 世界空间光柱步进（SDV：7-12 步）----
-    const int shaftsSamples = 12;
+    // [P1 2026-09-02] 12 -> 8：光柱每像素步进减为 8，少 4 次阴影贴图采样；噪声靠 TAA 平滑，几乎无感
+    const int shaftsSamples = 8;
     float stepLen = rayEnd / float(shaftsSamples);
     vec3 shafts = vec3(0.0);
 

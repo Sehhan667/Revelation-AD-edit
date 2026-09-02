@@ -41,9 +41,13 @@ void SampleHorizonCosOptimized(
         posV = (lodPos ? ScreenToViewPosLod(vec3(uvPos, dPos)) : ScreenToViewPos(vec3(uvPos, dPos))) - viewPos;
         negV = (lodNeg ? ScreenToViewPosLod(vec3(uvNeg, dNeg)) : ScreenToViewPos(vec3(uvNeg, dNeg))) - viewPos;
     #else
-        // 理想情况下，如果你有 viewRay，这里应优化为：posV = viewRayPos * linearDepth - viewPos;
-        posV = ScreenToViewPos(vec3(uvPos, dPos)) - viewPos;
-        negV = ScreenToViewPos(vec3(uvNeg, dNeg)) - viewPos;
+        // [2026-09-02 viewRay 反投影] 用标量 viewDepth + 对角缩放替代带透视除法的
+        // ScreenToViewPos(vec3)。gbufferProjection 为对角形式，ScreenToViewPos(vec2, viewDepth)
+        // 与带 ProjectDivide 的版本严格逐位等价（XY/Z 一致，TAA jitter 同样处理），
+        // 每采样方向省掉 projMAD 矩阵乘与透视 rcp 项。dPos 仍是屏幕非线性深度，
+        // 须先经 ScreenToViewDepth 转成 view z 再对角反投影。
+        posV = ScreenToViewPos(uvPos, ScreenToViewDepth(dPos)) - viewPos;
+        negV = ScreenToViewPos(uvNeg, ScreenToViewDepth(dNeg)) - viewPos;
     #endif
 
     // 计算平方长度
@@ -128,11 +132,5 @@ float CalculateGTAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dith
     float ao = 0.25 * rSliceCount * visibility;
     return pow(saturate(ao), GTAO_INTENSITY);
 }
-//================================================================================================//
-vec3 ApproxMultiBounce(in float ao, in vec3 albedo) {
-	vec3 a = 2.0404 * albedo - 0.3324;
-	vec3 b = 4.7951 * albedo - 0.6417;
-	vec3 c = 2.7552 * albedo + 0.6903;
-
-	return max(vec3(ao), ((ao * a - b) * ao + c) * ao);
-}
+// [2026-09-02] ApproxMultiBounce moved to "lib/lighting/AOMultiBounce.glsl" so it is
+// available for every AO mode (SSAO and GTAO) in DeferredLight.frag.

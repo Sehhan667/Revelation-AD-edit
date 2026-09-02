@@ -120,10 +120,16 @@ uniform sampler2D cloudOriginTex;
 #include "/lib/lighting/Common.glsl"
 #include "/lib/lighting/shadow/Render.glsl"
 
-#if AO_ENABLED > 0 && !defined SSILVB_ENABLED
+// [P1 2026-09-02] 按 AO_ENABLED 值只 include 一种 AO 实现，避免 SSAO+GTAO 同时编译徒耗寄存器与编译时间
+#if AO_ENABLED == 1 && !defined SSILVB_ENABLED
     #include "/lib/lighting/SSAO.glsl"
+#endif
+#if AO_ENABLED == 2 && !defined SSILVB_ENABLED
     #include "/lib/lighting/GTAO.glsl"
 #endif
+
+// [2026-09-02] 共享多反弹拟合，供 SSAO/GTAO 任一模式在 AO_MULTI_BOUNCE 时调用
+#include "/lib/lighting/AOMultiBounce.glsl"
 
 #include "/lib/SpatialUpscale.glsl"
 

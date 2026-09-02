@@ -33,6 +33,12 @@ vec3 MotionBlur(in ivec2 texelPos) {
 	float motionNorm = inversesqrt(sdot(motionVector));
 
 	if (motionNorm > 1e6) return texelFetch(colortex1, texelPos, 0).rgb;
+	// [2026-09-02 静止早退] colortex3 的 motion 为 UV 空间单位。运动不足半像素时
+	// 视觉无模糊效果，直接返回原色，跳过下面 MOTION_BLUR_SAMPLES 次采样循环——
+	// 静帧/缓慢移动时绝大多数像素命中，显著削减全屏运动模糊算力。观感不变。
+	float motionUVSq = sdot(motionVector);
+	float subPixelSq = sqr(0.5 / min(viewWidth, viewHeight));
+	if (motionUVSq < subPixelSq) return texelFetch(colortex1, texelPos, 0).rgb;
 	motionVector *= saturate(motionNorm);
 
 	const float strength = MOTION_BLUR_STRENGTH / float(MOTION_BLUR_SAMPLES) * 0.01;
