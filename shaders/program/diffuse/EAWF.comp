@@ -79,6 +79,11 @@ layout (rgba16f) restrict uniform image2D colorimg3;
     #define NRD_DISOCCLUSION 1.0 // [0.0 0.5 1.0 2.0 4.0] 去遮挡修复强度（不可靠时放大步长+放松边缘；0=关闭）
 #endif
 
+// [2026-08-28 项3] SVGF 尾级(最后一级并联滤波后)做 3×3 中值剔 firefly（默认开；可在 GUI off 回退原输出）
+#ifndef VOXEL_GI_FIREFLY_MEDIAN
+    #define VOXEL_GI_FIREFLY_MEDIAN
+#endif
+
 /*
 const uint padRadius = 1;
 const uvec2 sharedSize = gl_WorkGroupSize.xy + (padRadius << 1);
@@ -185,6 +190,14 @@ void main() {
 	    historyFactor = float16_t(1.0 - exp2(-frameIndex * NRD_RELIABILITY));
 	}
 
+	// [2026-08-28 欠采样增强] 时域累积帧数少（刚出现/刚重投影）→ 该处噪声高，
+	// 放大空间步长 + 放松边缘保持，让空间滤波更快用周围可靠邻居收敛。
+	{
+	    float _under = clamp(10.0 - frameIndex, 0.0, 10.0) * 0.1; // 0..1，少于 ~10 帧
+	    stepBoost  *= 1.0 + _under * 0.6;
+	    sigmaRelax *= 1.0 / (1.0 + _under * 0.4);
+	}
+
 	vec3 viewDir  = ScreenToViewDirRaw(texelToUv(texelPos));
 	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(texelPos);
 
@@ -199,7 +212,7 @@ void main() {
 	float viewDist = max(-float(normalDepthData.z), 0.25);
 	float pxPerWorldAtZ1 = halfViewSize.y * gbufferProjection[1][1];
 	float depthFactor = NRD_RADIUS <= 0.0 ? 1.0
-	                    : clamp(NRD_RADIUS * pxPerWorldAtZ1 / viewDist, 0.5, 2.5);
+	                    : clamp(NRD_RADIUS * pxPerWorldAtZ1 / viewDist, 0.5, 1.5);
 	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost;
 	// 抖动与大步长解耦：NRD 开启时 offsetScale 会被放大，若采样抖动也随 offsetScale
 	// 放大，每帧采样起始点会大跳 → 点状闪烁。故开启时抖动限制在 ≤1 像素。
@@ -240,7 +253,72 @@ void main() {
 		}
 	}
 
+	// [2026-08-28 项1 Sundial 式方向化] 沿本 level 主方向轴 ± 各取一点长距采样，补充 9-tap
+	// 对"单向长距离扩散"的不足，让不同 level 朝不同主方向覆盖（各向异性去噪）。
+	{
+	    vec2 _axis;
+	    int _le = FILTER_PASS_INDEX;
+	    if      (_le == 0) _axis = vec2( 1.0,  1.0);
+	    else if (_le == 1) _axis = vec2( 1.0, -1.0);
+	    else if (_le == 2) _axis = vec2( 1.0,  0.0);
+	    else               _axis = vec2( 0.0,  1.0);
+	    for (int _d = 0; _d < 2; ++_d) {
+	        ivec2 sampleTexel = texelPos + ivec2(round(_axis * offsetScale * (_d == 0 ? 1.0 : -1.0)));
+	        if (clamp(sampleTexel, ivec2(1), ivec2(halfViewSize) - 2) == sampleTexel) {
+	            f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
+	            f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
+	            float16_t sampleLuma = sampleColVar.r;
+	            float16_t weight = float16_t(saturate(fma(abs(sampleAux.z - normalDepthData.z), invThresholdZ, 1.0)));
+	            float logWeightN = log2(saturate(dot(OctDecodeSnorm(sampleAux.xy), centerNormal))) * sigmaN;
+	            float logWeightL = abs(sampleLuma - centerLuma) * sigmaL;
+	            weight *= float16_t(saturate(exp2(logWeightN + logWeightL)));
+	            filteredColVar += sampleColVar * f16vec4(f16vec3(weight), weight * weight);
+	            sumWeight += weight;
+	        }
+	    }
+	}
+
 	sumWeight = float16_t(1.0) / sumWeight;
 	filteredColVar *= f16vec4(f16vec3(sumWeight), sumWeight * sumWeight);
+
+	// [2026-08-28 项3 ，2026-09-02 修复色度脱节] 最后一级(FILTER_PASS_INDEX==3)的大半径
+	// 滤波后，对上一 pass 结果(colorimg3)做 3×3 中值，剔高频孤点亮噪(firefly)。取按 Y 排序的
+	// 中值样本整体颜色(Y/Cg/Co/方差)，保证亮度/色度自洽，避免极暗处出现饱和彩点。
+	#ifdef VOXEL_GI_FIREFLY_MEDIAN
+	if (FILTER_PASS_INDEX == 3) {
+	    // [FIX 2026-09-02] 原实现只取 3×3 邻域的 Y(亮度)中位数值替换 filteredColVar.r，
+	    // 色度 Cg/Co 仍是含亮火苗的加权均值。极暗区域里中位 Y≈0 而色度≠0 →
+	    // YCoCg 亮度/色度脱节，解码回 RGB(R=Y+Cg+Co, G=Y-Cg, B=Y+Cg-Co) 时
+	    // 产出过饱和彩点。改为按 Y 排序后取“中值样本的完整 vec4(Y/Cg/Co/方差)”，
+	    // 整体取自真实像素，亮度与色度保持自洽。
+	    float _ys[9];
+	    ivec2 _ts[9];
+	    int _oi[9];
+	    {
+	        int _k = 0;
+	        for (int _dy = -1; _dy <= 1; ++_dy)
+	        for (int _dx = -1; _dx <= 1; ++_dx) {
+	            ivec2 _t = clamp(texelPos + ivec2(_dx, _dy), ivec2(0), ivec2(halfViewSize) - 1);
+	            _ts[_k] = _t;
+	            _ys[_k] = float(imageLoad(colorimg3, _t).r);
+	            _oi[_k] = _k;
+	            ++_k;
+	        }
+	        // 按亮度 Y 升序对索引插入排序（3×3=9 元素，开销可忽略），索引 [4] = 中值
+	        for (int _a = 1; _a < 9; ++_a) {
+	            int _key = _oi[_a];
+	            float _ky = _ys[_key];
+	            int _b = _a - 1;
+	            while (_b >= 0 && _ys[_oi[_b]] > _ky) {
+	                _oi[_b + 1] = _oi[_b];
+	                --_b;
+	            }
+	            _oi[_b + 1] = _key;
+	        }
+	    }
+	    filteredColVar = f16vec4(imageLoad(colorimg3, _ts[_oi[4]]));
+	}
+	#endif
+
 	imageStore(colorimg3, texelPos, min(filteredColVar, FP16_MAX));
 }

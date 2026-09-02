@@ -42,6 +42,8 @@ vec3 VoxelHemisphereUnitVector(vec3 n, inout uint s) {
 // 每个像素叠加一个 per-pixel 随机偏移（jitter, 模 1）→ 不相邻像素同帧采到同一低差异方向（消除条带）。
 // 仅 VOXEL_LD_SAMPLING 开启时在 VoxelTracing.glsl 采样处使用，默认关（与现随机采样一致）。
 // #define VOXEL_LD_SAMPLING
+// 余弦密度采样（Malley 映射，pdf∝cosθ）。期望与"均匀×2cos"一致，方差更低。默认关，与现采样一致。
+// #define VOXEL_COS_SAMPLING
 
 float VoxelRadicalInverseVdC(inout uint bits) {
     bits = (bits << 16u) | (bits >> 16u);
@@ -79,6 +81,30 @@ vec3 VoxelSphereUnitVectorLD(uint idx, vec2 jitter) {
 vec3 VoxelHemisphereUnitVectorLD(vec3 n, uint idx, vec2 jitter) {
     vec3 rv = VoxelSphereUnitVectorLD(idx, jitter);
     return rv * (dot(rv, n) >= 0.0 ? 1.0 : -1.0);
+}
+
+// STBN 蓝噪声对 → 均匀球面方向（phi、cosθ 由 u 直接映射）
+vec3 VoxelSphereUnitVectorFromU(vec2 u) {
+    float phi = TAU * u.x;
+    float z = 2.0 * u.y - 1.0;
+    float r = sqrt(max(0.0, 1.0 - z * z));
+    return vec3(sin(phi) * r, cos(phi) * r, z);
+}
+
+// 余弦密度采样：在单位圆盘均匀取点（r=√xi1）后投影到 cosine 加权半球（z=√(1-xi1)）。
+// 其方向 pdf ∝ cosθ。配合 weight=1（见 VoxelTracing），期望与"均匀半球×2cos 权重"完全一致，
+// 但把样本集中到高贡献的法线方向，漫反射方差更低。u = (xi1, xi2) ∈ [0,1]²。
+vec3 VoxelHemisphereCosineUnitVector(vec3 n, vec2 u) {
+    float r = sqrt(u.x);
+    float a = TAU * u.y;
+    float x = r * cos(a);
+    float y = r * sin(a);
+    float z = sqrt(max(0.0, 1.0 - u.x)); // cosθ（= 沿 n 分量）
+    // 切线基：局部 +Z 对齐到法线 n
+    vec3 up = (abs(n.z) < 0.999) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 t  = normalize(cross(up, n));
+    vec3 bt = cross(n, t);
+    return t * x + bt * y + n * z;
 }
 
 float VoxelMin3(vec3 v) {

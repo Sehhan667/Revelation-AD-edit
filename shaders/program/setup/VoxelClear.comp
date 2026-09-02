@@ -36,6 +36,7 @@ layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 layout (rgba16f) writeonly uniform image3D voxelData;
 layout (r32ui) writeonly uniform uimage3D voxelLightData;
 layout (r32ui) writeonly uniform uimage3D voxelCoarse;
+layout (r32ui) writeonly uniform uimage3D voxelMask;
 
 void main() {
 	ivec3 c = ivec3(gl_GlobalInvocationID.xyz);
@@ -43,4 +44,6 @@ void main() {
 	imageStore(voxelLightData, c, uvec4(0u));
 	// coarse occupancy：以 c>>SHIFT 定位粗块清零；多个细格映射同一粗块，重复清 0 无害。
 	imageStore(voxelCoarse, c >> VOXEL_COARSE_SHIFT, uvec4(0u));
+	// 细格 occupancy：尺寸 VOXEL_COARSE_N x VOXEL_COARSE_N x VOXEL_COARSE_N*2，本中原遍历覆盖其整个体，重复清 0 无害。
+	if (all(lessThan(c, ivec3(VOXEL_COARSE_N, VOXEL_COARSE_N, VOXEL_COARSE_N * 2)))) imageStore(voxelMask, c, uvec4(0u));
 }

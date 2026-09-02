@@ -76,6 +76,9 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
     if (saturate(prevCoord) == prevCoord && !historyReset) {
         vec4 prevDiffuse = vec4(0.0);
         float sumWeight = 0.0;
+        // [2026-08-28 ] 上帧该像素的可信度 = 4 tap 里几何一致权重的最大（不含双线性）。
+        // 几何一致（静止）→ 接近 1；遮挡/移动/几何剧变 → 骤降，驱动累积帧数连续衰减。
+        float maxGeometryWeight = 0.0;
 
         // Custom bilinear filter
         vec2 prevTexel = (prevCoord * viewSize
@@ -100,9 +103,11 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
 			    vec3 sampleAux = texelFetch(colortex14, sampleTexel, 0).xyz;
                 vec4 sampleIrradiance = texelFetch(colortex2, sampleTexel, 0);
 
-                float weight = saturate(fma(distance(encodedNormalDepth.z, sampleAux.z), invThresholdZ, 1.0));
-                weight *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
-                weight *= bilinearWeight[i];
+                float tapGeo = saturate(fma(distance(encodedNormalDepth.z, sampleAux.z), invThresholdZ, 1.0));
+                tapGeo *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
+                maxGeometryWeight = max(maxGeometryWeight, tapGeo);
+
+                float weight = tapGeo * bilinearWeight[i];
 
                 prevDiffuse += sampleIrradiance * weight;
                 sumWeight += weight;
@@ -115,10 +120,12 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
 
             // [2026-08-19 离线渲染] 持续累计：把帧数上限拉高，让时域累积权重更均匀、收敛到更低噪声。
             // 关闭宏时用原 SSILVB_MAX_ACCUM_FRAMES，与之前完全一致。
+            // [2026-08-28 ] 累积帧数乘上 maxGeometryWeight（上帧几何可信度）连续衰减：
+            // 静止一致 → ≈1，a 正常累加；遮挡/移动/几何剧变 → 骤降 → alpha 变大 → 几乎不混历史。
             #ifdef OFFLINE_RENDER
-                integratedDiffuse.a = min(prevDiffuse.a + 1.0, 1024.0);
+                integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, 1024.0);
             #else
-                integratedDiffuse.a = min(prevDiffuse.a + 1.0, SSILVB_MAX_ACCUM_FRAMES);
+                integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, SSILVB_MAX_ACCUM_FRAMES);
             #endif
 
             if (integratedDiffuse.a < 8.0) {
@@ -130,9 +137,23 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
 
             float alpha = rcp(integratedDiffuse.a);
 
-            // [2026-08-28 ReSTIR Phase A 增强] 该像素近似静止（重投影坐标几乎不变）→ 压低 alpha，
-            // 提高时域历史权重、进一步平滑静止噪底。转动/移动时坐标变化大 → 系数回 1，不引入拖影。
-            alpha *= 1.0 - 0.5 * (1.0 - smoothstep(0.0, 0.001, length(prevCoord - currCoord)));
+            // [2026-08-28 ] 时域累积的连续衰减已由上方 maxGeometryWeight 接管（静止≈1 深累积、
+            // 几何剧变骤降少混合历史），这里不再重复调 alpha。仅保留：运动时对该像素做一次
+            // 3×3 当前帧邻域平均（前置空间滤波），再进 EAWF，缓解转动脏污。
+            {
+                float _motion = length(prevCoord - currCoord);
+                float _preSmooth = smoothstep(0.02, 0.06, _motion);
+                if (_preSmooth > 0.0) {
+                    vec3 _sum = integratedDiffuse.rgb;
+                    for (int _dy = -1; _dy <= 1; ++_dy) { for (int _dx = -1; _dx <= 1; ++_dx) {
+                        ivec2 _t = texelPos + ivec2(_dx, _dy);
+                        if (clamp(_t, ivec2(0), ivec2(halfViewSize) - 1) == _t)
+                            _sum += texelFetch(colortex3, _t, 0).rgb;
+                    }}
+                    _sum *= 1.0 / 9.0;
+                    integratedDiffuse.rgb = mix(integratedDiffuse.rgb, _sum, _preSmooth * 0.5);
+                }
+            }
 
             // ====== 峰值保持：亮度下降慢，上升快 ======
             #ifdef SSILVB_PEAK_HOLD

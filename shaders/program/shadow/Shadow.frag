@@ -39,6 +39,7 @@ flat in float v_isVoxel;     // 1=体素 tile 像素
 layout (rgba16f) uniform writeonly image3D voxelData;      // xy=atlas UV 中心 z=voxelID(原值) w=texRes(16)
 layout (r32ui) uniform uimage3D voxelLightData;            // x=emissive y=sky z=block（atomicMax 需读写权限，不能 writeonly）
 layout (r32ui) uniform uimage3D voxelCoarse;               // coarse occupancy 位图（imageAtomicOr 置位，需读写权限）
+layout (r32ui) uniform uimage3D voxelMask;                 // 细格 occupancy 位图（16x16x32，每粗块 2 字，供追踪拦截空气格）
 #endif
 
 //======// Uniform //=============================================================================//
@@ -90,6 +91,14 @@ void main() {
             imageAtomicMax(voxelLightData, ivec3(v_voxelCoord), lightPacked);
             // coarse occupancy：该 voxel 有内容（固体/透明/发光）→ 所在 4³ 粗块置位（供追踪空洞跳跃）
             imageAtomicOr(voxelCoarse, ivec3(v_voxelCoord) >> VOXEL_COARSE_SHIFT, 1u);
+            // 细格 occupancy：把本格置位到所在粗块的 64 位图（.z = 粗块z*2 + bank）。方案A，追踪端据此拦空气格
+            {
+                ivec3 _cc = ivec3(v_voxelCoord) >> VOXEL_COARSE_SHIFT;
+                ivec3 _li = ivec3(v_voxelCoord) & (VOXEL_COARSE_GS - 1);
+                uint _b  = uint(_li.x) | (uint(_li.y) << 2u) | (uint(_li.z) << 4u);
+                uint _bk = _b >> 5u;
+                imageAtomicOr(voxelMask, ivec3(_cc.x, _cc.y, _cc.z * 2 + int(_bk)), 1u << (_b & 31u));
+            }
             return;
         }
 

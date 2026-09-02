@@ -43,13 +43,26 @@
 #ifdef VOXEL_COARSE_ACCEL
 uniform usampler3D voxelCoarseSampler;
 #endif
+// 细格 occupancy（逐格空气跳过）：VOXEL_FINE_ACCEL 开启时读
+#ifdef VOXEL_FINE_ACCEL
+uniform usampler3D voxelMaskSampler;
+// 细格 occupancy 位图判空（方案A）：vc 所在粗块内该格 bit。0/1 由体素化端（Shadow.frag）置位，语义同 coarse（被体素化=有内容）。
+bool VoxelMaskSolid(ivec3 vc) {
+    ivec3 _cc = vc >> VOXEL_COARSE_SHIFT;
+    ivec3 _li = vc & (VOXEL_COARSE_GS - 1);
+    uint _b  = uint(_li.x) | (uint(_li.y) << 2u) | (uint(_li.z) << 4u);
+    uint _bk = _b >> 5u;
+    uint _mk = 1u << (_b & 31u);
+    return (texelFetch(voxelMaskSampler, ivec3(_cc.x, _cc.y, _cc.z * 2 + int(_bk)), 0).r & _mk) != 0u;
+}
+#endif
 
 // 每像素漫反射追踪：
 // origin = 相机相对起点；normal = 世界法线（可能含法线贴图）；vertexNormal = 几何法线；
 // viewDist = 视距（-viewPos.z，供起点偏移）；skyLightmap = 像素天空 lightmap（泄漏衰减）；
 // blockLightmap = 像素方块光 lightmap（出界 BlockLighting 底光）；
 // 返回 0-1 尺度的"入射光"（已含命中体素 albedo 反射，未乘当前像素 albedo/强度）。
-vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist, float skyLightmap, float blockLightmap, inout uint seed) {
+vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist, float skyLightmap, float blockLightmap, ivec2 pixel, int sampleIndex, inout uint seed) {
     // 世界对齐网格对齐：origin 为相机相对坐标，+cameraPositionFract 抵消小数 +VOXEL_RADIUS
     // 转网格坐标（[0,VOXEL_AREA)）——与 Terrain.vert 体素化 / VoxelGI.frag 注入端
     // （起点 vec3(c)+0.5）同一坐标系。漏加 VOXEL_RADIUS 会让起点落在 -32..32 的负半区，
@@ -66,22 +79,32 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         return vec3(0.0);
     }
 
-    // 均匀半球采样：方向若落到几何法线背面 → 沿几何法线重采样（vertexNormal 回落）
+    // 方向采样：按 (像素, 帧+SPP序号) 查时空蓝噪声，
+    // 相邻像素空间上蓝噪声去相关 → 1SPP 光点均匀密集（不聚簇狂闪）；跨帧变化配合时域累积。
     vec3 dir;
-    #ifdef VOXEL_LD_SAMPLING
-        // 低差异：Halton(2,3) 跨帧序号递进 + per-pixel 随机偏移（Cranley–Patterson 去相关）
-        uint _ldIdx = uint(frameCounter) + 1u;
-        vec2 _ldJit = vec2(nextFloat(seed), nextFloat(seed));
-        dir = VoxelHemisphereUnitVectorLD(normal, _ldIdx, _ldJit);
+    float weight;
+    // per-pixel 固定平移（Cranley–Patterson）：破坏 STBN 空间 tile 在特定纹理/距离下显现的整齐密集斑纹。
+    // 时序变化仍由 frame 驱动；平移每像素恒定。
+    vec2 _pu = vec2(pixel) * 0.1591549;
+    vec2 _pur = vec2(fract(sin(_pu.x) * 43758.5453), fract(sin(_pu.y) * 43758.5453));
+    vec2 _bn = fract(SampleStbnVec2(pixel, frameCounter + sampleIndex) + _pur);
+    #ifdef VOXEL_COS_SAMPLING
+        dir = VoxelHemisphereCosineUnitVector(normal, _bn);
         if (dot(dir, vertexNormal) <= 0.0)
-            dir = VoxelHemisphereUnitVectorLD(vertexNormal, _ldIdx, _ldJit);
+            dir = VoxelHemisphereCosineUnitVector(vertexNormal, _bn);
+        // 余弦密度采样 pdf=cosθ/π，权重=1（期望与 均匀×2cos 一致）
+        weight = 1.0;
     #else
-        dir = VoxelHemisphereUnitVector(normal, seed);
-        if (dot(dir, vertexNormal) <= 0.0)
-            dir = VoxelHemisphereUnitVector(vertexNormal, seed);
+        vec3 _rv = VoxelSphereUnitVectorFromU(_bn);
+        dir = _rv * (dot(_rv, normal) >= 0.0 ? 1.0 : -1.0);
+        if (dot(dir, vertexNormal) <= 0.0) {
+            vec2 _bn2 = fract(SampleStbnVec2(pixel, frameCounter + sampleIndex + 64) + _pur);
+            vec3 _rv2 = VoxelSphereUnitVectorFromU(_bn2);
+            dir = _rv2 * (dot(_rv2, vertexNormal) >= 0.0 ? 1.0 : -1.0);
+        }
+        // 余弦 pdf：均匀采样 × 2cosθ = 漫反射辐照度核（无 1/cos 发散）
+        weight = saturate(dot(dir, normal)) * 2.0;
     #endif
-    // 余弦 pdf：均匀采样 × 2cosθ = 漫反射辐照度核（无 1/cos 发散）
-    float weight = saturate(dot(dir, normal)) * 2.0;
 
     // ---- 穿透式 DDA 步进 ----
     // - 空气（z<=0.5，含负 ID 透明体素）→ 穿透
@@ -150,7 +173,7 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
 
         ivec3 vc = ivec3(voxelCoord);
         #ifdef VOXEL_COARSE_ACCEL
-            // ---- coarse 空洞跳跃：所在 4³ 粗块全空 → 主轴向一步跨到粗块外，省逐格 fetch ----
+            // ---- coarse 空洞跳跃（"空气跳过"）：所在 4³ 粗块全空 → 主轴向一步跨到粗块外，省逐格 fetch ----
             if (texelFetch(voxelCoarseSampler, vc >> VOXEL_COARSE_SHIFT, 0).r == 0u) {
                 ivec3 _cc = vc >> VOXEL_COARSE_SHIFT;
                 vec3 _cb = vec3(_cc) * float(VOXEL_COARSE_GS);
@@ -163,6 +186,14 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
                 totalStep = (sdir * (voxelCoord - origin + 0.5) + 0.5) * abs(rdir);
                 continue;
             }
+#endif
+#ifdef VOXEL_FINE_ACCEL
+            // coarse 非空块内逐格：细格 occupancy 位图判空（bit=0 → 空气 → 穿透，跳过重纹理 fetch）。
+            // 与 coarse 空气跳过相互独立：
+            // 细格位图仅覆盖"阳光可见面"被体素化的格子，未被体素化但有注入光照/发射光的实体格
+            // 位图为 0 → 被当成空气跳过 → 该格漏光 → GI 空洞。出现空洞时关闭本开关、
+            // 保留 coarse 空气跳过（空块整体跳过，性能大头仍在），逐格回退真实 voxelData 采样。
+            if (!VoxelMaskSolid(vc)) continue;
 #endif
             vec4 hvd = texelFetch(voxelDataSampler, vc, 0);
         // 判空：voxelID 原值整数（>0 即固体，0=空气；半精度浮点整数精确）

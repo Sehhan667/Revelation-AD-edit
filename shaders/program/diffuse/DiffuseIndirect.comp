@@ -27,10 +27,23 @@ writeonly restrict uniform image2D colorimg3;
     // ReSTIR reservoir 乒乓（image.reservoirA/B，imageLoad/imageStore，RGBA16F 半分辨率）
     layout (rgba16f) restrict uniform image2D reservoirA;
     layout (rgba16f) restrict uniform image2D reservoirB;
-    layout (rgba16f) restrict uniform image2D reservoirW;
+    // reservoirW 存"当前像素的绝对世界坐标"作为一致性基准。
+    // 必须用绝对世界坐标（固定基准）而非 view 空间坐标：view 空间跟相机走，
+    // 相机平移时同方向像素的 viewPos 几乎不变 → 检测不出平移 → 平移不重置 → 拖影。
+    // 绝对世界坐标数值范围大，RGBA16F 在远距离精度不足 → 用 RGBA32F。
+    layout (rgba32f) restrict uniform image2D reservoirW;
+    // 全局相机运动跟踪器（见 shaders.properties image.camTracker）
+    layout (rgba32f) restrict uniform image2D camTracker;
 #endif
 
 #include "/lib/universal/Uniform.glsl"
+
+#ifdef VOXEL_REUSE
+// ReSTIR 上帧乒乓 reservoir（按帧奇偶选 buffer）
+vec4 PingReusePrev(ivec2 p) {
+    return ((frameCounter & 1u) == 0u) ? imageLoad(reservoirB, p) : imageLoad(reservoirA, p);
+}
+#endif
 
 //======// SSBO //================================================================================//
 
@@ -103,6 +116,30 @@ void main() {
 		}
 	#endif
 
+	#ifdef VOXEL_REUSE
+	// ---- [2026-09-01] 全局相机运动判定 ----
+	// per-pixel 几何门控（绝对世界坐标）对"棋盘半分辨率、每帧换角落"极易误判：
+	// 阈值一靠边就逐像素随机 复用/重置 → 既是拖影又是跳变的来源。改为按"全局相机是否运动"一票否决：
+	// 相机平移或转动 → 本帧全体不复用/不合并，一律重追踪；完全静止才允许复用。
+	// camTracker 存上帧 viewInverse 旋转列 + 相机世界位；thread(0,0) 每帧写入当前值，其余线程读上帧值。
+	vec4 _ct0 = imageLoad(camTracker, ivec2(0, 0));
+	vec4 _ct1 = imageLoad(camTracker, ivec2(1, 0));
+	vec4 _ct2 = imageLoad(camTracker, ivec2(2, 0));
+	vec4 _ct3 = imageLoad(camTracker, ivec2(3, 0));
+	mat3 _mvi = mat3(gbufferModelViewInverse);
+	bool _camMoved = length(_ct3.xyz - cameraPosition) > 0.01;
+	_camMoved = _camMoved
+	         || any(greaterThan(abs(_ct0.xyz - _mvi[0]), vec3(1e-4)))
+	         || any(greaterThan(abs(_ct1.xyz - _mvi[1]), vec3(1e-4)))
+	         || any(greaterThan(abs(_ct2.xyz - _mvi[2]), vec3(1e-4)));
+	if (gl_GlobalInvocationID.x == 0u && gl_GlobalInvocationID.y == 0u) {
+		imageStore(camTracker, ivec2(0, 0), vec4(_mvi[0], 0.0));
+		imageStore(camTracker, ivec2(1, 0), vec4(_mvi[1], 0.0));
+		imageStore(camTracker, ivec2(2, 0), vec4(_mvi[2], 0.0));
+		imageStore(camTracker, ivec2(3, 0), vec4(cameraPosition, 0.0));
+	}
+	#endif
+
 	if (terrainCheck) {
 		#if defined LOD_MOD
 			if (lodMask) depth = ViewToScreenDepth(ScreenToViewDepthLod(depth));
@@ -110,20 +147,25 @@ void main() {
 
     	vec2 screenCoord = texelToUv(renderTexel);
 		vec3 viewPos = ScreenToViewPos(vec3(screenCoord, depth));
+		// 绝对世界坐标（固定基准）——ReSTIR 几何一致性比较用它，不用 view 空间坐标：
+		// view 坐标跟相机走，相机平移时该像素的 viewPos 几乎不变 → 检测不出平移 → 平移不重置 → 拖影。
+		// gbufferModelViewInverse 第4列 = 相机世界位置，乘 vec4(viewPos,1) 即得像素击中的绝对世界点。
+		vec3 _wpos = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
 
 		vec4 result;
 		#ifdef VOXEL_GI_ENABLED
 			#ifdef VOXEL_REUSE
-			// ---- ReSTIR Phase A：几何一致（viewPos 相同）且 reservoir 有效 → 复用上帧，省追踪 ----
+			// ---- ReSTIR Phase A：几何一致（绝对世界坐标门控）且 reservoir 有效 → 复用上帧，省追踪 ----
 			ivec2 _rp = texelPos;
-			vec4 _prev = ((frameCounter & 1u) == 0u)
-			           ? imageLoad(reservoirB, _rp)
-			           : imageLoad(reservoirA, _rp);
-			// 像素级一致性：转动视角/移动时 viewPos 变化 → 不复用，避免复用错几何的辐照度
-			bool _consistent = (distance(viewPos, imageLoad(reservoirW, _rp).xyz) < 0.03);
-			// 自适应稀疏：样本数 < THRESHOLD 时每帧重投快速收敛；>= THRESHOLD 才启用 interval 稀疏复用
+			vec4 _prev = PingReusePrev(_rp);
+			// ① 几何一致：与上帧记录的"绝对世界坐标"比对（相对该点视距 length(viewPos) 归一化）。
+			// 平移/转动都会让绝对世界点变化 → 一致才复用，否则重新追踪（消除平移/转动拖影）。
+			vec3 _wbP = imageLoad(reservoirW, _rp).xyz;
+			bool _consistent = (length(_wbP - _wpos) / max(length(viewPos), 1e-4) < VOXEL_REUSE_GEO);
+			// 自适应稀疏：样本数 < THRESHOLD 时每帧重投快速收敛；>= THRESHOLD 才启用 interval 稀疏复用。
+			// 全局相机运动时（!_camMoved=false）绝不复用：避免拖影与逐像素跳变。
 			bool _sparse = (_prev.a >= VOXEL_REUSE_THRESHOLD);
-			if (_consistent && _sparse && ((frameCounter & (uint(VOXEL_REUSE_INTERVAL) - 1u)) != 0u)) {
+			if (!_camMoved && _consistent && _sparse && ((frameCounter & (uint(VOXEL_REUSE_INTERVAL) - 1u)) != 0u)) {
 				// 复用：输出 reservoir 累积均值（低方差）；样本计数递增封顶
 				result = vec4(RGBToYCoCg(_prev.rgb), 1.0);
 				imageStore(colorimg3, texelPos, result);
@@ -157,7 +199,7 @@ void main() {
 				vec3 traceAcc = vec3(0.0);
 				for (int s = 0; s < VOXEL_TRACE_OFFLINE_SPP; ++s) {
 					traceAcc += VoxelTracePixel(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
-					                            -viewPos.z, skyLightmap, lightmap.x, traceSeed);
+					                            -viewPos.z, skyLightmap, lightmap.x, renderTexel, s, traceSeed);
 				}
 				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_OFFLINE_SPP)) * VOXEL_GI_TRACE_STRENGTH, 1.0);
 			#else
@@ -166,7 +208,7 @@ void main() {
 				vec3 traceAcc = vec3(0.0);
 				for (int s = 0; s < VOXEL_TRACE_SPP; ++s) {
 					traceAcc += VoxelTracePixel(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
-					                            -viewPos.z, skyLightmap, lightmap.x, traceSeed);
+					                            -viewPos.z, skyLightmap, lightmap.x, renderTexel, s, traceSeed);
 				}
 				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_SPP)) * VOXEL_GI_TRACE_STRENGTH, 1.0);
 			#endif
@@ -177,17 +219,43 @@ void main() {
 			result = CalculateSSILVB(screenCoord, viewPos, worldNormal, lightmapSky);
 		#endif
 		#if defined VOXEL_GI_ENABLED && defined VOXEL_REUSE
-			// ---- 写 reservoir：几何一致才与上帧均值合并，否则重置为新样本（避免转动/移动把旧几何混入残影）；随后记录本像素几何 ----
+			// ---- ReSTIR：几何一致才与上帧均值合并，否则重置为新样本（避免转动/移动把旧几何混入残影）；随后记录本像素几何 ----
 			{
-				vec4 _pW = ((frameCounter & 1u) == 0u) ? imageLoad(reservoirB, texelPos) : imageLoad(reservoirA, texelPos);
-				vec4 _wPrev = imageLoad(reservoirW, texelPos);
-				bool _geoMatch = (distance(viewPos, _wPrev.xyz) < 0.03);
+				vec4 _pW = PingReusePrev(texelPos);
+				// ① 本像素几何一致（绝对世界坐标）：平移/转动都会使其变化 → false → 重置为新样本。
+			// 全局相机运动（_camMoved）时强制 false：本帧一律不复用/不合并，消除拖影与跳变。
+			vec3 _wPrev = imageLoad(reservoirW, texelPos).xyz;
+			bool _geoMatch = !_camMoved && (length(_wPrev - _wpos) / max(length(viewPos), 1e-4) < VOXEL_REUSE_GEO);
+				if (_geoMatch) {
+				    // ② 空间复用：仅静止一致时才合并上帧十字 4-邻域（绝对世界坐标一致）提样本。
+				    // 平移/转动时不被启用，避免把旧视角邻居混入 → 消除拖影。
+				    vec3 _accS = vec3(0.0); float _aS = 0.0; float _aM = _pW.a;
+				    for (int _dir = 0; _dir < 4; ++_dir) {
+				        ivec2 _delta = ivec2(0);
+				        if (_dir == 0) _delta = ivec2( 0, -1);
+				        else if (_dir == 1) _delta = ivec2( 1,  0);
+				        else if (_dir == 2) _delta = ivec2( 0,  1);
+				        else            _delta = ivec2(-1,  0);
+				        ivec2 _av = texelPos + _delta;
+				        if (clamp(_av, ivec2(0), (ivec2(viewWidth, viewHeight) >> 1) - 1) == _av) {
+				            vec4 _nv = PingReusePrev(_av);
+				            if (_nv.a > 0.5) {
+				                vec3 _nwP = imageLoad(reservoirW, _av).xyz;
+				                if (length(_nwP - _wpos) / max(length(viewPos), 1e-4) < VOXEL_REUSE_GEO) {
+				                    _accS += _nv.rgb * _nv.a; _aS += _nv.a; _aM = max(_aM, _nv.a);
+				                }
+				            }
+				        }
+				    }
+				    if (_aS > 0.05) { _pW.rgb = _accS / _aS; _pW.a = min(_aM, VOXEL_REUSE_MCAP); }
+				}
 				bool _valid = _geoMatch && _pW.a > 0.5;
 				float _M = _valid ? min(_pW.a + 1.0, VOXEL_REUSE_MCAP) : 1.0;
 				vec3 _mean = _valid ? ((_pW.rgb * _pW.a) + result.rgb) / (_pW.a + 1.0) : result.rgb;
 				vec4 _crW = vec4(_mean, _M);
 				if ((frameCounter & 1u) == 0u) imageStore(reservoirA, texelPos, _crW); else imageStore(reservoirB, texelPos, _crW);
-				imageStore(reservoirW, texelPos, vec4(viewPos, 1.0));
+				// 记录本像素"绝对世界坐标"作为下一帧一致性基准（RGBA32F 保远距离精度）
+				imageStore(reservoirW, texelPos, vec4(_wpos, 0.0));
 			}
 #endif
 			result.rgb = RGBToYCoCg(result.rgb); // Convert to YCoCg color space (for filtering)

@@ -22,8 +22,12 @@
 #define VOXEL_COARSE_SHIFT 2            // = log2(VOXEL_COARSE_GS)，coarse 坐标 = vc >> 2
 #define VOXEL_COARSE_N (VOXEL_AREA / VOXEL_COARSE_GS)   // coarse 网格边长（64/4=16）
 
-// [2026-08-28] 空洞跳跃开关：取消注释启用（追踪/注入端跳过纯空气粗块；不稳可关闭回退）
+// [2026-08-28] 空洞跳跃开关（两个独立）：
+//   VOXEL_COARSE_ACCEL：跳过"纯空气"的 4³ 粗块整体（性能大头）。
+//   VOXEL_FINE_ACCEL  ：粗块内用细格 occupancy 位图逐格跳空气（更细，易因位图不完整而漏光/空洞）。
+// 取消注释启用（不稳可关闭回退）；细格若致空洞优先只关 VOXEL_FINE_ACCEL。
 // #define VOXEL_COARSE_ACCEL
+// #define VOXEL_FINE_ACCEL
 
 // [2026-08-28] ReSTIR Phase A：时域 reservoir 复用。相机静止时每隔
 // VOXEL_REUSE_INTERVAL 帧才重投一次，其余帧复用上帧 reservoir（省追踪带宽）。
@@ -38,6 +42,13 @@
 #endif
 #ifndef VOXEL_REUSE_THRESHOLD
     #define VOXEL_REUSE_THRESHOLD 16.0  // [4 8 12 16 24 32] 静止启动阶段全速重投直到样本数达此值，随后转稀疏复用（快速收敛 + 稳态省追踪）
+#endif
+// [2026-09-01] ReSTIR 几何一致性门限：reservoirW 存上帧"相机相对 viewPos.xyz"，当前帧与之比对。
+// 深度相对阈值对"相机转动"几乎不敏感（深度变化 ~ θ²），世界法线对纯转动不变 → 小角度转动仍
+// 被判定"一致" → 复用旧视角辐照度 → 拖影。改用整段位置距离（转动 ~ θ 线性变化）+ 相对距离门限，
+// 转动/平移一超过阈值立即失效重置。单位：相对 viewPos 长度的比值（0.004 ≈ 0.23°，实为像素级裕量）。
+#ifndef VOXEL_REUSE_GEO
+    #define VOXEL_REUSE_GEO 0.004
 #endif
 
 // ------ Shadow Map 平铺布局 ------
@@ -154,7 +165,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 2026-08-04 真阳光改造（思路）：阳光注入主体改为"阴影贴图判定直射"（sunVis），
 // vanilla 天空光 lightmap 降级为弱环境底，保留洞穴渐变。
 #define VOXEL_GI_SUN_STRENGTH 0.5      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显）
-#define VOXEL_GI_SKY_STRENGTH 1.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 2.0→1.0：室内天光略过量）
+#define VOXEL_GI_SKY_STRENGTH 1.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 2.0→1.0：室内天光略过量）
 #define VOXEL_GI_BLOCK_STRENGTH 0.8    // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 方块光注入倍率（× blocklightColor，火把等光源）
 // 天空辐射贴图 → 0-1 尺度换算基准（skyViewTex 白天顶光 ≈110-130；与阳光基准同量级，
 // 调大=天光变暗、调小=天光变亮）。定义在 VoxelSkyLight.glsl 之前（VoxelLighting 先 include）
