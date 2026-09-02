@@ -8,7 +8,12 @@
 
 //======// 配置与宏定义 //=======================================================================//
 
-#define TAA_QUALITY_MODE 1 // [0 1] 0: 高画质模式 (原版 Playdead) | 1: 高性能模式 (MakeUp Fast TAA)
+// [2026-09-02] GUI/profile 的 TAA_QUALITY_MODE 应优先生效：改为 #ifndef 包裹的默认值，
+// 仅当编译行/profile 未注入时才用此处默认 1。原裸 #define 会覆盖 profile 注入的 0 →
+// GUI 选"高画质"不生效、始终跑高性能模式。
+#ifndef TAA_QUALITY_MODE
+    #define TAA_QUALITY_MODE 1 // [0 1] 0: 高画质模式 (原版 Playdead) | 1: 高性能模式 (MakeUp Fast TAA)
+#endif
 
 // [2026-09-02] 移除硬性 #undef：TAA_SHARPEN 曾被此段强制锁死，无论 GUI/profile 如何设置都不生效。
 // 现交由 settings/profile 的 TAA_SHARPEN 开关控制，开启时历史采样走 Catmull-Rom 抗振铃锐化。

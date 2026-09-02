@@ -66,6 +66,11 @@ vec3 RGBToYCoCg(in vec3 rgb) {
     ) * rgb;
 }
 vec3 YCoCgToRGB(in vec3 YCoCg) {
+	// [2026-09-02] 修复：原列主序矩阵 mat3(1,1,-1, 1,0,1, 1,-1,-1) 展开为
+	// R=Y+Co+Cg, G=Y-Cg, B=-Y+Co-Cg，与正向（Y=(R+2G+B)/4, Co=(R-B)/2, Cg=(2G-R-B)/4）
+	// 不互逆。对高饱和色（页ham森林的R极高/B极低的菌丝红）Co、Cg 数值大，误差被放大，
+	// 反向后 B 变负 → TAA 时域混合出现蓝色溢出。改正为标准 YCoCg 逆（列主序）：
+	//   R = Y + Co - Cg,  G = Y + Cg,  B = Y - Co - Cg
     return mat3(
          1.0,  1.0,  1.0,
          1.0,  0.0, -1.0,
