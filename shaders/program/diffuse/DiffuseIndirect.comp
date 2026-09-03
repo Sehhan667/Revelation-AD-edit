@@ -452,39 +452,24 @@ void main() {
 	}
 	#endif
 
-	#if defined PROBE_GI_ENABLED && defined DEBUG_PROBE_QUERY
-	// [管线自检 2026-09-03 v3] 全屏 A/B 对照，不 gate 在 terrainCheck 上：
-	// 旧版把对照嵌在 if(terrainCheck) 内 → 天空/远景(depth≥1)像素直接 imageStore 0，
-	// 视野一旦有大片天空就"半边完全没有图案"，误判为写端/读取挂了。
-	// 这里提前整屏执行：左半=cacheCol 读回，右半=refCol 直算，两半都无视地形门控。
-	// 判读：左半一片亮红 → deferred50 写端没在写缓存；左半与右半近似渐变 → 写端正常。
-	{
-		vec2 _sUv = texelToUv(renderTexel);
-		vec3 _vPos = ScreenToViewPos(vec3(_sUv, depth));
-		vec3 _pvcD = mat3(gbufferModelViewInverse) * _vPos + cameraPositionFract + float(VOXEL_RADIUS);
-		imageStore(colorimg3, texelPos, vec4(RGBToYCoCg(fract((_pvcD + vec3(cameraPositionInt)) * rcp(16.0))), 1.0));
-	}
-	return;
-	#endif
-
-	#if defined PROBE_GI_ENABLED && defined DEBUG_PROBE_PLUMBING
-	// [自检 2026-09-03 v2 绑定二分] 屏分两半：
-	//   左半 = image 直写直读自检：imageStore(当前帧写块, 本像素槽位, 颜色) 后同调用 imageLoad 读回。
-	//          有彩色 → image 绑定/读写活着；黑 → image 绑定死（shaders.properties 问题）。
-	//   右半 = sampler 读回：读乒乓另一块（上帧写的强制渐变/真实数据）。
-	//          有彩色 → sampler 绑定活且写端在跑；黑 → 写端没跑或 sampler 绑定死。
-	// 判读组合：左右都彩=链路全通；左彩右黑=写端没跑；左黑=image 绑定问题（不管右）。
+	#if defined PROBE_GI_ENABLED && defined DEBUG_PROBE_BIND_TEST
+	// [自检 2026-09-03 v3 绑定二分 DEBUG_PROBE_BIND_TEST] 非 GUI 开关（文件直接生效，Iris 不覆盖）。
+	// 屏分两半：
+	//   左半 = image 直写直读自检：imageStore(本帧写块 probeDistance 的槽位, 橙) 后同调用 imageLoad。
+	//          橙色调 → image 绑定与读写活着；黑 → image 绑定死（shaders.properties 条目问题）。
+	//   右半 = sampler 读回乒乓另一块(上帧写的辐照度) → 有彩色 = sampler 绑定活 + 写端在跑；
+	//          全黑 = 写端没跑或 sampler 绑定死。
 	{
 		bool _even = ((uint(frameCounter) & 1u) == 0u);
-		// 左半：同调用 imageStore→imageLoad（当前写块，防误伤取本帧不写的块以外…测试用当前块）
+		// 左半自检（写 distance 图当前帧块，不污染右半读的辐照度图）
 		vec3 _selfCol = vec3(0.0);
 		{
 			ivec3 _st = ivec3(texelPos.x & 127, texelPos.y & 127, 0);
-			vec4 _sc = vec4(1.0, 0.5, 0.25, 1.0);
-			if (_even) { imageStore(probeIrradiance, _st, _sc); _selfCol = imageLoad(probeIrradiance, _st).rgb; }
-			else       { imageStore(probeIrradiance2, _st, _sc); _selfCol = imageLoad(probeIrradiance2, _st).rgb; }
+			vec4 _sc = vec4(1.0, 0.45, 0.2, 1.0);
+			if (_even) { imageStore(probeDistance, _st, _sc); _selfCol = imageLoad(probeDistance, _st).rgb; }
+			else       { imageStore(probeDistance2, _st, _sc); _selfCol = imageLoad(probeDistance2, _st).rgb; }
 		}
-		// 右半：sampler 读乒乓另一块(上帧内容)
+		// 右半：sampler 读上帧辐照度（各向同性均值）
 		vec3 _sampCol = vec3(0.0);
 		{
 			vec2 _sUv = texelToUv(renderTexel);
@@ -508,6 +493,21 @@ void main() {
 		}
 		vec3 _half = (renderTexel.x < (int(viewWidth) >> 1)) ? _selfCol : _sampCol;
 		imageStore(colorimg3, texelPos, vec4(RGBToYCoCg(_half * 6.0), 1.0));
+	}
+	return;
+	#endif
+
+	#if defined PROBE_GI_ENABLED && defined DEBUG_PROBE_QUERY
+	// [管线自检 2026-09-03 v3] 全屏 A/B 对照，不 gate 在 terrainCheck 上：
+	// 旧版把对照嵌在 if(terrainCheck) 内 → 天空/远景(depth≥1)像素直接 imageStore 0，
+	// 视野一旦有大片天空就"半边完全没有图案"，误判为写端/读取挂了。
+	// 这里提前整屏执行：左半=cacheCol 读回，右半=refCol 直算，两半都无视地形门控。
+	// 判读：左半一片亮红 → deferred50 写端没在写缓存；左半与右半近似渐变 → 写端正常。
+	{
+		vec2 _sUv = texelToUv(renderTexel);
+		vec3 _vPos = ScreenToViewPos(vec3(_sUv, depth));
+		vec3 _pvcD = mat3(gbufferModelViewInverse) * _vPos + cameraPositionFract + float(VOXEL_RADIUS);
+		imageStore(colorimg3, texelPos, vec4(RGBToYCoCg(fract((_pvcD + vec3(cameraPositionInt)) * rcp(16.0))), 1.0));
 	}
 	return;
 	#endif

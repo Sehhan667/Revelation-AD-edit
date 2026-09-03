@@ -377,12 +377,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define PROBE_HYSTERESIS 0.97       // [0.9 0.95 0.97 0.98 0.99] 时域滞后（高=更去噪/收敛慢）
 	#define PROBE_NORMAL_BIAS 0.5       // [0.1 0.3 0.5 0.8 1.0] 采样点沿表面法线推向表面（世界尺度）
 	#define PROBE_VIEW_BIAS 0.5         // [0.1 0.3 0.5 0.8 1.0] 采样点沿视线推离墙面（世界尺度）
-	// [管线自检 DDGI 2026-09-03] 写端强制测试 + 缓存读回（写→存→读 链路二分）：
-	// 开启时写端无视射线/混合，每个探针所有纹素直接写"探针格心世界位置"绑定的彩色渐变(12m 周期)；
-	// 显示端整屏读回该值 ×8。判读：
-	//   彩色 4m 方块且钉世界 → 写→存→读 链路通，真实 GI 黑 = 射线值/混合问题（查 ProbeTrace）；
-	//   全黑/无画面 → 写端没在跑（dispatch/绑定/纹理尺寸错）。
-	#define DEBUG_PROBE_PLUMBING  // [临时自检 2026-09-03 硬开] 二分 image 绑定 vs 写端
+	// [自检 DEBUG_PROBE_BIND_TEST] 非 GUI 开关（文件直接生效，Iris 不管理不覆盖）：
+	// 屏分两半二分 image/sampler 绑定与写端。判读见 DiffuseIndirect.comp 该块注释。
+	#define DEBUG_PROBE_BIND_TEST  // [临时自检 2026-09-03] 左=image 直写直读，右=sampler 读回
 	// [管线自检 2 DDGI] 全屏 A/B：左半 = 完整 DDGI 查询裸值，右半 = 16m 周期坐标渐变（钉世界基准）。
 	// 判读：左半有暖光斑 → 查询端通；左半黑 → 查询端返回 0（配合上面的写端自检二分写端/查询端）。
 	//#define DEBUG_PROBE_QUERY
