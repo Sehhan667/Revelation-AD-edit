@@ -468,31 +468,46 @@ void main() {
 	#endif
 
 	#if defined PROBE_GI_ENABLED && defined DEBUG_PROBE_PLUMBING
-	// [管线自检 DDGI 2026-09-03] 写端/缓存健康（各向同性读回 ≈ 旧单值缓存语义）：
-	// 按像素所在探针格(锚=上帧 gridOrigin，与查询端同口径)取该探针八面体 N² 内部均值 ×8 上屏。
-	// 判读：火把附近出现暖色 4m 块 → 写端与缓存有值(问题在查询端方向/遮挡)；
-	//       全黑 → 写端没写或缓存空(查写端 dispatch/绑定)；错位/乱闪 → 锚定/乒乓错。
+	// [自检 2026-09-03 v2 绑定二分] 屏分两半：
+	//   左半 = image 直写直读自检：imageStore(当前帧写块, 本像素槽位, 颜色) 后同调用 imageLoad 读回。
+	//          有彩色 → image 绑定/读写活着；黑 → image 绑定死（shaders.properties 问题）。
+	//   右半 = sampler 读回：读乒乓另一块（上帧写的强制渐变/真实数据）。
+	//          有彩色 → sampler 绑定活且写端在跑；黑 → 写端没跑或 sampler 绑定死。
+	// 判读组合：左右都彩=链路全通；左彩右黑=写端没跑；左黑=image 绑定问题（不管右）。
 	{
-		vec2 _sUv = texelToUv(renderTexel);
-		vec3 _vPos = ScreenToViewPos(vec3(_sUv, depth));
-		vec3 _pvcP = mat3(gbufferModelViewInverse) * _vPos + cameraPositionFract + float(VOXEL_RADIUS);
-		vec3 _wp = _pvcP + vec3(cameraPositionInt) - float(VOXEL_RADIUS);
-		const float _G16 = float(PROBE_GI_GRID_SIZE) * 0.5;
-		vec3 _go = (round(previousCameraPosition * rcp(PROBE_SPACING)) - _G16) * PROBE_SPACING;
-		ivec3 _cell = clamp(ivec3(floor((_wp - _go) * rcp(PROBE_SPACING))),
-		                    ivec3(0), ivec3(PROBE_GI_GRID_SIZE - 1));
-		vec3 _iso = vec3(0.0);
 		bool _even = ((uint(frameCounter) & 1u) == 0u);
-		for (int _k = 0; _k < PROBE_OCT_SIZE * PROBE_OCT_SIZE; ++_k) {
-			ivec2 _ot = ivec2(_k % PROBE_OCT_SIZE, _k / PROBE_OCT_SIZE);   // interior 0-based
-			ivec3 _c3 = ProbeOctAtlasCoord(_cell, _ot + 1);                 // 块内局部 = +1 边界
-			vec4 _tv = _even
-			         ? texelFetch(probeIrradiance2Sampler, _c3, 0)
-			         : texelFetch(probeIrradianceSampler, _c3, 0);
-			_iso += _tv.rgb;
+		// 左半：同调用 imageStore→imageLoad（当前写块，防误伤取本帧不写的块以外…测试用当前块）
+		vec3 _selfCol = vec3(0.0);
+		{
+			ivec3 _st = ivec3(texelPos.x & 127, texelPos.y & 127, 0);
+			vec4 _sc = vec4(1.0, 0.5, 0.25, 1.0);
+			if (_even) { imageStore(probeIrradiance, _st, _sc); _selfCol = imageLoad(probeIrradiance, _st).rgb; }
+			else       { imageStore(probeIrradiance2, _st, _sc); _selfCol = imageLoad(probeIrradiance2, _st).rgb; }
 		}
-		_iso *= rcp(float(PROBE_OCT_SIZE * PROBE_OCT_SIZE)) * 8.0;   // gamma 编码存储值 ×8 便于看
-		imageStore(colorimg3, texelPos, vec4(RGBToYCoCg(_iso), 1.0));
+		// 右半：sampler 读乒乓另一块(上帧内容)
+		vec3 _sampCol = vec3(0.0);
+		{
+			vec2 _sUv = texelToUv(renderTexel);
+			vec3 _vPos = ScreenToViewPos(vec3(_sUv, depth));
+			vec3 _pvcP = mat3(gbufferModelViewInverse) * _vPos + cameraPositionFract + float(VOXEL_RADIUS);
+			vec3 _wp = _pvcP + vec3(cameraPositionInt) - float(VOXEL_RADIUS);
+			const float _G16 = float(PROBE_GI_GRID_SIZE) * 0.5;
+			vec3 _go = (round(previousCameraPosition * rcp(PROBE_SPACING)) - _G16) * PROBE_SPACING;
+			ivec3 _cell = clamp(ivec3(floor((_wp - _go) * rcp(PROBE_SPACING))),
+			                    ivec3(0), ivec3(PROBE_GI_GRID_SIZE - 1));
+			vec3 _iso = vec3(0.0);
+			for (int _k = 0; _k < PROBE_OCT_SIZE * PROBE_OCT_SIZE; ++_k) {
+				ivec2 _ot = ivec2(_k % PROBE_OCT_SIZE, _k / PROBE_OCT_SIZE);
+				ivec3 _c3 = ProbeOctAtlasCoord(_cell, _ot + 1);
+				vec4 _tv = _even
+				         ? texelFetch(probeIrradiance2Sampler, _c3, 0)
+				         : texelFetch(probeIrradianceSampler, _c3, 0);
+				_iso += _tv.rgb;
+			}
+			_sampCol = _iso * rcp(float(PROBE_OCT_SIZE * PROBE_OCT_SIZE));
+		}
+		vec3 _half = (renderTexel.x < (int(viewWidth) >> 1)) ? _selfCol : _sampCol;
+		imageStore(colorimg3, texelPos, vec4(RGBToYCoCg(_half * 6.0), 1.0));
 	}
 	return;
 	#endif

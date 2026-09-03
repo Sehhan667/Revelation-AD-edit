@@ -382,7 +382,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 显示端整屏读回该值 ×8。判读：
 	//   彩色 4m 方块且钉世界 → 写→存→读 链路通，真实 GI 黑 = 射线值/混合问题（查 ProbeTrace）；
 	//   全黑/无画面 → 写端没在跑（dispatch/绑定/纹理尺寸错）。
-	//#define DEBUG_PROBE_PLUMBING
+	#define DEBUG_PROBE_PLUMBING  // [临时自检 2026-09-03 硬开] 二分 image 绑定 vs 写端
 	// [管线自检 2 DDGI] 全屏 A/B：左半 = 完整 DDGI 查询裸值，右半 = 16m 周期坐标渐变（钉世界基准）。
 	// 判读：左半有暖光斑 → 查询端通；左半黑 → 查询端返回 0（配合上面的写端自检二分写端/查询端）。
 	//#define DEBUG_PROBE_QUERY
