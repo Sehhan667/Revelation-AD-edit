@@ -696,3 +696,8 @@ $c -notmatch '\?'                                  # 无乱码
 - **已修的正确性细节**：(a) 查询端不收采样器局部变量，按帧奇偶直接把 sampler 传给函数(sampler 三元/局部是 GLSL 最易编译
   失败点)；(b) 八面体双线性须 +0.5 落到块内纹素中心(原 +1.0 会让每个纹素中心 50/50 糊化、且左右折缝不对称)——修正后
   中心处权重=1、左右折叠对称；(c) 查询端跳过未写入/NaN 探针(写端 alpha=1 标记)，防首帧另一块未初始化的脏数据上屏。
+- **[根因级大坑 2026-09-03] shaders.properties 的 image 行必须单空格分词**：为对齐加的多空格(如
+  `probeIrradiance   = probeIrradianceSampler   rgba ...`)会让 Iris 解析失败——游戏日志出现
+  `Unknown image type! / Image X is invalid! Format: null`，纹理根本没创建 → imageStore 写空、sampler 读黑 →
+  **缓存永远为空 → GI 全黑，且一切读缓存的调试视图全黑**（不报编译错，极难定位）。教训：新加 image 行先查
+  游戏 logs/latest.log 有没有该条目的 `Unknown image type` 错误。
