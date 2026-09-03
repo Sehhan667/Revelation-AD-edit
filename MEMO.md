@@ -691,5 +691,8 @@ $c -notmatch '\?'                                  # 无乱码
   lib/lighting/ProbeGI.glsl(八面体编解码 + 图集坐标 + 完整 DDGI 查询)；diffuse/DiffuseIndirect.comp(ProbeTrace 出距离 +
   ProbeUpdateSlice DDGI 写端 + 边界镜像)；DeferredLight.frag 不变。
 - **风险**：无法本地编译 → 首要风险点 = GLSL 编译错误(局部数组/图像读写/采样器局部变量)；其次寄存器压力(local 数组
-  ×16 可能下探伤占用)、亮度尺度(×2π×128 可能偏亮，靠 PROBE_GI_STRENGTH 调)、八面体缝折叠/chebyshev 细节。改
-  PROBE_OCT_SIZE 必须同步 shaders.properties 纹理尺寸(128→G*(N+2) 同深)。
+  ×16 可能下探伤占用)、亮度尺度(×2π×128 可能偏亮，靠 PROBE_GI_STRENGTH 调)、chebyshev 细节。改 PROBE_OCT_SIZE
+  必须同步 shaders.properties 纹理尺寸(128→G*(N+2) 同深)。
+- **已修的正确性细节**：(a) 查询端不收采样器局部变量，按帧奇偶直接把 sampler 传给函数(sampler 三元/局部是 GLSL 最易编译
+  失败点)；(b) 八面体双线性须 +0.5 落到块内纹素中心(原 +1.0 会让每个纹素中心 50/50 糊化、且左右折缝不对称)——修正后
+  中心处权重=1、左右折叠对称；(c) 查询端跳过未写入/NaN 探针(写端 alpha=1 标记)，防首帧另一块未初始化的脏数据上屏。
