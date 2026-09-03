@@ -167,9 +167,10 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
         vec3 trilinear = max(vec3(0.001), mix(vec3(1.0) - alpha, alpha, vec3(adjOffset)));
         weight *= trilinear.x * trilinear.y * trilinear.z;
 
-        // 采样辐照度（法线方向纹素）
+        // 采样辐照度（法线方向纹素）；先判有效性/NaN（写端 alpha=1 标记；首帧另一块未写入 → 跳过）。
         vec4 irrSample = ProbeOctSample(even ? probeIrradiance2Sampler : probeIrradianceSampler,
                                         adjCell, worldNormal);
+        if (irrSample.a < 0.5 || !all(equal(irrSample.rgb, irrSample.rgb))) continue;
         vec3 probeIrr = pow(max(irrSample.rgb, vec3(0.0)), vec3(gammaHalf));
 
         irradiance += weight * probeIrr;
