@@ -50,8 +50,12 @@ vec4 ProbeFetchTrilinear(sampler3D s, vec3 probeCoord) {
 // 闪回 —— 连续 compute 跨 pass imageStore 可见性滞后 1-2 帧，不依赖同帧可见性的本时序才稳。
 // 乒乓相位：deferred50 偶帧写 A/奇帧写 B；查询在读之前、须反相读上帧块 → 偶读 B、奇读 A。
 vec3 ProbeSampleRadiance(vec3 vc) {
-    vec3 cDi = vec3(cameraPositionInt - previousCameraPositionInt);
-    vec3 probeCoord = (vc + cDi) * rcp(PROBE_SPACING);
+    // [DDGI 式网格锚定读取] 查询点世界位置 → 上帧网格索引。网格锚 gridOriginPrev 对齐到 4m 格，
+    // 与写端 ProbeUpdateSlice 的世界锚定一致（内容钉世界，无累积漂移/回卷）。
+    const float GRID_HALF = float(PROBE_GI_GRID_SIZE) * 0.5;
+    vec3 gridOriginPrev = (round(previousCameraPosition * rcp(PROBE_SPACING)) - GRID_HALF) * PROBE_SPACING;
+    vec3 probeWorld = vc + vec3(cameraPositionInt) - float(VOXEL_RADIUS);   // 查询点世界位置
+    vec3 probeCoord = (probeWorld - gridOriginPrev) * rcp(PROBE_SPACING);   // 上帧网格索引
     vec4 rad = ((frameCounter & 1) == 0)
         ? ProbeFetchTrilinear(probeRadiance2Sampler, probeCoord)
         : ProbeFetchTrilinear(probeRadianceSampler,  probeCoord);
@@ -64,5 +68,7 @@ vec3 ProbeSampleRadiance(vec3 vc) {
     if (rad.a < 0.5) return vec3(2.0, 0.05, 0.05);
     if (max(max(rad.r, rad.g), rad.b) < 1e-4) return vec3(0.05, 2.0, 0.05);
 #endif
+    // NaN 防御：缓存里若残留 NaN（DDA/求交/未绑定采样器兜底路径），读端也归零，避免 NaN 上屏。
+    if (!all(equal(rad.rgb, rad.rgb))) return vec3(0.0);
     return max(rad.rgb, vec3(0.0));
 }

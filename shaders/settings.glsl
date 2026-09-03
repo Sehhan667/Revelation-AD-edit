@@ -373,12 +373,12 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// [管线自检 2026-09-03] 打开后探针缓存写入与探针格绑定的世界锚定渐变色（每 16m 一循环），
 	// 屏幕应呈现：整屏彩色渐变、钉在世界方块上（走动不跟手）、稳定不闪。
 	// 失败形态对应根因：只一角有渐变=dispatch 尺寸；渐变跟相机跑=查询/重投影坐标；闪烁=乒乓奇偶。
-#define DEBUG_PROBE_PLUMBING
+//#define DEBUG_PROBE_PLUMBING
 	// [管线自检 2] 打开后 DiffuseIndirect **不读探针缓存**，直接把查询坐标的渐变上屏。
 	// 与 DEBUG_PROBE_PLUMBING 配合二分定位：
 	//   本开关开 + 整屏渐变钉世界 → 查询端正确，问题在写入端(dispatch/更新pass)；
 	//   本开关开 + 仍只有一角/跟相机 → 查询端坐标换算错。
-	#define DEBUG_PROBE_QUERY
+	//#define DEBUG_PROBE_QUERY
 	//#define VISUALIZE_VOXELS
 	//#define DEBUG_VOXEL_GI  // 调试(备用)：按体素 voxelID 标色（青绿=活板门/门 橙棕=形状块[楼梯/半砖/栅栏/墙] 黄=全块 蓝=空 红=越界）
 	//#define DEBUG_VOXEL_RADIANCE  // 调试：直接显示传播后的体素辐照度（验证"体素化+传播"链路）

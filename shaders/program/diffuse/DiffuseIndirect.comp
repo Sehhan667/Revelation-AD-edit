@@ -179,6 +179,14 @@ vec4 PingReusePrev(ivec2 p) {
         int ia = min(pixIdx * perPixel, totalVoxels);
         int ib = min(ia + perPixel, totalVoxels);
 
+        // ---- DDGI 式网格重居中 ----
+        // 探针网格世界锚定：探针(0,0,0)的世界坐标 gridOrigin，对齐到 4m 整数探针格边界。
+        // 相机始终位于网格中心附近；相机跨过 4m 边界时网格整格平移，内容按整数格重投影。
+        const float GRID_HALF = float(PROBE_GI_GRID_SIZE) * 0.5;
+        vec3 gridOriginThis = (round(cameraPosition * rcp(PROBE_SPACING)) - GRID_HALF) * PROBE_SPACING;
+        vec3 gridOriginPrev = (round(previousCameraPosition * rcp(PROBE_SPACING)) - GRID_HALF) * PROBE_SPACING;
+        vec3 reCenter = (gridOriginThis - gridOriginPrev) * rcp(PROBE_SPACING);   // 整数格重居中偏移
+
         for (int vi = ia; vi < ib; ++vi) {
             int G = PROBE_GI_GRID_SIZE;
             int z = vi / (G * G);
@@ -186,7 +194,9 @@ vec4 PingReusePrev(ivec2 p) {
             int x = vi % G;
             ivec3 tid = ivec3(x, y, z);
 
-            vec3 probeCenter = (vec3(tid) + 0.5) * PROBE_SPACING;
+            // 探针 tid 的世界位置(4m 格心) → 体素坐标(vc)采样体素化（世界锚定）
+            vec3 probeCenter = (gridOriginThis + (vec3(tid) + 0.5) * PROBE_SPACING)
+                             - vec3(cameraPositionInt) + float(VOXEL_RADIUS);
 
             vec3 acc = vec3(0.0);
             for (int s = 0; s < PROBE_RAY_SAMPLES; ++s) {
@@ -195,9 +205,16 @@ vec4 PingReusePrev(ivec2 p) {
                 vec2 u = vec2(hash13(vec3(tid.x, tid.y, tid.z) * 7.13 + vec3(s * 1.7, s * 2.3, float(frameCounter))),
                               hash13(vec3(tid.x, tid.y, tid.z) * 11.7 + vec3(s * 3.1, s * 4.7, float(frameCounter) * 1.3)));
                 vec3 dir = VoxelSphereUnitVectorFromU(u);
-                acc += ProbeTrace(probeCenter, dir);
+                // [FIX 2026-09-03 NaN 防护] 单条线若有 NaN/负值（DDA/求交/未绑定采样器兜底路径），
+                // 会把整个探针平均污染成 NaN → EMA oldValid=false(no temporal) → 缓存闪烁；
+                // 且 NaN 经 trilinear 读取传播成"忽明忽暗/移动时一闪一闪"。逐样本守卫：坏样本置 0。
+                vec3 _samp = ProbeTrace(probeCenter, dir);
+                if (!all(equal(_samp, _samp)) || any(lessThan(_samp, vec3(0.0)))) _samp = vec3(0.0);
+                acc += _samp;
             }
             vec3 newVal = acc * rcp(float(PROBE_RAY_SAMPLES));
+            // 钳到 [0, 8) 并与 oldValid 的 <8 判据一致，避免大值触发 mixA=1.0（跳过 EMA → 闪）。
+            newVal = clamp(newVal, vec3(0.0), vec3(7.9));
 
 #ifdef DEBUG_PROBE_PLUMBING
             // [管线自检] 写端健康标记：世界锚定、16m 周期渐变色（与查询端直算参考同公式
@@ -208,9 +225,9 @@ vec4 PingReusePrev(ivec2 p) {
 #else
 #endif
 
-            // EMA 时域累积 + 历史重投影（锚 = 本帧 cameraPositionInt；查询端 +cDi 读取）
-            vec3 gridShift = vec3(cameraPositionInt - previousCameraPositionInt);
-            vec3 oldProbeCoord = vec3(tid) + 0.5 + gridShift * rcp(PROBE_SPACING);
+            // EMA 历史读取 + DDGI 重居中：读上帧网格里该世界点的旧索引(= tid+0.5+reCenter)。
+            // 整数格重投影(无插值)；越界(相机新暴露区域) → 历史无效 → 重置为新值。
+            vec3 oldProbeCoord = vec3(tid) + 0.5 + reCenter;
             bool oldInBounds = all(greaterThanEqual(oldProbeCoord, vec3(0.0)))
                             && all(lessThan(oldProbeCoord, vec3(float(PROBE_GI_GRID_SIZE))));
 
@@ -225,6 +242,14 @@ vec4 PingReusePrev(ivec2 p) {
                          && all(greaterThanEqual(old.rgb, vec3(0.0)));
 
             float mixA = oldValid ? 0.1 : 1.0;
+#ifdef DEBUG_PROBE_PLUMBING
+            mixA = 1.0;
+#endif
+            // [FIX 2026-09-03 移动重锚] 相机跨整数格边界(camInt 变)时,coarse 4m 格的重投影
+            // 不精确 + 慢 EMA 会让内容缓慢重新锚定 → 移动时内容落后于世界 → "错位/乱飞"、
+            // 停下才追回(正是调试渐变看到的 EMA 滞后)。移动期间提高 mixA 让内容快速对齐
+            // 新位置(代价:移动时接受更多新值、略增噪声);完全静止仍用 0.1 做时域降噪。
+            if (any(notEqual(cameraPositionInt, previousCameraPositionInt))) mixA = max(mixA, 0.5);
             vec3 oldVal = oldValid ? old.rgb : vec3(0.0);
             vec4 outVal = vec4(mix(oldVal, newVal, mixA), 1.0);
             if ((frameCounter & 1u) == 0u) imageStore(probeRadiance,  tid, outVal);
