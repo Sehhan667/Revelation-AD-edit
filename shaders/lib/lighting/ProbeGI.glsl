@@ -80,11 +80,14 @@ vec3 ProbeOctTexelDir(ivec2 octTexel) {
 }
 
 // 八面体图集双线性采样（手动 texelFetch，含 1-texel 边界 → 跨缝可正确折叠）。
-// dir 为世界方向；probeCell ∈ [0,G)³。
+// 坐标约定：内部纹素 0..N-1（块内 1..N）的中心角方向 = Write 端 ProbeOctTexelDir；
+// 查询时把方向映射到"块内连续坐标 t=(oct*0.5+0.5)*N ∈[0,N]"，再 +0.5 落到块内 1..N 中心准
+// （中心处 f=0 得权重 1，不再 50/50 糊化）。t∈[0,N] → tb∈[0.5,N+0.5]，采样邻域含左右边界 0/N+1，
+// 左右折叠对称、跨缝正确（边界由 ProbeBorderInterior 镜像拷贝）。
 vec4 ProbeOctSample(sampler3D s, ivec3 probeCell, vec3 dir) {
     vec2 oct = ProbeOctEncode(dir);
     vec2 t = (oct * 0.5 + 0.5) * float(PROBE_OCT_SIZE);   // [0,N] 内部坐标
-    vec2 tb = t + 1.0;                                    // [1, N+1] 含边界
+    vec2 tb = t + 0.5;                                    // [0.5,N+0.5] 含边界（中心在整数）
     ivec2 i0 = ivec2(floor(tb));
     vec2 f = tb - vec2(i0);
     vec4 acc = vec4(0.0);
