@@ -343,6 +343,16 @@ vec4 PingReusePrev(ivec2 p) {
                     }
                     vec2 outDist = mix(newDist, oldDistV.rg, hyst);
 
+#ifdef DEBUG_PROBE_PLUMBING
+                    // [写端强制测试 2026-09-03] 无视射线/混合/时域：每个探针的所有纹素直接写入
+                    // 与"探针格心世界位置"绑定的彩色渐变（12m 周期）。配合自检显示端读回 →
+                    // 画面应见彩色 4m 方块并钉在世界。判读：
+                    //   有彩色方块 → 写→存→读 链路通，真实 GI 黑 = 射线值/混合问题（查 ProbeTrace）；
+                    //   仍黑/无画面 → 写端没在跑（dispatch/绑定/纹理尺寸问题）。
+                    outIrr = fract((gridOriginThis + (vec3(tid) + 0.5) * sp) * rcp(16.0));
+                    outDist = vec2(10.0, 100.0);   // 大距离场 = 不遮挡（避免测试图被 cheb 压黑）
+#endif
+
                     ProbeStore(tid, octTexel, outIrr, outDist, writeB);
                 }
             }
