@@ -46,7 +46,8 @@ uniform sampler3D probeDistance2Sampler;
 //================================================================================================//
 vec2 ProbeOctSign(vec2 v) {
     vec2 s = sign(v);
-    return mix(s, vec2(1.0), equal(s, vec2(0.0)));   // sign(0)→1（避免 fold 处归零）
+    // sign(0)→1（避免 fold 处归零）。用 vec2(bool) 转 0/1，避免 mix(x,y,bvec) 的 HLSL 翻译歧义。
+    return mix(s, vec2(1.0), vec2(equal(s, vec2(0.0))));
 }
 
 // 方向 → [-1,1]² 八面体 UV（前方半球的相反侧折叠到同方块）
@@ -104,6 +105,7 @@ vec4 ProbeOctSample(sampler3D s, ivec3 probeCell, vec3 dir) {
 // DDGI 查询：vc(体素空间连续坐标) + 世界法线 + 相机视线 → 线性入射辐照度（未乘 albedo）
 //================================================================================================//
 float ProbeLum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+float ProbeMaxComp(vec3 c) { return max(max(c.r, c.g), c.b); }
 
 vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
     const float G = float(PROBE_GI_GRID_SIZE);

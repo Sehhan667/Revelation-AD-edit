@@ -331,8 +331,11 @@ vec4 PingReusePrev(ivec2 p) {
                         if (ProbeLum(delta) > 0.5) delta *= 0.25;
                         vec3 lerpDelta = (1.0 - hyst) * delta;
                         const float cThresh = 1.0 / 1024.0;
-                        if (max(newIrrEnc) < max(oldMean)) {
-                            lerpDelta = min(max(cThresh, abs(lerpDelta)), abs(delta)) * sign(lerpDelta);
+                        if (ProbeMaxComp(newIrrEnc) < ProbeMaxComp(oldMean)) {
+                            // 变暗：给最小步进避免卡死。逐通道 min/max + 手写符（避免 max(float,vec3)/sign(vec3) 翻译问题）。
+                            vec3 absDelta = abs(delta);
+                            vec3 minStep  = min(max(abs(lerpDelta), vec3(cThresh)), absDelta);
+                            lerpDelta = minStep * mix(vec3(-1.0), vec3(1.0), step(vec3(0.0), lerpDelta));
                         }
                         outIrr = oldMean + lerpDelta;
                     } else {
