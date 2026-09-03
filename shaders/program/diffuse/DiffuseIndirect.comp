@@ -496,14 +496,16 @@ void main() {
 			// → 查询锚/重居中错；左半全黑 → 写端没写（查写端 dispatch）。只赋 RGB 原始值，勿预转 YCoCg。
 			vec3 _refCol = fract((_pvc + vec3(cameraPositionInt)) * rcp(16.0));
 			vec3 _cacheCol = ProbeSampleRadiance(_pvc,
-				normalize(mat3(gbufferModelViewInverse) * FetchSurfaceNormal(renderTexel)),
+				normalize(FetchSurfaceNormal(renderTexel)),
 				normalize(mat3(gbufferModelViewInverse) * viewPos));
 			// 分屏阈值用全分辨率 renderTexel（texelPos 是半分辨率，范围[0,vw/2)）判定。
 			vec3 _dbgCol = (renderTexel.x < (int(viewWidth) >> 1)) ? _cacheCol : _refCol;
 			result = vec4(_dbgCol, 1.0);
 		#else
 			// 完整 DDGI 查询：需要世界法线 + 世界空间相机视线（方向性辐照度）。
-			vec3 _pvcN = normalize(mat3(gbufferModelViewInverse) * FetchSurfaceNormal(renderTexel));
+			// [FIX 2026-09-03] normalPack 存的是**世界空间**法线（DeferredLight FetchNormalData→worldNormal
+			// 再乘 gbufferModelView 才转 view 的约定）——不能乘 gbufferModelViewInverse（曾把方向转错 → 查询全黑）。
+			vec3 _pvcN = normalize(FetchSurfaceNormal(renderTexel));
 			result = vec4(ProbeSampleRadiance(_pvc, _pvcN, normalize(mat3(gbufferModelViewInverse) * viewPos)) * PROBE_GI_STRENGTH, 1.0);
 		#endif
 		#elif defined VOXEL_GI_ENABLED
