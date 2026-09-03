@@ -633,3 +633,36 @@ $c -notmatch '\?'                                  # 无乱码
 
 
 
+
+---
+
+# 备忘：Probe GI（DDGI 风格探针辐照度缓存）实现关键点（2026-09-03）
+
+## 架构
+- 独立第三套间接光信号源（与 VXGI/SSILVB 并列，互斥）。16^3 探针 x 4m = 64m = VOXEL_AREA，
+  复用体素化(voxelData)当场景几何，无需重新体素化。单值各向同性辐照度缓存（每探针一个 rgba16f）。
+- 写端并入查询端 compute：写入 DiffuseIndirect(deferred1_a) 同一 dispatch（写 B 读 A 乒乓），
+  复用"compute 内 imageStore 该 3D 纹理 + 读回"的已验证机制。
+
+## 翻过的坑（最终成型方案）
+1. 独立写端 pass 不被调度：写端挂 deferred50/22(fragment) A/B 分屏均全红 -> 该额外 pass 根本不被
+   Iris 调度。"写读链路/乒乓/imageStore"都是好的，问题只在 pass 是否跑 -> 方案B 写端并入查询端 compute。
+2. 黑屏(第一次跑写端)：deferred22.fsh 里 `#ifdef` 包 `#include` 前没先 include 设置宏，宏未定义 ->
+   两个 include 都不命中 -> 无 main() -> 编译失败 -> 黑屏。修：先 `#include "/settings.glsl"`（有
+   INCLUDE_SETTINGS 守卫、只定义宏可重复包含）；不要 include Utility.glsl（含未守卫函数，会重定义）。
+3. viewWidth/viewHeight 是 float：`>>` 只接受整型操作数，须先 `int(viewWidth) >> 1`。
+4. NaN/负值防护：单条线 NaN/负值污染整个探针平均 -> EMA oldValid=false(跳过时域)->闪烁，并经 trilinear
+   读取传播成"忽明忽暗/一闪一闪"。逐样本守卫坏样本置 0；newVal 钳 [0,7.9]。
+5. (核心)移动"偏移/乱飞"根因 = 探针网格锚定 + 重投影方式：
+   - 最初"固定格 + 分数格重投影[read (vc+cDi)/4]" -> 内容不钉世界、乱飞；
+   - 试"整数格重投影[round(cDi/4)]" -> 内容跟随玩家但每~4格回卷(网格不重居中)；
+   - 正解 = DDGI 式"世界锚定 + 相机跨 4m 边界整格重居中 + 整数格重投影"：
+     gridOrigin=(round(相机/4m)-8格)*4m；探针世界位置->vc 采样体素；历史按 reCenter(整数格)重投影(无插值)。
+6. vs VXGI：VXGI 用 1m 整数格 + 慢 EMA + SVGF 所以稳定；coarse 4m 探针格若用分数格重投影需插值、易错位。
+   DDGI 式整格重居中(4m 边界)+ 整数格重投影才无插值、钉世界。
+
+## 关键技术点
+- 探针格坐标->vc：探针世界位置 - cameraPositionInt + VOXEL_RADIUS；读取：查询点世界位置 = vc + camInt - VOXEL_RADIUS。
+- 整格居中：gridOriginThis/Prev 每帧从 cameraPosition/previousCameraPosition(round到4m)算，无需持久状态。
+- 有效性标记 alpha=1.0 表示本管线写入；查询端 a<0.5 判"从未写入"(定位"缓存从没被写"的关键)。
+- 全量更新(每帧4096探针)+ 激进 EMA(有效0.1/无效1.0)快速洗净垃圾；相机跨格边界时加速重锚。
