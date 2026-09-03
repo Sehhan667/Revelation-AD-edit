@@ -370,6 +370,13 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define PROBE_RAY_SAMPLES 16        // [4 8 16 32 48 64] 每探针每次更新的方向采样数
 	#define PROBE_UPDATE_PERIOD 8       // [2 4 8 16 32] 每个探针每隔 N 帧更新一次（帧间方向轮转）
 	#define PROBE_MAX_FRAMES 32.0       // [4 8 16 32 64 128] EMA 时间常数（越小收敛越快/越噪）
+	// [DDGI 完整重写 2026-09-03] 八面体/边界/滞后/偏置参数。
+	// PROBE_OCT_SIZE=八面体内边数(每探针方向分辨率)；改它必须同步 shaders.properties 的三张纹理尺寸(128→G*(O),同深)。
+	#define PROBE_OCT_SIZE 6            // [4 6 8] 八面体探针映射内边数（含 1 像素边界 → 块边 O=+2）
+	#define PROBE_IRRADIANCE_GAMMA 5.0  // 辐照度亮度编码 gamma（DDGI 默认 5）：改善亮暗收敛与低亮度精度
+	#define PROBE_HYSTERESIS 0.97       // [0.9 0.95 0.97 0.98 0.99] 时域滞后（高=更去噪/收敛慢）
+	#define PROBE_NORMAL_BIAS 0.5       // [0.1 0.3 0.5 0.8 1.0] 采样点沿表面法线推向表面（世界尺度）
+	#define PROBE_VIEW_BIAS 0.5         // [0.1 0.3 0.5 0.8 1.0] 采样点沿视线推离墙面（世界尺度）
 	// [管线自检 2026-09-03] 打开后探针缓存写入与探针格绑定的世界锚定渐变色（每 16m 一循环），
 	// 屏幕应呈现：整屏彩色渐变、钉在世界方块上（走动不跟手）、稳定不闪。
 	// 失败形态对应根因：只一角有渐变=dispatch 尺寸；渐变跟相机跑=查询/重投影坐标；闪烁=乒乓奇偶。
@@ -379,6 +386,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//   本开关开 + 整屏渐变钉世界 → 查询端正确，问题在写入端(dispatch/更新pass)；
 	//   本开关开 + 仍只有一角/跟相机 → 查询端坐标换算错。
 	//#define DEBUG_PROBE_QUERY
+	// [调试 2026-09-03] 整屏显示探针 GI 辐照度场(伽马增强)，无视地形门控与其余光照，
+	// 直接看 GI 照明分布/亮度/伪影(blotchy 的 4m 探针块、颜色、时域稳定性)。
+	#define DEBUG_PROBE_GI_VIZ
 	//#define VISUALIZE_VOXELS
 	//#define DEBUG_VOXEL_GI  // 调试(备用)：按体素 voxelID 标色（青绿=活板门/门 橙棕=形状块[楼梯/半砖/栅栏/墙] 黄=全块 蓝=空 红=越界）
 	//#define DEBUG_VOXEL_RADIANCE  // 调试：直接显示传播后的体素辐照度（验证"体素化+传播"链路）

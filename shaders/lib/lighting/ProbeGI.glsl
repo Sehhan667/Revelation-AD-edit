@@ -1,15 +1,22 @@
 //================================================================================================//
-// Probe GI — 探针辐照度缓存（DDGI 风格）查询层
+// Probe GI — 方向性探针辐照度缓存（完整 DDGI，2026-09-03 重写）查询层
 //
 // 架构：探针 GI 是**独立于 VXGI/SSILVB 的第三套间接光信号源**。
-// - 探针缓存（image.probeRadiance，16³）由 ProbeUpdate.comp 每帧按 STBN 随机方向采样、
-//   EMA 时域累积维护，值 = 平滑低频入射辐照度 → 天然免降噪。
-// - 本文件只做探针缓存的三线性查询 + 探针格坐标换算，供计算端（DiffuseIndirect 探针
-//   分支）/片端按需 include。探针线追踪见 ProbeTrace.glsl（仅 ProbeUpdate.comp 使用）。
+// - 探针缓存（image.probeIrradiance/probeDistance，16³ 八面体图集）由 DiffuseIndirect.comp
+//   每帧按随机方向采样 + 重时域滞后累积维护；辐照度按方向(八面体贴图)存储 + 距离场(均值/方差)
+//   做遮挡加权 → 真正方向性、可穿墙遮挡、低频免降噪。
+// - 本文件只做八面体编解码 + 图集坐标换算 + DDGI 查询，供计算端（DiffuseIndirect.comp 探针
+//   分支）按需 include。探针线追踪/写端见 DiffuseIndirect.comp 的 ProbeUpdateSlice。
 //
-// 坐标系与体素化一致：vc = camRel + cameraPositionFract + VOXEL_RADIUS（[0,VOXEL_AREA)）。
-// 探针格 16³ × 4m = 64m = VOXEL_AREA，与体素网格对齐；归一化采样坐标 = vc / PROBE_GRID_SPAN。
-// 探针 i 的格心 vc=(i+0.5)*4 → 归一化 (i+0.5)/16，恰在纹素中心 → sampler3D LINEAR 即三线性。
+// 坐标系：vc = camRel + cameraPositionFract + VOXEL_RADIUS（[0,VOXEL_AREA)）。
+// 探针格 16³ × 4m = 64m = VOXEL_AREA；探针 i 的格心 vc=(i+0.5)*4。
+//
+// DDGI 要点（对照 RTXGI Irradiance.hlsl / ProbeBlending.hlsl）：
+//   - 每探针一整块 O×O 八面体贴图(O=PROBE_OCT_SIZE+2,含 1 像素边界)，内部 N=PROBE_OCT_SIZE。
+//   - 写端把每条探针线的辐照度按 cos(线方向, 纹素方向) 权重融进各纹素，重时域滞后累积；
+//     另存每条线命中距离的均值/方差 → 遮挡场。
+//   - 查询端对 8 邻探针：三线性位置权重 × wrap-shading × chebyshev 遮挡权重，
+//     在各探针的"法线方向"纹素上取辐照度，归一化 × 2π 完成半球蒙特卡洛估计。
 //================================================================================================//
 
 #ifndef PROBE_GI_GRID_SIZE
@@ -18,57 +25,157 @@
 #ifndef PROBE_SPACING
     #define PROBE_SPACING 4.0              // 探针间距(m)；16×4=64 = VOXEL_AREA
 #endif
+#ifndef PROBE_OCT_SIZE
+    #define PROBE_OCT_SIZE 6               // 八面体内边数（不含边界）
+#endif
+#define PROBE_OCT_BORDER (PROBE_OCT_SIZE + 2)   // 每探针块边长（含 1-texel 边界）
 #define PROBE_GRID_SPAN (float(PROBE_GI_GRID_SIZE) * PROBE_SPACING)   // 覆盖总边长(=VOXEL_AREA)
-#define PROBE_GRID_RCP  (1.0 / float(PROBE_GI_GRID_SIZE))
 
-// 无显式 binding（项目铁律：显式 binding 与 Iris 分配的纹理单元冲突 → 全黑根因）。
-// image.probeRadiance / probeRadiance2（shaders.properties）的采样器端（乒乓双缓冲）。
-uniform sampler3D probeRadianceSampler;
-uniform sampler3D probeRadiance2Sampler;
+// 八面体图集：每 z-slice = 一个探针平面；x/y = (probeCell * O + octTexel)。
+// 纹理尺寸(G*O)×(G*O)×G，与 shaders.properties 的 image.probeIrradiance/2、probeDistance/2 对齐。
+#define PROBE_ATLAS_W (PROBE_GI_GRID_SIZE * PROBE_OCT_BORDER)
 
-// 手动三线性（texelFetch 8 tap，FetchVoxelRadianceTrilinear 同款做法——自定义 image 的
-// 采样器过滤状态不可靠，不依赖硬件 LINEAR）。probeCoord 为连续探针格坐标（格心 = 整数 + 0.5）。
-vec4 ProbeFetchTrilinear(sampler3D s, vec3 probeCoord) {
-    vec3 p = probeCoord - 0.5;
-    ivec3 i0 = ivec3(floor(p));
-    vec3 t = p - vec3(i0);
+// 乒乓读/旧采样器（与写端每一帧写 A/写 B 反相读另一块）。仅查询端用。
+uniform sampler3D probeIrradianceSampler;
+uniform sampler3D probeIrradiance2Sampler;
+uniform sampler3D probeDistanceSampler;
+uniform sampler3D probeDistance2Sampler;
+
+//================================================================================================//
+// 八面体编解码（Cigolle et al. 2014；RTXGI DDGIGetOctahedralCoordinates/Direction）
+//================================================================================================//
+vec2 ProbeOctSign(vec2 v) {
+    vec2 s = sign(v);
+    return mix(s, vec2(1.0), equal(s, vec2(0.0)));   // sign(0)→1（避免 fold 处归零）
+}
+
+// 方向 → [-1,1]² 八面体 UV（前方半球的相反侧折叠到同方块）
+vec2 ProbeOctEncode(vec3 d) {
+    float l1 = abs(d.x) + abs(d.y) + abs(d.z);
+    vec2 uv = d.xy / max(l1, 1e-8);
+    if (d.z < 0.0) uv = (1.0 - abs(uv.yx)) * ProbeOctSign(uv.xy);
+    return uv;
+}
+
+// [-1,1]² 八面体 UV → 方向（Write 端用：纹素方向）
+vec3 ProbeOctDecode(vec2 uv) {
+    vec3 d = vec3(uv, 1.0 - abs(uv.x) - abs(uv.y));
+    if (d.z < 0.0) d.xy = (1.0 - abs(d.yx)) * ProbeOctSign(d.xy);
+    return normalize(d);
+}
+
+// 探针格坐标 + 块内 octTexel(0..O-1) → 图集 3D texel 坐标
+ivec3 ProbeOctAtlasCoord(ivec3 probeCell, ivec2 octTexel) {
+    return ivec3(probeCell.x * PROBE_OCT_BORDER + octTexel.x,
+                 probeCell.y * PROBE_OCT_BORDER + octTexel.y,
+                 probeCell.z);
+}
+
+// 纹素(块内 octTexel，0..O-1) → 该纹素对应的八面体方向（Write 端：算 texelDir 用）
+vec3 ProbeOctTexelDir(ivec2 octTexel) {
+    // 映射到内部 N×N（去 1-texel 边界）：interior = octTexel - 1 ∈ [0,N)
+    vec2 interior = vec2(octTexel - 1);
+    vec2 normOct = (interior + 0.5) * rcp(float(PROBE_OCT_SIZE)) * 2.0 - 1.0;   // [-1,1)
+    return ProbeOctDecode(normOct);
+}
+
+// 八面体图集双线性采样（手动 texelFetch，含 1-texel 边界 → 跨缝可正确折叠）。
+// dir 为世界方向；probeCell ∈ [0,G)³。
+vec4 ProbeOctSample(sampler3D s, ivec3 probeCell, vec3 dir) {
+    vec2 oct = ProbeOctEncode(dir);
+    vec2 t = (oct * 0.5 + 0.5) * float(PROBE_OCT_SIZE);   // [0,N] 内部坐标
+    vec2 tb = t + 1.0;                                    // [1, N+1] 含边界
+    ivec2 i0 = ivec2(floor(tb));
+    vec2 f = tb - vec2(i0);
     vec4 acc = vec4(0.0);
-    for (int k = 0; k < 8; ++k) {
-        ivec3 off = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
-        ivec3 q = clamp(i0 + off, ivec3(0), ivec3(PROBE_GI_GRID_SIZE - 1));
-        vec3 w3 = mix(vec3(1.0) - t, t, vec3(off));
-        acc += texelFetch(s, q, 0) * (w3.x * w3.y * w3.z);
+    for (int k = 0; k < 4; ++k) {
+        ivec2 off = ivec2(k & 1, (k >> 1) & 1);
+        ivec2 q = clamp(i0 + off, ivec2(0), ivec2(PROBE_OCT_BORDER - 1));
+        vec2 w = mix(vec2(1.0) - f, f, vec2(off));
+        acc += texelFetch(s, ProbeOctAtlasCoord(probeCell, q), 0) * (w.x * w.y);
     }
     return acc;
 }
 
-// 探针缓存查询：vc(体素空间连续坐标) → trilinear 平滑入射辐照度（0-1 尺度，未乘 albedo）。
-// [2026-09-03 VXGI 同构时序] ProbeUpdate 挂在 deferred50（晚于本查询 deferred1_a），查询永远
-// 读上一帧写入完成的缓存：其锚 = 上一帧 cameraPositionInt。故查询坐标补 +cDi =
-// (cameraPositionInt - previousCameraPositionInt) 对齐本帧世界，与 VoxelTracing.glsl 消费
-// IRC 的 ircHit = vc + cDi 逐字同构。曾试写 pass 前移做同帧写后读直读；直写诊断证明移动仍
-// 闪回 —— 连续 compute 跨 pass imageStore 可见性滞后 1-2 帧，不依赖同帧可见性的本时序才稳。
-// 乒乓相位：deferred50 偶帧写 A/奇帧写 B；查询在读之前、须反相读上帧块 → 偶读 B、奇读 A。
-vec3 ProbeSampleRadiance(vec3 vc) {
-    // [DDGI 式网格锚定读取] 查询点世界位置 → 上帧网格索引。网格锚 gridOriginPrev 对齐到 4m 格，
-    // 与写端 ProbeUpdateSlice 的世界锚定一致（内容钉世界，无累积漂移/回卷）。
-    const float GRID_HALF = float(PROBE_GI_GRID_SIZE) * 0.5;
-    vec3 gridOriginPrev = (round(previousCameraPosition * rcp(PROBE_SPACING)) - GRID_HALF) * PROBE_SPACING;
-    vec3 probeWorld = vc + vec3(cameraPositionInt) - float(VOXEL_RADIUS);   // 查询点世界位置
-    vec3 probeCoord = (probeWorld - gridOriginPrev) * rcp(PROBE_SPACING);   // 上帧网格索引
-    vec4 rad = ((frameCounter & 1) == 0)
-        ? ProbeFetchTrilinear(probeRadiance2Sampler, probeCoord)
-        : ProbeFetchTrilinear(probeRadianceSampler,  probeCoord);
-#ifdef DEBUG_PROBE_PLUMBING
-    // [管线自检 2026-09-03 v3] 写端健康标记：三分哨兵，一次重载即可二分写端状态。
-    //   a<0.5（从未被写端写过）     → 亮红  —— deferred50 写端没在跑/绑定错/调度错
-    //   a≈1 但 rgb≈0（写过但内容空）→ 亮绿  —— 写端在跑 a=1，但 RGB 是 0（真实光照≈0，
-    //                                         或写端 DEBUG 分支未生效走了真实光照路径）
-    //   正常渐变（≈右半直算参照）   → 写端 debug 渐变已写入，读回一致
-    if (rad.a < 0.5) return vec3(2.0, 0.05, 0.05);
-    if (max(max(rad.r, rad.g), rad.b) < 1e-4) return vec3(0.05, 2.0, 0.05);
-#endif
-    // NaN 防御：缓存里若残留 NaN（DDA/求交/未绑定采样器兜底路径），读端也归零，避免 NaN 上屏。
-    if (!all(equal(rad.rgb, rad.rgb))) return vec3(0.0);
-    return max(rad.rgb, vec3(0.0));
+//================================================================================================//
+// DDGI 查询：vc(体素空间连续坐标) + 世界法线 + 相机视线 → 线性入射辐照度（未乘 albedo）
+//================================================================================================//
+float ProbeLum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
+    const float G = float(PROBE_GI_GRID_SIZE);
+    const float GRID_HALF = G * 0.5;
+    const float spacing = PROBE_SPACING;
+    const float twoPi = 6.2831853;
+
+    // 查询点世界位置 + 上帧网格锚(gridOriginPrev)
+    vec3 worldPos = vc + vec3(cameraPositionInt) - float(VOXEL_RADIUS);
+    vec3 gridOriginPrev = (round(previousCameraPosition * rcp(spacing)) - GRID_HALF) * spacing;
+
+    // DDGI 表面偏置：突出表面避免数值不稳，把采样点推入探针体素内部
+    vec3 surfaceBias = (worldNormal * PROBE_NORMAL_BIAS) + (-cameraDir * PROBE_VIEW_BIAS);
+    vec3 biasedPos = worldPos + surfaceBias;
+
+    // 基础探针格坐标 + 三线性 alpha
+    ivec3 baseProbe = ivec3(floor((biasedPos - gridOriginPrev) * rcp(spacing)));
+    baseProbe = clamp(baseProbe, ivec3(0), ivec3(PROBE_GI_GRID_SIZE - 1));
+    vec3 baseProbeWorld = gridOriginPrev + (vec3(baseProbe) + 0.5) * spacing;
+    vec3 gridDist = biasedPos - baseProbeWorld;
+    vec3 alpha = clamp(gridDist * rcp(spacing), vec3(0.0), vec3(1.0));
+
+    // 采样器（上一帧内容的那块，即与写端反相）
+    bool even = ((uint(frameCounter) & 1u) == 0u);
+    sampler3D irrS = even ? probeIrradiance2Sampler : probeIrradianceSampler;
+    sampler3D dstS = even ? probeDistance2Sampler     : probeDistanceSampler;
+
+    vec3 irradiance = vec3(0.0);
+    float accWeight = 0.0;
+    float gammaHalf = PROBE_IRRADIANCE_GAMMA * 0.5;
+
+    for (int i = 0; i < 8; ++i) {
+        ivec3 adjOffset = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+        ivec3 adjCell = clamp(baseProbe + adjOffset, ivec3(0), ivec3(PROBE_GI_GRID_SIZE - 1));
+        vec3 adjProbeWorld = gridOriginPrev + (vec3(adjCell) + 0.5) * spacing;
+
+        vec3 worldPosToAdj = normalize(adjProbeWorld - worldPos);
+        vec3 biasedPosToAdj = normalize(adjProbeWorld - biasedPos);
+        float biasedDist = length(adjProbeWorld - biasedPos);
+
+        // wrap-shading：探针朝向与法线的对齐（避免"小细节法线把互见探针全排除"）
+        float wrapShading = (dot(worldPosToAdj, worldNormal) + 1.0) * 0.5;
+        float weight = (wrapShading * wrapShading) + 0.2;
+
+        // 遮挡：采样"探针→采样点"方向的距离场，做 chebyshev 权重（防穿墙漏光）
+        vec4 distSample = ProbeOctSample(dstS, adjCell, -biasedPosToAdj);
+        vec2 filteredDist = 2.0 * distSample.rg;   // 写端 ÷2，读回乘 2
+        float meanDist = filteredDist.x;
+        float variance = abs((meanDist * meanDist) - filteredDist.y);
+        float cheb = 1.0;
+        if (biasedDist > meanDist) {
+            float v = biasedDist - meanDist;
+            cheb = variance / max(variance + v * v, 1e-6);
+            cheb = max(cheb * cheb * cheb, 0.0);
+        }
+        weight *= max(0.05, cheb);
+        weight = max(1e-6, weight);
+        const float crush = 0.2;
+        if (weight < crush) weight *= (weight * weight) * (1.0 / (crush * crush));
+
+        // 三线性权重最后乘（对八探针累加归一化正是 DDGI 的探针间三线性插值）
+        vec3 trilinear = max(vec3(0.001), mix(vec3(1.0) - alpha, alpha, vec3(adjOffset)));
+        weight *= trilinear.x * trilinear.y * trilinear.z;
+
+        // 采样辐照度（法线方向纹素）
+        vec4 irrSample = ProbeOctSample(irrS, adjCell, worldNormal);
+        vec3 probeIrr = pow(max(irrSample.rgb, vec3(0.0)), vec3(gammaHalf));
+
+        irradiance += weight * probeIrr;
+        accWeight += weight;
+    }
+
+    if (accWeight <= 1e-6) return vec3(0.0);
+    irradiance *= rcp(accWeight);
+    irradiance *= irradiance;   // 还原线性（写端 ^ (1/gamma)，读端 ^(gamma/2) 再平方）
+    irradiance *= twoPi;
+    return max(irradiance, vec3(0.0));
 }

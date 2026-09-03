@@ -666,3 +666,30 @@ $c -notmatch '\?'                                  # 无乱码
 - 整格居中：gridOriginThis/Prev 每帧从 cameraPosition/previousCameraPosition(round到4m)算，无需持久状态。
 - 有效性标记 alpha=1.0 表示本管线写入；查询端 a<0.5 判"从未写入"(定位"缓存从没被写"的关键)。
 - 全量更新(每帧4096探针)+ 激进 EMA(有效0.1/无效1.0)快速洗净垃圾；相机跨格边界时加速重锚。
+
+## [重写] 完整 DDGI（2026-09-03 后段，替代上面的"单值各向同性"方案）
+- 单值各向同性探针(每探针 1 个 rgba16f)无法表达方向性 → 正是"近处无光/只有方块光/移动跳变"的根因；
+  且各向同性平均把方向信息抹平，近火把探针朝亮/背亮方向都一样 → 近黑远亮。
+- 彻底改为 DDGI 纸面算法（对照 RTXGI Irradiance.hlsl / ProbeBlending.hlsl / ProbeOctahedral.hlsl）：
+  - **每探针一整块 O×O 八面体贴图**(O=N+2, N=PROBE_OCT_SIZE=6，含 1-px 边界)。辐照度=RGB(gamma=5 编码方向辐照度)，
+    距离场=RG(均值, 均值²)供 chebyshev 遮挡。纹理：image.probeIrradiance/2、probeDistance/2 各 128×128×16(乒乓)。
+  - **写端**（ProbeUpdateSlice，仍并入 DiffuseIndirect.comp）：每探针 16 条线（hash 随机方向）；每条线 DDA 求出
+    "命中面辐照度 + 命中距离"（背面命中记负距离，不加辐照度）。对每个内部纹素，cos(纹素方向, 线方向) 加权融合：
+    辐照度 = ΣL·cos/(2·Σcos)；距离 = Σd·cos/(2·Σcos) 及二阶矩。**重时域滞后(hysteresis 0.97)**：变化大降滞后、
+    变暗给最小步进(1/1024)避免卡死；首帧/越界/NaN → 重置。边界 O²-N² 由内部按八面体缝【镜像拷贝】(imageLoad 回读
+    同线程已写纹素，可靠)。
+  - **查询端**（ProbeSampleRadiance(vc, worldNormal, cameraDir)，3 参）：8 邻探针三线性位置权重 × wrap-shading(朝向法线)
+    × chebyshev 遮挡(采样点距离 > 该方向平均距离 → 用方差/方差+v² 降权防穿墙漏光) × 小权重压制；辐照度按"表面法线方向"
+    取各探针该方向纹素，归一化 ×2π 完成半球 MC 估计。返回线性辐照度 → DeferredLight 乘 albedo。
+  - **方向一致性**：写端 texture→dir 用 OctDecode，读端 dir→uv 用 OctEncode，二者互逆，统一走 ProbeOctSample 双线性。
+  - **坐标/锚定**：仍用世界锚定重居中(gridOrigin=(round(相机/4)-8)*4)；查询读上一帧另一块(偶读B/奇读A)，锚=gridOriginPrev。
+- 与原单值方案的差异：无需 SVGF/额外线缓存——DDGI 靠"每帧每方向少数线 + 数百帧累积"天然收敛，低频平滑免降噪。
+- 阳光/天光/方块光值计算沿用先前对齐 VXGI 的 ProbeTrace：阳光 sunIrradiance×128 + VoxelSunShadowTracing；底光
+  SimpleSkyLighting(命中体素真实 skylight)；发射体素 VoxelHitLightSphere 累加进线辐照度(沿途发光)。
+- **改动文件**：shaders.properties(4 条 image.probeIrradiance/2、probeDistance/2 绑定 + sizes)；
+  settings.glsl(PROBE_OCT_SIZE / PROBE_IRRADIANCE_GAMMA / PROBE_HYSTERESIS / PROBE_NORMAL_BIAS / PROBE_VIEW_BIAS)；
+  lib/lighting/ProbeGI.glsl(八面体编解码 + 图集坐标 + 完整 DDGI 查询)；diffuse/DiffuseIndirect.comp(ProbeTrace 出距离 +
+  ProbeUpdateSlice DDGI 写端 + 边界镜像)；DeferredLight.frag 不变。
+- **风险**：无法本地编译 → 首要风险点 = GLSL 编译错误(局部数组/图像读写/采样器局部变量)；其次寄存器压力(local 数组
+  ×16 可能下探伤占用)、亮度尺度(×2π×128 可能偏亮，靠 PROBE_GI_STRENGTH 调)、八面体缝折叠/chebyshev 细节。改
+  PROBE_OCT_SIZE 必须同步 shaders.properties 纹理尺寸(128→G*(N+2) 同深)。
