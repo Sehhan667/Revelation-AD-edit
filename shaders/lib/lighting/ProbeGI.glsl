@@ -126,10 +126,8 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
     vec3 gridDist = biasedPos - baseProbeWorld;
     vec3 alpha = clamp(gridDist * rcp(spacing), vec3(0.0), vec3(1.0));
 
-    // 采样器（上一帧内容的那块，即与写端反相）
+    // 采样器（上一帧内容的那块，即与写端反相）。直接按帧奇偶把 sampler 传给函数（不做采样器局部变量）。
     bool even = ((uint(frameCounter) & 1u) == 0u);
-    sampler3D irrS = even ? probeIrradiance2Sampler : probeIrradianceSampler;
-    sampler3D dstS = even ? probeDistance2Sampler     : probeDistanceSampler;
 
     vec3 irradiance = vec3(0.0);
     float accWeight = 0.0;
@@ -149,7 +147,8 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
         float weight = (wrapShading * wrapShading) + 0.2;
 
         // 遮挡：采样"探针→采样点"方向的距离场，做 chebyshev 权重（防穿墙漏光）
-        vec4 distSample = ProbeOctSample(dstS, adjCell, -biasedPosToAdj);
+        vec4 distSample = ProbeOctSample(even ? probeDistance2Sampler : probeDistanceSampler,
+                                         adjCell, -biasedPosToAdj);
         vec2 filteredDist = 2.0 * distSample.rg;   // 写端 ÷2，读回乘 2
         float meanDist = filteredDist.x;
         float variance = abs((meanDist * meanDist) - filteredDist.y);
@@ -169,7 +168,8 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
         weight *= trilinear.x * trilinear.y * trilinear.z;
 
         // 采样辐照度（法线方向纹素）
-        vec4 irrSample = ProbeOctSample(irrS, adjCell, worldNormal);
+        vec4 irrSample = ProbeOctSample(even ? probeIrradiance2Sampler : probeIrradianceSampler,
+                                        adjCell, worldNormal);
         vec3 probeIrr = pow(max(irrSample.rgb, vec3(0.0)), vec3(gammaHalf));
 
         irradiance += weight * probeIrr;

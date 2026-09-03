@@ -242,10 +242,9 @@ vec4 PingReusePrev(ivec2 p) {
         vec3 reCenter = (gridOriginThis - gridOriginPrev) * rcp(PROBE_SPACING);   // 整数格重居中偏移
         ivec3 reCenterI = ivec3(round(reCenter));
 
-        // 本帧写 B → 旧值在 A；写 A → 旧值在 B（读上一帧另一块）
+        // 本帧写 B → 旧值在 A；写 A → 旧值在 B（读上一帧另一块）。sampler 直接按帧奇偶传给 texelFetch，
+        // 不做采样器局部变量（GLSL 更稳）。
         bool writeB = ((uint(frameCounter) & 1u) != 0u);
-        sampler3D oldIrrS  = writeB ? probeIrradianceSampler  : probeIrradiance2Sampler;
-        sampler3D oldDistS = writeB ? probeDistanceSampler     : probeDistance2Sampler;
 
         const int R = PROBE_RAY_SAMPLES;
         const int N = PROBE_OCT_SIZE;
@@ -311,8 +310,12 @@ vec4 PingReusePrev(ivec2 p) {
                     vec2 newDist = vec2(accD, accD2) * rcp(2.0 * max(accDW, eps));
 
                     // 读旧值（重居中后同一 octant）→ 时域滞后混合
-                    vec4 oldIrrV  = oldInBounds ? texelFetch(oldIrrS,  ProbeOctAtlasCoord(oldCell, octTexel), 0) : vec4(0.0);
-                    vec4 oldDistV = oldInBounds ? texelFetch(oldDistS, ProbeOctAtlasCoord(oldCell, octTexel), 0) : vec4(0.0);
+                    vec4 oldIrrV  = oldInBounds
+                        ? texelFetch(writeB ? probeIrradianceSampler  : probeIrradiance2Sampler,
+                                     ProbeOctAtlasCoord(oldCell, octTexel), 0) : vec4(0.0);
+                    vec4 oldDistV = oldInBounds
+                        ? texelFetch(writeB ? probeDistanceSampler     : probeDistance2Sampler,
+                                     ProbeOctAtlasCoord(oldCell, octTexel), 0) : vec4(0.0);
                     bool oldValid = oldInBounds
                                  && abs(oldIrrV.a - 1.0) < 0.25
                                  && all(equal(oldIrrV.rgb, oldIrrV.rgb))
