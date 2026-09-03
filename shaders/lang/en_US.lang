@@ -519,6 +519,18 @@ option.VOXEL_GI_BLENDED_LIGHTMAP.comment=Blend between vanilla lightmap and voxe
 
 option.VOXEL_GI_STRENGTH=GI Strength
 option.VOXEL_GI_STRENGTH.comment=Overall voxel GI brightness multiplier
+option.PROBE_GI_ENABLED=Probe Global Illumination
+option.PROBE_GI_ENABLED.comment=DDGI-style probe irradiance cache: 16^3 x 4m, smooth low-frequency, denoise-free. Mutually exclusive with voxel/screen-space GI (enable only one); requires ENABLE_VOXELIZATION
+option.PROBE_GI_STRENGTH=Probe GI Strength
+option.PROBE_GI_STRENGTH.comment=Overall probe indirect-light brightness multiplier
+option.PROBE_RAY_SAMPLES=Rays per Probe
+option.PROBE_RAY_SAMPLES.comment=Directional rays cast per probe update; higher = denser and more accurate but slower
+option.PROBE_UPDATE_PERIOD=Update Interval (frames)
+option.PROBE_UPDATE_PERIOD.comment=Every probe updates every N frames (round-robin), saving compute
+option.PROBE_MAX_FRAMES=Temporal Convergence
+option.PROBE_MAX_FRAMES.comment=EMA time constant; lower converges faster but noisier
+option.DEBUG_PROBE_PLUMBING=Probe Pipeline Debug
+option.DEBUG_PROBE_PLUMBING.comment=Writes a known gradient pattern instead of lighting: full-screen world-anchored gradient = pipeline OK; one corner only = dispatch size wrong; follows camera = query coords wrong; flickering = ping-pong parity wrong
 
 option.VOXEL_GI_TRACE_STRENGTH=Trace GI Strength
 option.VOXEL_GI_TRACE_STRENGTH.comment=Overall strength knob for the per-pixel diffuse trace signal; lower if too bright, raise if too dark (cave leak protection is handled by the lightmap leak gate)

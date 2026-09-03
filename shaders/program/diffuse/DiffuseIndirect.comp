@@ -73,6 +73,168 @@ vec4 PingReusePrev(ivec2 p) {
     #define VOXEL_TRACE_SPP 1 // [1 2 4 8 16 32 64]
 #endif
 
+#ifdef PROBE_GI_ENABLED
+    // 探针 GI 信号源：16³ 平滑探针缓存 trilinear 查询（独立于 VXGI/SSILVB，见 lib/lighting/ProbeGI.glsl）
+    #include "/lib/lighting/shadow/Common.glsl"
+    uniform sampler2DShadow shadowtex1;
+    uniform sampler2D atlas2D;   // VoxelData.glsl 的 VoxelGetAtlasCoord 引用 textureSize(atlas2D)
+    uniform sampler3D voxelDataSampler;
+    uniform usampler3D voxelLightSampler;
+    #include "/lib/lighting/VoxelData.glsl"
+    #include "/lib/lighting/VoxelSunShadow.glsl"
+    #include "/lib/lighting/VoxelSkyLight.glsl"
+    #include "/lib/lighting/ProbeGI.glsl"
+
+    // [Plan B 2026-09-03] 写端并入本 compute dispatch：乒乓写 B 读 A（不同纹理，同 dispatch 无冲突），
+    // 彻底摆脱"额外写端 pass 是否被调度"的不确定性（fragment 写端在 deferred50 与 deferred22 均已证伪）。
+    // 写端 image 端与查询端 sampler 端经 shaders.properties image.probeRadiance 指向同一份 16³ 纹理。
+    layout (rgba16f) restrict writeonly uniform image3D probeRadiance;
+    layout (rgba16f) restrict writeonly uniform image3D probeRadiance2;
+
+    //============================================================================================//
+    // ProbeTrace — 探针采样线（DDGI 风格，一阶弹射）
+    // 从探针格心（体素空间连续坐标）沿方向 DDA 穿 voxelData 场景：
+    // - 发射光体素 → 球形光源平滑贡献 + 穿透不挡光（VoxelHitLightSphere）
+    // - 首实心命中 → 返回该面辐射度：方块光 + 阳光反弹(VoxelSunShadow 遮挡) + 天光底
+    // - 出界/射程尽 → 返回方向天光（VoxelSkyColor）
+    // 与 VoxelTracing 的差异：探针各向同性 → 无半球权重、无 IRC 自反弹（一阶弹射）。
+    // 值 = 入射辐照度（后在 DeferredLight 乘 albedo）。DDA 复用 rdir 有符号修正等修复。
+    // compute 安全：不用 VoxelSkyColor（其采大气 LUT，compute 未绑定 → NaN），改用 skyColor
+    // × 地平线衰减；阳光只用体素 DDA（VoxelSunShadowTracing）+ SSBO global.directIlluminance。
+    //============================================================================================//
+    vec3 ProbeTrace(vec3 origin, vec3 dir) {
+        vec3 voxelCoord = floor(origin);
+        vec3 sdir = sign(dir);
+        vec3 rdir = 1.0 / mix(dir, vec3(1e-30), lessThanEqual(abs(dir), vec3(1e-8)));
+        vec3 totalStep = (sdir * (voxelCoord - origin + 0.5) + 0.5) * abs(rdir);
+        vec3 contrib = vec3(0.0);
+        vec3 tracingNext = step(totalStep, vec3(VoxelMin3(totalStep)));
+
+        for (int i = 0; i < VOXEL_TRACE_DISTANCE; ++i) {
+            float rayLength = 0.0;
+            if (i > 0) {
+                rayLength = VoxelMin3(totalStep);
+                if (rayLength > float(VOXEL_TRACE_DISTANCE)) break;
+                tracingNext = step(totalStep, vec3(rayLength));
+                voxelCoord += tracingNext * sdir;
+                totalStep += tracingNext * abs(rdir);
+                if (any(lessThan(voxelCoord, vec3(0.0))) || any(greaterThanEqual(voxelCoord, vec3(float(VOXEL_AREA))))) break;
+            }
+
+            ivec3 vc = ivec3(voxelCoord);
+            vec4 hvd = texelFetch(voxelDataSampler, vc, 0);
+            if (hvd.z <= 0.5) continue;
+
+            vec3 lD = unpackUnorm4x8(texelFetch(voxelLightSampler, vc, 0).r).rgb;
+            if (lD.z > VOXEL_GI_EMISSIVE_THRESHOLD) {
+                contrib += VoxelHitLightSphere(origin, dir, vec3(vc), VoxelLightColor(abs(hvd.z)));
+                continue;
+            }
+
+            if (i == 0 && abs(hvd.z) <= 154.0) continue;
+
+            VoxelRay vray;
+            vray.ori = origin; vray.dir = dir; vray.rdir = rdir; vray.sdir = sdir;
+            vec3 hitNormal;
+            if (!IsHitBlock(vray, totalStep, tracingNext, voxelCoord, abs(hvd.z), rayLength, hitNormal)) continue;
+            if (i == 0) rayLength = max(rayLength, 0.0);
+
+            vec3 alb = vec3(hvd.r, hvd.g, VoxelUnpack2xU8X(hvd.w));
+            vec3 v = vec3(0.0);
+
+            if (lD.y > 0.01)
+                v += max(alb, vec3(VOXEL_GI_BLOCK_MIN_ALBEDO)) * VoxelLightColor(abs(hvd.z)) * lD.y * VOXEL_GI_BLOCK_STRENGTH;
+
+            if (worldId != -1) {
+                vec3 sunDir = mat3(shadowModelViewInverse) * vec3(0.0, 0.0, 1.0);
+                float NdotL = saturate(dot(sunDir, hitNormal));
+                vec3 hitVoxelPos = origin + dir * rayLength;
+                vec3 sunVis = vec3(VoxelSunShadowTracing(hitVoxelPos, sunDir));
+                vec3 directIllum = sunIrradiance;
+                if (max(max(global.directIlluminance.r, global.directIlluminance.g), global.directIlluminance.b) > 1e-4)
+                    directIllum = global.directIlluminance * rcp(VOXEL_SUN_REFERENCE);
+                v += alb * directIllum * NdotL * sunVis;
+            }
+
+            vec3 shadowlight = sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4));
+            v += alb * SimpleSkyLighting(skyColor, shadowlight, hitNormal.y, 0.5);
+            return v;
+        }
+
+        if (worldId != -1) {
+            float fade = VoxelSkyHorizonFade(dir);
+            if (fade > 0.001) return max(skyColor * fade, vec3(0.0));
+        }
+        return contrib;
+    }
+
+    // ProbeUpdateSlice：本 invocation 分摊更新若干探针（16³ 展平 [0,4096)，按 texelPos 分摊）。
+    // 网格只有 4096 格 × PROBE_RAY_SAMPLES 条线/帧，全量更新开销可控；EMA 时域累积 + 历史重投影。
+    void ProbeUpdateSlice(ivec2 pix) {
+        int totalVoxels = PROBE_GI_GRID_SIZE * PROBE_GI_GRID_SIZE * PROBE_GI_GRID_SIZE;
+        // viewWidth/viewHeight 是 float（Uniform.glsl）；须先转 int 再右移（>> 只接受整型操作数）。
+        int totalPixels = max((int(viewWidth) >> 1) * (int(viewHeight) >> 1), 1);
+        int perPixel = max((totalVoxels + totalPixels - 1) / totalPixels, 1);
+        int pixIdx = pix.y * (int(viewWidth) >> 1) + pix.x;
+        int ia = min(pixIdx * perPixel, totalVoxels);
+        int ib = min(ia + perPixel, totalVoxels);
+
+        for (int vi = ia; vi < ib; ++vi) {
+            int G = PROBE_GI_GRID_SIZE;
+            int z = vi / (G * G);
+            int y = (vi / G) % G;
+            int x = vi % G;
+            ivec3 tid = ivec3(x, y, z);
+
+            vec3 probeCenter = (vec3(tid) + 0.5) * PROBE_SPACING;
+
+            vec3 acc = vec3(0.0);
+            for (int s = 0; s < PROBE_RAY_SAMPLES; ++s) {
+                // 方向采样用纯函数 hash13（Random.glsl，无纹理/无 LUT 依赖）。STBN 蓝噪声在
+                // deferred compute 可能未绑定 → texelFetch 返 0 → 所有线方向恒同一 → GI 歪。
+                vec2 u = vec2(hash13(vec3(tid.x, tid.y, tid.z) * 7.13 + vec3(s * 1.7, s * 2.3, float(frameCounter))),
+                              hash13(vec3(tid.x, tid.y, tid.z) * 11.7 + vec3(s * 3.1, s * 4.7, float(frameCounter) * 1.3)));
+                vec3 dir = VoxelSphereUnitVectorFromU(u);
+                acc += ProbeTrace(probeCenter, dir);
+            }
+            vec3 newVal = acc * rcp(float(PROBE_RAY_SAMPLES));
+
+#ifdef DEBUG_PROBE_PLUMBING
+            // [管线自检] 写端健康标记：世界锚定、16m 周期渐变色（与查询端直算参考同公式
+            // fract((vc+camInt)/16)），写入探针格心世界坐标。重载后左半若显示与右半近似的
+            // 彩色渐变并钉在世界 → 写读链路通；仍一片亮红 → 写端没写。
+            vec3 _probeCenterWorld = probeCenter + vec3(cameraPositionInt);
+            newVal = fract(_probeCenterWorld * rcp(16.0));
+#else
+#endif
+
+            // EMA 时域累积 + 历史重投影（锚 = 本帧 cameraPositionInt；查询端 +cDi 读取）
+            vec3 gridShift = vec3(cameraPositionInt - previousCameraPositionInt);
+            vec3 oldProbeCoord = vec3(tid) + 0.5 + gridShift * rcp(PROBE_SPACING);
+            bool oldInBounds = all(greaterThanEqual(oldProbeCoord, vec3(0.0)))
+                            && all(lessThan(oldProbeCoord, vec3(float(PROBE_GI_GRID_SIZE))));
+
+            vec4 old = ((frameCounter & 1u) == 0u)
+                ? ProbeFetchTrilinear(probeRadiance2Sampler, oldProbeCoord)
+                : ProbeFetchTrilinear(probeRadianceSampler,  oldProbeCoord);
+
+            bool oldValid = oldInBounds
+                         && abs(old.a - 1.0) < 0.25
+                         && all(equal(old.rgb, old.rgb))
+                         && all(lessThan(old.rgb, vec3(8.0)))
+                         && all(greaterThanEqual(old.rgb, vec3(0.0)));
+
+            float mixA = oldValid ? 0.1 : 1.0;
+            vec3 oldVal = oldValid ? old.rgb : vec3(0.0);
+            vec4 outVal = vec4(mix(oldVal, newVal, mixA), 1.0);
+            if ((frameCounter & 1u) == 0u) imageStore(probeRadiance,  tid, outVal);
+            else                            imageStore(probeRadiance2, tid, outVal);
+        }
+    }
+#endif
+// [管线自检 2 引用锚点] Iris GUI 布尔开关显示条件：必须单独一行 #ifdef。
+#ifdef DEBUG_PROBE_QUERY
+#endif
 #ifdef VOXEL_GI_ENABLED
     // 体素 GI 信号源（阶段④：与 SSILVB 互斥，体素优先）：
     // IRC 采样器/查询 + 每像素漫反射追踪（VoxelTracing 内含 VoxelData/VoxelShape）
@@ -104,6 +266,12 @@ float GetClosestDepthN(in ivec2 texel) {
 void main() {
     uvec2 localPos = QuadLayout16x16(gl_LocalInvocationIndex);
     ivec2 texelPos = ivec2(localPos + gl_WorkGroupID.xy * gl_WorkGroupSize.xy);
+
+#ifdef PROBE_GI_ENABLED
+    // [Plan B] 同一 dispatch 内先更新缓存（写 B 读 A 乒乓），再执行查询（读另一块 = 上帧值）。
+    // 放最前，无视地形/早期 return，保证 4096 探针每帧全量覆盖；写 B 读 A（不同纹理），无同 dispatch 读写冲突。
+    ProbeUpdateSlice(texelPos);
+#endif
 
     ivec2 renderTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
 	float depth = loadDepth0(renderTexel);
@@ -140,6 +308,28 @@ void main() {
 	}
 	#endif
 
+	#if defined PROBE_GI_ENABLED && defined DEBUG_PROBE_QUERY
+	// [管线自检 2026-09-03 v3] 全屏 A/B 对照，不 gate 在 terrainCheck 上：
+	// 旧版把对照嵌在 if(terrainCheck) 内 → 天空/远景(depth≥1)像素直接 imageStore 0，
+	// 视野一旦有大片天空就"半边完全没有图案"，误判为写端/读取挂了。
+	// 这里提前整屏执行：左半=cacheCol 读回，右半=refCol 直算，两半都无视地形门控。
+	// 判读：左半一片亮红 → deferred50 写端没在写缓存；左半与右半近似渐变 → 写端正常。
+	{
+		vec2 _sUv = texelToUv(renderTexel);
+		vec3 _vPos = ScreenToViewPos(vec3(_sUv, depth));
+		vec3 _pvcD = mat3(gbufferModelViewInverse) * _vPos + cameraPositionFract + float(VOXEL_RADIUS);
+		#ifdef DEBUG_PROBE_PLUMBING
+			vec3 _cacheD = ProbeSampleRadiance(_pvcD);
+			vec3 _refD = fract((_pvcD + vec3(cameraPositionInt)) * rcp(16.0));
+			vec3 _colD = (renderTexel.x < (int(viewWidth) >> 1)) ? _cacheD : _refD;
+			imageStore(colorimg3, texelPos, vec4(RGBToYCoCg(_colD), 1.0));
+		#else
+			imageStore(colorimg3, texelPos, vec4(RGBToYCoCg(fract((_pvcD + vec3(cameraPositionInt)) * rcp(16.0))), 1.0));
+		#endif
+	}
+	return;
+	#endif
+
 	if (terrainCheck) {
 		#if defined LOD_MOD
 			if (lodMask) depth = ViewToScreenDepth(ScreenToViewDepthLod(depth));
@@ -153,7 +343,36 @@ void main() {
 		vec3 _wpos = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
 
 		vec4 result;
-		#ifdef VOXEL_GI_ENABLED
+		#ifdef PROBE_GI_ENABLED
+			// 探针 GI：16³ 平滑缓存 trilinear 查询 → 入射辐照度（此后在 DeferredLight 乘 albedo）。
+			// 无棋盘 SPP、免 SVGF 降噪（PROBE 时 VOXEL_GI 关，deferred4-9 不 dispatch）。
+			vec3 _pvc = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract + float(VOXEL_RADIUS);
+			#ifdef DEBUG_PROBE_QUERY
+			// [管线自检 3] A/B 同屏对照（需同时开 DEBUG_PROBE_PLUMBING）：
+			//   左半屏 = ProbeSampleRadiance(_pvc) 探针缓存读回（被测对象：fragment 写端 v2）
+			//   右半屏 = 直算参考 fract((_pvc+camInt)/16)（当前帧由深度重算、钉世界已证正确，基准）
+			// 两半应逐像素一致且同步钉世界。判读：
+			//   左半闪回/拖影、右半钉死 → 写端 imageStore→sampler 链路问题（迁移 fragment 后应消失）
+			//   左半相对右半整体滞后/平移 → 缓存锚滞后或 cDi 补偿错（查时序）
+			//   左半左右闪跳 → 乒乓相位错（偶读B/奇读A 与写端偶写A/奇写B 失配）
+			//   两半重合稳定 → 缓存读回正确，根源转向真实 GI 值本身
+			// 注意只赋 RGB 原始值，勿预转 YCoCg——main 尾部统一转一次。
+			vec3 _refCol = fract((_pvc + vec3(cameraPositionInt)) * rcp(16.0));
+			#ifdef DEBUG_PROBE_PLUMBING
+				vec3 _cacheCol = ProbeSampleRadiance(_pvc);
+				// [FIX 2026-09-03] 分屏阈值必须用**全分辨率** renderTexel 坐标判定：
+				// texelPos 是半分辨率（范围 [0, viewWidth/2)），旧式 texelPos.x < viewWidth/2
+				// 恒真 → 全屏都走缓存侧，右半屏直算参照永不显示。renderTexel 才是本像素
+				// 对应的全分辨率采样点。
+				vec3 _dbgCol = (renderTexel.x < (int(viewWidth) >> 1)) ? _cacheCol : _refCol;
+				result = vec4(_dbgCol, 1.0);
+			#else
+				result = vec4(_refCol, 1.0);
+			#endif
+		#else
+			result = vec4(ProbeSampleRadiance(_pvc) * PROBE_GI_STRENGTH, 1.0);
+		#endif
+		#elif defined VOXEL_GI_ENABLED
 			#ifdef VOXEL_REUSE
 			// ---- ReSTIR Phase A：几何一致（绝对世界坐标门控）且 reservoir 有效 → 复用上帧，省追踪 ----
 			ivec2 _rp = texelPos;

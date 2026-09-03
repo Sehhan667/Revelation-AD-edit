@@ -46,4 +46,8 @@ void main() {
 	imageStore(voxelCoarse, c >> VOXEL_COARSE_SHIFT, uvec4(0u));
 	// 细格 occupancy：尺寸 VOXEL_COARSE_N x VOXEL_COARSE_N x VOXEL_COARSE_N*2，本中原遍历覆盖其整个体，重复清 0 无害。
 	if (all(lessThan(c, ivec3(VOXEL_COARSE_N, VOXEL_COARSE_N, VOXEL_COARSE_N * 2)))) imageStore(voxelMask, c, uvec4(0u));
+	// 注意：probeRadiance（探针辐照度缓存）**不能**每帧清零——探针是跨帧时域 EMA 累积，
+	// round-robin 每帧只更新 1/PROBE_UPDATE_PERIOD 的格，其余格靠 EMA 保留跨帧值；
+	// 若每帧清 0，未更新格全变 0，缓存几乎恒 0 → 探针 GI 看不见（"开启无变化"根因）。
+	// 首帧 NaN/垃圾由 ProbeUpdate.comp 的 EMA 内 NaN 防御处理。
 }

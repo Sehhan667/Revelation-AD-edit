@@ -352,13 +352,33 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// [FIX 2026-08-06 合并] 体素 GI = 单一开关（原 VOXEL_GI_ENABLED + VOXEL_GI_TRACE 已合并）：
 	// 开启 = IRC 传播 + 每像素漫反射追踪（棋盘半分辨率 + SVGF 时域累积/滤波）。
 	// 降噪由 VOXEL_GI_DENOISE 单独控制（[2026-08-28 方案B] VXGI 与 SSILVB 的 SVGF_ENABLED 独立）。
-	#define VOXEL_GI_ENABLED
+	//#define VOXEL_GI_ENABLED
 	// ENABLE_VOXELIZATION 是 GUI 布尔开关（shaders.properties screen.voxel + profile.Default 默认开）。
 	// Iris 通过"注释/取消注释本行"来开关（setBooleanDefineValue）。要显示开关必须同时满足：
 	//   1) 本行 `#define ENABLE_VOXELIZATION`（无值，可带注释）→ 布尔选项定义锚点；
 	//   2) 存在单独一行的 `#ifdef ENABLE_VOXELIZATION` 引用（Terrain.frag 可视化块 + Shadow 系列）。
 	//   缺任一 → GUI 只占位不显示（"空格子"）。注意不能用 `#if defined A && defined B` 复合条件。
 	#define ENABLE_VOXELIZATION  // 体素化：shadow pass 直写 voxelData（3D 纹理）；关闭则无 GI
+
+	// ===== Probe GI（DDGI 风格探针辐照度缓存，独立实验方案，2026-09-03）=====
+	// 独立 16³×4m 探针缓存：均匀布点、STBN 方向随机采样、EMA 时域累积 →
+	// 平滑低频辐照度，天然免降噪，比"棋盘 1 SPP + SVGF"更稳定。复用体素化当场景几何。
+	// 与 VOXEL_GI / SSILVB 为并列信号源：实测时注释上面的 VOXEL_GI_ENABLED，
+	// 只开本开关（勿同时开，避免双份叠加）。依赖 ENABLE_VOXELIZATION 保持开启。
+	#define PROBE_GI_ENABLED
+	#define PROBE_GI_STRENGTH 1.0       // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0] 探针 GI 总强度
+	#define PROBE_RAY_SAMPLES 16        // [4 8 16 32 48 64] 每探针每次更新的方向采样数
+	#define PROBE_UPDATE_PERIOD 8       // [2 4 8 16 32] 每个探针每隔 N 帧更新一次（帧间方向轮转）
+	#define PROBE_MAX_FRAMES 32.0       // [4 8 16 32 64 128] EMA 时间常数（越小收敛越快/越噪）
+	// [管线自检 2026-09-03] 打开后探针缓存写入与探针格绑定的世界锚定渐变色（每 16m 一循环），
+	// 屏幕应呈现：整屏彩色渐变、钉在世界方块上（走动不跟手）、稳定不闪。
+	// 失败形态对应根因：只一角有渐变=dispatch 尺寸；渐变跟相机跑=查询/重投影坐标；闪烁=乒乓奇偶。
+#define DEBUG_PROBE_PLUMBING
+	// [管线自检 2] 打开后 DiffuseIndirect **不读探针缓存**，直接把查询坐标的渐变上屏。
+	// 与 DEBUG_PROBE_PLUMBING 配合二分定位：
+	//   本开关开 + 整屏渐变钉世界 → 查询端正确，问题在写入端(dispatch/更新pass)；
+	//   本开关开 + 仍只有一角/跟相机 → 查询端坐标换算错。
+	#define DEBUG_PROBE_QUERY
 	//#define VISUALIZE_VOXELS
 	//#define DEBUG_VOXEL_GI  // 调试(备用)：按体素 voxelID 标色（青绿=活板门/门 橙棕=形状块[楼梯/半砖/栅栏/墙] 黄=全块 蓝=空 红=越界）
 	//#define DEBUG_VOXEL_RADIANCE  // 调试：直接显示传播后的体素辐照度（验证"体素化+传播"链路）

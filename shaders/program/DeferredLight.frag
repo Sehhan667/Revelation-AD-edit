@@ -645,10 +645,15 @@ void main() {
 
     sceneOut += LightningContribution(worldPos, worldNormal);
 
-    #ifdef SSILVB_ENABLED
+    #if defined SSILVB_ENABLED || defined PROBE_GI_ENABLED
         #ifndef VOXEL_GI_ENABLED  // 与体素 GI 互斥（体素优先）：两者共用 colortex3 信号源，避免重复叠加
             #ifdef SVGF_ENABLED
-                vec3 radiance = UpscaleDiffuseIndirect(texelPos, worldNormal, length(viewPos), abs(dot(worldNormal, worldDir)));
+                #ifdef PROBE_GI_ENABLED
+                    // 探针 GI：平滑低频缓存，免降噪——SVGF 链不跑（PROBE 时 VOXEL_GI 关），直接读裸信号
+                    vec3 radiance = texelFetch(colortex3, texelPos >> 1, 0).rgb;
+                #else
+                    vec3 radiance = UpscaleDiffuseIndirect(texelPos, worldNormal, length(viewPos), abs(dot(worldNormal, worldDir)));
+                #endif
             #else
                 vec3 radiance = texelFetch(colortex3, texelPos >> 1, 0).rgb;
             #endif
