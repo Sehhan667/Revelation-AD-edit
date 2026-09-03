@@ -388,7 +388,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define DEBUG_PROBE_QUERY
 	// [调试 2026-09-03] 整屏显示探针 GI 辐照度场(伽马增强)，无视地形门控与其余光照，
 	// 直接看 GI 照明分布/亮度/伪影(blotchy 的 4m 探针块、颜色、时域稳定性)。
-	#define DEBUG_PROBE_GI_VIZ
+	//#define DEBUG_PROBE_GI_VIZ
 	//#define VISUALIZE_VOXELS
 	//#define DEBUG_VOXEL_GI  // 调试(备用)：按体素 voxelID 标色（青绿=活板门/门 橙棕=形状块[楼梯/半砖/栅栏/墙] 黄=全块 蓝=空 红=越界）
 	//#define DEBUG_VOXEL_RADIANCE  // 调试：直接显示传播后的体素辐照度（验证"体素化+传播"链路）
