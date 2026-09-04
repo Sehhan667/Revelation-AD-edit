@@ -559,13 +559,14 @@ void main() {
 		vec4 result;
 		#ifdef IRC_GI_ENABLED
 			// [2026-09-04 IRC 逐格 GI] 免 SVGF：像素体素坐标直接三线性采样 IRC(1m) 光场。
-			// 光在 deferred22(VoxelGI.frag) 里逐格注入+传播（方块/天/阳光+自反弹→逐格扩散）；
-			// 此处仅一次三线性采样（×0.01 外部域），×albedo 在 DeferredLight 补乘。
-			// cDi 相机重投影（IRC 相机锚定、读上帧），与 VoxelTracing 的 ircHit=vc+cDi 同构。
+			// [2026-09-04b 只保留阳光+方块光] IRC 的 alpha=天空曝光度(露天≈1、洞里≈0)。
+			// 用 (1-alpha) 门控：露天把 IRC 的天光/环境部分收掉(交给完整 SH)，只留洞里/被遮挡的
+			// 阳光+方块光；避免 IRC 与 SH 双重计天空 → 也恢复 SH 的方向性。
 			vec3 _pvc = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract + float(VOXEL_RADIUS);
 			{
 				ivec3 _ircHit = ivec3(_pvc) + (cameraPositionInt - previousCameraPositionInt);
 				vec3 _irc = vec3(0.0);
+				float _skExp = 0.0;
 				if (all(greaterThanEqual(_ircHit, ivec3(0))) && all(lessThan(_ircHit, ivec3(VOXEL_AREA)))) {
 					vec3 _fp = vec3(_ircHit) + 0.5;
 					ivec3 _fi = ivec3(floor(_fp));
@@ -580,10 +581,12 @@ void main() {
 						         ? texelFetch(voxelRadiance2Sampler, _p, 0)
 						         : texelFetch(voxelRadianceSampler, _p, 0);
 						_irc += _tv.rgb * _w;
+						_skExp += _tv.a * _w;
 					}
 				}
 				_irc *= 0.01;   // IRC ×100 存储 → 采样域 ×0.01
 				if (!all(equal(_irc, _irc)) || any(lessThan(_irc, vec3(0.0)))) _irc = vec3(0.0);
+				_irc *= (1.0 - clamp(_skExp, 0.0, 1.0));   // 去天光：露天收掉(交给 SH)，洞里留(阳光+方块光)
 				result = vec4(_irc * IRC_GI_STRENGTH, 1.0);
 			}
 		#elif defined PROBE_GI_ENABLED

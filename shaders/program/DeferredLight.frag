@@ -500,10 +500,11 @@ void main() {
     // VOXEL_GI_ENABLED 开启时由下方分支按网格内外覆盖为正确值。
     float voxelEdgeBlend = 1.0;
 
-    // 体素 GI / IRC GI 开启时：网格内由光追天光（skyMapTex 方向辐射）提供环境光，
+    // 体素 GI(VXGI) 开启时：网格内由光追天光（skyMapTex 方向辐射）提供环境光，
     // 屏蔽原版 SH 平涂天光，避免方向性天光被环境光盖掉；体素外仍走非光追样式。
-    // [2026-09-04 IRC_GI] IRC 逐格光场已含天/阳/反弹环境光，同样屏蔽 SH 平涂（否则双份→过曝）。
-    #if defined VOXEL_GI_ENABLED || defined IRC_GI_ENABLED
+    // [2026-09-04 IRC_GI] IRC 逐格 GI 只出阳光+方块光（见 DiffuseIndirect 用天空曝光度门控），
+    // **不**屏蔽 SH —— 天空/环境光仍由完整方向性 SH 提供。故此处仅 VOXEL_GI 走"网格内屏蔽 SH"分支。
+    #ifdef VOXEL_GI_ENABLED
         vec3 ambientVoxelCoord = camRelPos + cameraPositionFract + float(VOXEL_RADIUS);
         bool ambientInVoxelGrid = all(greaterThanEqual(ambientVoxelCoord, vec3(0.0)))
                                && all(lessThan(ambientVoxelCoord, vec3(float(VOXEL_AREA))));
