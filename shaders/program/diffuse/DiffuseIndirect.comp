@@ -94,6 +94,7 @@ vec4 PingReusePrev(ivec2 p) {
     layout (rgba16f) restrict uniform image3D probeDistance;
     layout (rgba16f) restrict uniform image3D probeDistance2;
 
+
     // [2026-09-04 参考 IRC] voxelRadiance = VXGI 的 1m 逐格辐照度光场（deferred22 维护）。
     // 探针查询端直接三线性采样它 → 免 SVGF 的逐格 GI（方块/天/阳光在 IRC 逐格传播）。
     uniform sampler3D voxelRadianceSampler;
@@ -387,6 +388,12 @@ vec4 PingReusePrev(ivec2 p) {
         }
     }
 #endif
+// [2026-09-04 IRC_GI] deferred22(VoxelGI.frag) 维护的 voxelRadiance IRC(64³×1m) 辐照度光场。
+// IRC_GI 查询端直接三线性采样（×0.01）。声明放在 PROBE_GI_ENABLED 块【外】，PROBE 关闭时也不缺声明。
+#ifdef IRC_GI_ENABLED
+    uniform sampler3D voxelRadianceSampler;
+    uniform sampler3D voxelRadiance2Sampler;
+#endif
 // [管线自检 2 引用锚点] Iris GUI 布尔开关显示条件：必须单独一行 #ifdef。
 #ifdef DEBUG_PROBE_QUERY
 #endif
@@ -550,7 +557,36 @@ void main() {
 		vec3 _wpos = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
 
 		vec4 result;
-		#ifdef PROBE_GI_ENABLED
+		#ifdef IRC_GI_ENABLED
+			// [2026-09-04 IRC 逐格 GI] 免 SVGF：像素体素坐标直接三线性采样 IRC(1m) 光场。
+			// 光在 deferred22(VoxelGI.frag) 里逐格注入+传播（方块/天/阳光+自反弹→逐格扩散）；
+			// 此处仅一次三线性采样（×0.01 外部域），×albedo 在 DeferredLight 补乘。
+			// cDi 相机重投影（IRC 相机锚定、读上帧），与 VoxelTracing 的 ircHit=vc+cDi 同构。
+			vec3 _pvc = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract + float(VOXEL_RADIUS);
+			{
+				ivec3 _ircHit = ivec3(_pvc) + (cameraPositionInt - previousCameraPositionInt);
+				vec3 _irc = vec3(0.0);
+				if (all(greaterThanEqual(_ircHit, ivec3(0))) && all(lessThan(_ircHit, ivec3(VOXEL_AREA)))) {
+					vec3 _fp = vec3(_ircHit) + 0.5;
+					ivec3 _fi = ivec3(floor(_fp));
+					vec3 _ft = _fp - vec3(_fi);
+					for (int _k = 0; _k < 8; ++_k) {
+						ivec3 _fo = ivec3(_k & 1, (_k >> 1) & 1, (_k >> 2) & 1);
+						ivec3 _p = clamp(_fi + _fo, ivec3(0), ivec3(VOXEL_AREA - 1));
+						float _w = (_fo.x == 0 ? 1.0 - _ft.x : _ft.x)
+						         * (_fo.y == 0 ? 1.0 - _ft.y : _ft.y)
+						         * (_fo.z == 0 ? 1.0 - _ft.z : _ft.z);
+						vec4 _tv = ((frameCounter & 1) == 0)
+						         ? texelFetch(voxelRadiance2Sampler, _p, 0)
+						         : texelFetch(voxelRadianceSampler, _p, 0);
+						_irc += _tv.rgb * _w;
+					}
+				}
+				_irc *= 0.01;   // IRC ×100 存储 → 采样域 ×0.01
+				if (!all(equal(_irc, _irc)) || any(lessThan(_irc, vec3(0.0)))) _irc = vec3(0.0);
+				result = vec4(_irc * IRC_GI_STRENGTH, 1.0);
+			}
+		#elif defined PROBE_GI_ENABLED
 			// 探针 GI：16³ 平滑缓存 trilinear 查询 → 入射辐照度（此后在 DeferredLight 乘 albedo）。
 			// 无棋盘 SPP、免 SVGF 降噪（PROBE 时 VOXEL_GI 关，deferred4-9 不 dispatch）。
 			vec3 _pvc = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract + float(VOXEL_RADIUS);

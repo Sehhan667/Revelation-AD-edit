@@ -361,12 +361,16 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define ENABLE_VOXELIZATION  // 体素化：shadow pass 直写 voxelData（3D 纹理）；关闭则无 GI
 
 	// ===== Probe GI（DDGI 风格探针辐照度缓存，独立实验方案，2026-09-03）=====
-	// 独立 16³×4m 探针缓存：均匀布点、STBN 方向随机采样、EMA 时域累积 →
-	// 平滑低频辐照度，天然免降噪，比"棋盘 1 SPP + SVGF"更稳定。复用体素化当场景几何。
-	// 与 VOXEL_GI / SSILVB 为并列信号源：实测时注释上面的 VOXEL_GI_ENABLED，
-	// 只开本开关（勿同时开，避免双份叠加）。依赖 ENABLE_VOXELIZATION 保持开启。
-	#define PROBE_GI_ENABLED
+	// [2026-09-04 废弃] DDGI 探针链路（4m 方向性探针）暂废弃——射线靠直击光源、多漏光/稀疏/偏移。
+	// 保留代码但不再启用本开关；改走下面的 IRC_GI（逐 1m 格光场，免 SVGF）。勿同时开 IRC_GI。
+	//#define PROBE_GI_ENABLED
 	#define PROBE_GI_STRENGTH 1.0       // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0] 探针 GI 总强度
+
+	// ===== IRC GI（逐 1m 格辐照度光场，免 SVGF，2026-09-04）=====
+	// 复用 VXGI 的 IRC（voxelRadiance，deferred22 逐格注入+传播），像素端仅一次三线性采样。
+	// 1m 细粒度、平滑传播、不穿墙；无逐像素追踪、无 SVGF。
+	#define IRC_GI_ENABLED
+	#define IRC_GI_STRENGTH 1.0         // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0 3.0] IRC GI 总强度
 	#define PROBE_RAY_SAMPLES 64        // [4 8 16 32 48 64] 每探针每次更新方向采样数（高=周围探针更易同时点亮→光斑更圆更居中）
 	#define PROBE_UPDATE_PERIOD 8       // [2 4 8 16 32] 每个探针每隔 N 帧更新一次（帧间方向轮转）
 	#define PROBE_MAX_FRAMES 32.0       // [4 8 16 32 64 128] EMA 时间常数（越小收敛越快/越噪）
