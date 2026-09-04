@@ -397,7 +397,9 @@ void main() {
 
         // [FIX 2026-08-06] IRC 只被每像素追踪（合并后的 VOXEL_GI_ENABLED）消费 → 按它门控，
         // 关体素 GI 后 IRC 不再运行（deferred22 也已按此条件启用；composite2 同样受益）
-        #ifdef VOXEL_GI_ENABLED
+        // [2026-09-04 参考 IRC] 探针模式也启用 IRC 注入：查询端三线性采样 IRC 1m 光场做免 SVGF GI。
+        // VXGI(VOXEL_GI_ENABLED) 仍照常进入本分支，不受影响。
+        #if defined VOXEL_GI_ENABLED || defined PROBE_GI_ENABLED
 
         // [2026-08-20 注入降频] 每 VOXEL_IRC_UPDATE_INTERVAL 帧才对当前体素重投 IRC 射线，
         // 其余帧直接搬运上一帧旧值到当期缓冲（保持 ping-pong 一致，防下帧读到更旧垃圾）。

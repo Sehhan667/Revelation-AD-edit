@@ -380,7 +380,8 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define PROBE_VIEW_BIAS 0.5         // [0.1 0.3 0.5 0.8 1.0] 采样点沿视线推离墙面（世界尺度）
 	// [临时调试 2026-09-03] 只留方块光 GI：ProbeTrace 屏蔽阳光/天光项，仅保留
 	// lightmap 方块光 + 发射体素光球（火把/萤石）。确认方块光 GI 用，调完删。
-	#define PROBE_GI_BLOCK_ONLY
+	// [2026-09-04] 已改走 IRC 光场直采样（自带天/阳/方块光），本开关不再使用 → 注释。
+	//#define PROBE_GI_BLOCK_ONLY
 	// [自检 DEBUG_PROBE_BIND_TEST] 非 GUI 开关（文件直接生效，Iris 不管理不覆盖）：
 	// 屏分两半二分 image/sampler 绑定与写端。判读见 DiffuseIndirect.comp 该块注释。
 	//#define DEBUG_PROBE_BIND_TEST  // [临时自检 2026-09-03] 左=image 直写直读，右=sampler 读回

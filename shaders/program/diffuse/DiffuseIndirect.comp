@@ -94,6 +94,11 @@ vec4 PingReusePrev(ivec2 p) {
     layout (rgba16f) restrict uniform image3D probeDistance;
     layout (rgba16f) restrict uniform image3D probeDistance2;
 
+    // [2026-09-04 参考 IRC] voxelRadiance = VXGI 的 1m 逐格辐照度光场（deferred22 维护）。
+    // 探针查询端直接三线性采样它 → 免 SVGF 的逐格 GI（方块/天/阳光在 IRC 逐格传播）。
+    uniform sampler3D voxelRadianceSampler;
+    uniform sampler3D voxelRadiance2Sampler;
+
     //============================================================================================//
     // ProbeTrace — 探针采样线（DDGI 风格，一阶弹射）
     // 从探针格心（体素空间连续坐标）沿方向 DDA 穿 voxelData 场景：
@@ -563,11 +568,32 @@ void main() {
 			vec3 _dbgCol = (renderTexel.x < (int(viewWidth) >> 1)) ? _cacheCol : _refCol;
 			result = vec4(_dbgCol, 1.0);
 		#else
-			// 完整 DDGI 查询：需要世界法线 + 世界空间相机视线（方向性辐照度）。
-			// [FIX 2026-09-03] normalPack 存的是**世界空间**法线（DeferredLight FetchNormalData→worldNormal
-			// 再乘 gbufferModelView 才转 view 的约定）——不能乘 gbufferModelViewInverse（曾把方向转错 → 查询全黑）。
-			vec3 _pvcN = normalize(FetchSurfaceNormal(renderTexel));
-			result = vec4(ProbeSampleRadiance(_pvc, _pvcN, normalize(mat3(gbufferModelViewInverse) * viewPos)) * PROBE_GI_STRENGTH, 1.0);
+			// [2026-09-04 参考 IRC] 免 SVGF 逐格 GI：像素体素坐标直接三线性采样 IRC(1m)光场。
+			// 光已由 deferred22 的逐格射线注入+传播（方块/天/阳光 + 自反弹 → 逐格扩散）。
+			// 这里只做一次三线性采样（×0.01 外部域），乘以表面 albedo 在 DeferredLight 补乘。
+			// cDi(相机平移重投影) 与 VoxelTracing 的 ircHit = vc + cDi 同构（IRC 相机锚定、读上帧）。
+			{
+				ivec3 _ircHit = ivec3(_pvc) + (cameraPositionInt - previousCameraPositionInt);
+				vec3 _irc = vec3(0.0);
+				if (all(greaterThanEqual(_ircHit, ivec3(0))) && all(lessThan(_ircHit, ivec3(VOXEL_AREA)))) {
+					vec3 _fp = vec3(_ircHit) + 0.5;
+					ivec3 _fi = ivec3(floor(_fp));
+					vec3 _ft = _fp - vec3(_fi);
+					for (int _k = 0; _k < 8; ++_k) {
+						ivec3 _fo = ivec3(_k & 1, (_k >> 1) & 1, (_k >> 2) & 1);
+						ivec3 _p = clamp(_fi + _fo, ivec3(0), ivec3(VOXEL_AREA - 1));
+						float _w = (_fo.x == 0 ? 1.0 - _ft.x : _ft.x)
+						         * (_fo.y == 0 ? 1.0 - _ft.y : _ft.y)
+						         * (_fo.z == 0 ? 1.0 - _ft.z : _ft.z);
+						vec4 _tv = ((frameCounter & 1) == 0)
+						         ? texelFetch(voxelRadiance2Sampler, _p, 0)
+						         : texelFetch(voxelRadianceSampler, _p, 0);
+						_irc += _tv.rgb * _w;
+					}
+				}
+				_irc *= 0.01;   // IRC ×100 存储，采样 ×0.01
+				result = vec4(_irc * PROBE_GI_STRENGTH, 1.0);
+			}
 		#endif
 		#elif defined VOXEL_GI_ENABLED
 			#ifdef VOXEL_REUSE
