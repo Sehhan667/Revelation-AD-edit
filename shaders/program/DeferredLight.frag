@@ -484,7 +484,10 @@ void main() {
     // 洞穴内（lightmap≈0）环境光只剩 activeMinAmbient 底光，若朝下面也被抹掉就全黑
     //（用户实测：朝下死黑、其他面偏亮）。用 skyPresence 门控：洞穴保留底光、户外才抹除。
     float downFade = mix(1.0, 0.0, smoothstep(0.0, -0.15, worldNormal.y));
-    float skyPresence = saturate(lightmap.y * 5.0);
+    // [2026-09-04 修"夜晚朝下很暗"] skyPresence 原只用 lightmap.y——夜里月光(≥0.2)也判成"有天空"
+    // → downFade 把朝下环境光乘 0，叠加夜里天空 SH 对下方向≈0 → 朝下几乎黑。加阳光门控：
+    // 仅白天(太阳在地平线附近/之上)才算"有天空"触发下向抹除；深夜 sun<0.1 → 0 → 朝下保留底光。
+    float skyPresence = saturate(lightmap.y * 5.0) * saturate(worldSunDir.y * 10.0 + 1.0);
     ambientAccum *= mix(1.0, downFade, skyPresence);
 
     // [2026-08-18 网格边缘过渡] 网格外环境光平滑过渡进网格内几格：
