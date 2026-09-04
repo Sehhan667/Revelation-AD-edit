@@ -346,7 +346,8 @@ vec4 PingReusePrev(ivec2 p) {
                     } else {
                         outIrr = newIrrEnc;   // 首帧/NaN/越界 → 重置
                     }
-                    vec2 outDist = mix(newDist, oldDistV.rg, hyst);
+                    // 距离场用更快的滞后（几何静止，快速收敛 → 遮挡更快生效、少漏光）
+                    vec2 outDist = mix(newDist, oldDistV.rg, oldValid ? PROBE_DIST_HYSTERESIS : 0.0);
 
 #ifdef DEBUG_PROBE_PLUMBING
                     // [写端强制测试 2026-09-03] 无视射线/混合/时域：每个探针的所有纹素直接写入

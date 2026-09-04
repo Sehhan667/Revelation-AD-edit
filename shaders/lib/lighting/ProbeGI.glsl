@@ -152,8 +152,13 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
         vec4 distSample = ProbeOctSample(even ? probeDistance2Sampler : probeDistanceSampler,
                                          adjCell, -biasedPosToAdj);
         vec2 filteredDist = 2.0 * distSample.rg;   // 写端 ÷2，读回乘 2
-        float meanDist = filteredDist.x;
-        float variance = abs((meanDist * meanDist) - filteredDist.y);
+        // 未写入/NaN/垃圾 → 视作"无遮挡"(mean 大)；方差给下限避免 chebyshev 变硬开关(硬边缘)。
+        bool distOK = all(equal(filteredDist, filteredDist));
+        float meanDist = (distOK && filteredDist.x >= 0.0 && filteredDist.x < 100.0)
+                       ? filteredDist.x : 100.0;
+        float meanSq = (distOK && filteredDist.y >= 0.0 && filteredDist.y < 20000.0)
+                     ? filteredDist.y : (meanDist * meanDist);
+        float variance = max(abs(meanDist * meanDist - meanSq), 0.25);
         float cheb = 1.0;
         if (biasedDist > meanDist) {
             float v = biasedDist - meanDist;
