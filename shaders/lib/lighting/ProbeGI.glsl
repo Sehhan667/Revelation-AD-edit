@@ -117,6 +117,15 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
     vec3 worldPos = vc + vec3(cameraPositionInt) - float(VOXEL_RADIUS);
     vec3 gridOriginPrev = (round(previousCameraPosition * rcp(spacing)) - GRID_HALF) * spacing;
 
+    // [FIX 2026-09-03 网格边缘无限外延] DDGI 体积衰减：探针体积(最外层探针中心 ±(G-1)/2·spacing)
+    // 之外，一个探针间距内淡出到 0。否则边缘探针的光被 clamp+alpha=1 等值外推到体积外所有表面 →
+    // 光沿 4m 探针轴向无限延伸（方向随玩家-光源相对位置变，正是用户所见）。
+    vec3 centerV = gridOriginPrev + GRID_HALF * spacing;
+    vec3 edgeIn = vec3(float(PROBE_GI_GRID_SIZE) * 0.5 - 0.5) * spacing;      // 最外探针中心距离
+    vec3 fadeV = vec3(1.0) - smoothstep(edgeIn, edgeIn + vec3(spacing),
+                                        abs(worldPos - centerV));
+    float volFade = fadeV.x * fadeV.y * fadeV.z;
+
     // DDGI 表面偏置：突出表面避免数值不稳，把采样点推入探针体素内部
     vec3 surfaceBias = (worldNormal * PROBE_NORMAL_BIAS) + (-cameraDir * PROBE_VIEW_BIAS);
     vec3 biasedPos = worldPos + surfaceBias;
@@ -188,5 +197,6 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
     irradiance *= rcp(accWeight);
     irradiance *= irradiance;   // 还原线性（写端 ^ (1/gamma)，读端 ^(gamma/2) 再平方）
     irradiance *= twoPi;
+    irradiance *= volFade;      // 体积衰减：网格外无 GI（不无限外延）
     return max(irradiance, vec3(0.0));
 }
