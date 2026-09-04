@@ -367,14 +367,14 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 只开本开关（勿同时开，避免双份叠加）。依赖 ENABLE_VOXELIZATION 保持开启。
 	#define PROBE_GI_ENABLED
 	#define PROBE_GI_STRENGTH 1.0       // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0] 探针 GI 总强度
-	#define PROBE_RAY_SAMPLES 32        // [4 8 16 32 48 64] 每探针每次更新的方向采样数（DDGI 喂 36 方向纹素，16 太少→闪）
+	#define PROBE_RAY_SAMPLES 64        // [4 8 16 32 48 64] 每探针每次更新方向采样数（高=周围探针更易同时点亮→光斑更圆更居中）
 	#define PROBE_UPDATE_PERIOD 8       // [2 4 8 16 32] 每个探针每隔 N 帧更新一次（帧间方向轮转）
 	#define PROBE_MAX_FRAMES 32.0       // [4 8 16 32 64 128] EMA 时间常数（越小收敛越快/越噪）
 	// [DDGI 完整重写 2026-09-03] 八面体/边界/滞后/偏置参数。
 	// PROBE_OCT_SIZE=八面体内边数(每探针方向分辨率)；改它必须同步 shaders.properties 的三张纹理尺寸(128→G*(O),同深)。
 	#define PROBE_OCT_SIZE 6            // [4 6 8] 八面体探针映射内边数（含 1 像素边界 → 块边 O=+2）
 	#define PROBE_IRRADIANCE_GAMMA 5.0  // 辐照度亮度编码 gamma（DDGI 默认 5）：改善亮暗收敛与低亮度精度
-	#define PROBE_HYSTERESIS 0.97       // [0.9 0.95 0.97 0.98 0.99] 时域滞后（高=更去噪/收敛慢）
+	#define PROBE_HYSTERESIS 0.95       // [0.9 0.95 0.97 0.98 0.99] 时域滞后（高=更去噪/收敛慢；64 线降噪足够→可用 0.95 快些）
 	#define PROBE_DIST_HYSTERESIS 0.85 // 距离场(几何,静止)收敛更快 → chebyshev 遮挡更快生效，减少穿墙漏光
 	#define PROBE_NORMAL_BIAS 0.5       // [0.1 0.3 0.5 0.8 1.0] 采样点沿表面法线推向表面（世界尺度）
 	#define PROBE_VIEW_BIAS 0.5         // [0.1 0.3 0.5 0.8 1.0] 采样点沿视线推离墙面（世界尺度）
