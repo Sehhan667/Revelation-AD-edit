@@ -500,9 +500,10 @@ void main() {
     // VOXEL_GI_ENABLED 开启时由下方分支按网格内外覆盖为正确值。
     float voxelEdgeBlend = 1.0;
 
-    // 体素 GI 开启时：网格内由光追天光（skyMapTex 方向辐射）提供环境光，
+    // 体素 GI / IRC GI 开启时：网格内由光追天光（skyMapTex 方向辐射）提供环境光，
     // 屏蔽原版 SH 平涂天光，避免方向性天光被环境光盖掉；体素外仍走非光追样式。
-    #ifdef VOXEL_GI_ENABLED
+    // [2026-09-04 IRC_GI] IRC 逐格光场已含天/阳/反弹环境光，同样屏蔽 SH 平涂（否则双份→过曝）。
+    #if defined VOXEL_GI_ENABLED || defined IRC_GI_ENABLED
         vec3 ambientVoxelCoord = camRelPos + cameraPositionFract + float(VOXEL_RADIUS);
         bool ambientInVoxelGrid = all(greaterThanEqual(ambientVoxelCoord, vec3(0.0)))
                                && all(lessThan(ambientVoxelCoord, vec3(float(VOXEL_AREA))));
@@ -645,11 +646,11 @@ void main() {
 
     sceneOut += LightningContribution(worldPos, worldNormal);
 
-    #if defined SSILVB_ENABLED || defined PROBE_GI_ENABLED
+    #if defined SSILVB_ENABLED || defined PROBE_GI_ENABLED || defined IRC_GI_ENABLED
         #ifndef VOXEL_GI_ENABLED  // 与体素 GI 互斥（体素优先）：两者共用 colortex3 信号源，避免重复叠加
             #ifdef SVGF_ENABLED
-                #ifdef PROBE_GI_ENABLED
-                    // 探针 GI：平滑低频缓存，免降噪——SVGF 链不跑（PROBE 时 VOXEL_GI 关），直接读裸信号
+                #if defined PROBE_GI_ENABLED || defined IRC_GI_ENABLED
+                    // 探针/IRC GI：平滑低频缓存，免降噪——SVGF 链不跑（此时 VOXEL_GI 关），直接读裸信号
                     vec3 radiance = texelFetch(colortex3, texelPos >> 1, 0).rgb;
                 #else
                     vec3 radiance = UpscaleDiffuseIndirect(texelPos, worldNormal, length(viewPos), abs(dot(worldNormal, worldDir)));
@@ -786,5 +787,11 @@ void main() {
             #endif
         #endif
     }
+
+#ifdef DEBUG_PROBE_GI_VIZ
+    // [调试 2026-09-03 探针格覆盖] 纯色覆盖图：绿=探针格内、红=格外。直接 YCoCgToRGB，
+    // 不乘强度、不再做伽马(避免双重伽马把绿色压没)——保持覆盖色准。
+    sceneOut = YCoCgToRGB(texelFetch(colortex3, texelPos >> 1, 0).rgb);
+#endif
     
 }
