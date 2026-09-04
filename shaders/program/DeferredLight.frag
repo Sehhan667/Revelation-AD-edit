@@ -286,6 +286,9 @@ void main() {
         saturate(smoothstep(0.02, 0.2, lightmap.y) + float(isEyeInWater)),
         step(0.0, worldSunDir.y)
     );
+    // [2026-09-04 夜晚整体亮度] 夜晚系数：深夜=1、白天=0（世界太阳高度）。供下面月光/环境光共用。
+    float nightAmt = 1.0 - smoothstep(-0.10, 0.00, worldSunDir.y);
+
     vec3 sunlightBase = vec3(0.0);
     float cloudShadow = 1.0;
 
@@ -307,6 +310,9 @@ void main() {
         #endif
     }
     sunlightBase *= SUN_BRIGHTNESS_MULTIPLIER; // 阳光亮度控制
+    // [2026-09-04] 夜晚亮度：把 NIGHT_BRIGHTNESS 也作用到月光/直射（跟着月光一起亮）。
+    // 白天(nightAmt=0)不变；可单独用 MOON_BRIGHTNESS_MULTIPLIER 调月面本身。
+    sunlightBase *= mix(1.0, NIGHT_BRIGHTNESS, nightAmt);
 
     vec3 specularDirect = vec3(0.0);
     float worldDistSquared = sdot(worldPos);
@@ -599,9 +605,7 @@ void main() {
 
     // 应用环境光亮度与颜色控制（还原旧版：完整 AO，无 mix 门控，无额外 skySH 叠加）
     // [2026-09-04 修"夜晚整体偏暗 + NIGHT_BRIGHTNESS 宏没效果"] 该宏在两版都只是空定义（一直没接上）。
-    // 这里把它真正接到夜晚环境光上：太阳在地平线下时按 NIGHT_BRIGHTNESS 放大 ambient（默认1.3→夜晚亮30%），
-    // 白天不受影响。想更亮/更暗直接调 NIGHT_BRIGHTNESS（GUI MiscLighting）。
-    float nightAmt = 1.0 - smoothstep(-0.10, 0.00, worldSunDir.y);   // 深夜=1，白天=0，黎明/黄昏过渡
+    // 已接到夜晚环境光(下方)与月光直射(上面 sunlightBase)。想更亮/更暗直接调 NIGHT_BRIGHTNESS（GUI MiscLighting）。
     sceneOut += ambientAccum * finalAo * AMBIENT_BRIGHTNESS_MULTIPLIER * AMBIENT_COLOR_TINT
               * mix(1.0, NIGHT_BRIGHTNESS, nightAmt);
 
