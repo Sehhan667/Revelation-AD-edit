@@ -160,6 +160,8 @@ vec4 PingReusePrev(ivec2 p) {
             if (lD.y > 0.01)
                 v += max(alb, vec3(VOXEL_GI_BLOCK_MIN_ALBEDO)) * VoxelLightColor(abs(hvd.z)) * lD.y * VOXEL_GI_BLOCK_STRENGTH;
 
+#ifndef PROBE_GI_BLOCK_ONLY
+            // [临时 2026-09-03 PROBE_GI_BLOCK_ONLY=屏蔽阳光] 只留方块光调试时整体拿掉阳光项。
             if (worldId != -1) {
                 // [FIX 2026-09-03 阳光按 VXGI IRC 对齐] 阳光亮度必须 ×128(同 VoxelTracing 的
                 // *128.0);此前探针只有 sunIrradiance(≈1)不 ×128 → 阳光比 VXGI 暗 128 倍,
@@ -182,13 +184,16 @@ vec4 PingReusePrev(ivec2 p) {
             vec3 shadowlight = sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4));
             float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
             v += alb * SimpleSkyLighting(skyColor, shadowlight, hitNormal.y, hitSkylight);
+#endif
             return v + contrib;   // 表面辐照度 + 沿途发射累积
         }
 
+#ifndef PROBE_GI_BLOCK_ONLY
         if (worldId != -1) {
             float fade = VoxelSkyHorizonFade(dir);
             if (fade > 0.001) return max(skyColor * fade, vec3(0.0)) + contrib;
         }
+#endif
         return contrib;   // 射程用尽：只留发射累积，距离=无遮挡物
     }
 
