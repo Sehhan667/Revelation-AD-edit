@@ -94,11 +94,6 @@ vec4 PingReusePrev(ivec2 p) {
     layout (rgba16f) restrict uniform image3D probeDistance;
     layout (rgba16f) restrict uniform image3D probeDistance2;
 
-    // [2026-09-04 参考 IRC] voxelRadiance = VXGI 的逐格传播辐射度光场（deferred22 维护）。
-    // 探针命中时采样它做"平滑方块光扩散"，替代仅靠稀疏直击发射体素。×0.01 外部采样域。
-    uniform sampler3D voxelRadianceSampler;
-    uniform sampler3D voxelRadiance2Sampler;
-
     //============================================================================================//
     // ProbeTrace — 探针采样线（DDGI 风格，一阶弹射）
     // 从探针格心（体素空间连续坐标）沿方向 DDA 穿 voxelData 场景：
@@ -190,30 +185,6 @@ vec4 PingReusePrev(ivec2 p) {
             float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
             v += alb * SimpleSkyLighting(skyColor, shadowlight, hitNormal.y, hitSkylight);
 #endif
-            // [2026-09-04 参考 IRC] 命中点采样前帧 IRC 光场（自反弹）——IRC 是逐格注入+传播的
-            // 平滑光场，让探针采到"扩散开的方块/天光/阳光"，而非仅靠直击发射体素的稀疏采样。
-            // cDi(相机平移重投影) 与 VoxelTracing.glsl 的 ircHit = vc + cDi 逐字同构。
-            #ifndef DISABLE_IRC
-            ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
-            if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA)))) {
-                vec3 _fp = vec3(ircHit) + 0.5;
-                ivec3 _fi = ivec3(floor(_fp));
-                vec3 _ft = _fp - vec3(_fi);
-                vec3 _irc = vec3(0.0);
-                for (int _k = 0; _k < 8; ++_k) {
-                    ivec3 _fo = ivec3(_k & 1, (_k >> 1) & 1, (_k >> 2) & 1);
-                    ivec3 _p = clamp(_fi + _fo, ivec3(0), ivec3(VOXEL_AREA - 1));
-                    float _w = (_fo.x == 0 ? 1.0 - _ft.x : _ft.x)
-                             * (_fo.y == 0 ? 1.0 - _ft.y : _ft.y)
-                             * (_fo.z == 0 ? 1.0 - _ft.z : _ft.z);
-                    vec4 _tv = ((frameCounter & 1) == 0)
-                             ? texelFetch(voxelRadiance2Sampler, _p, 0)
-                             : texelFetch(voxelRadianceSampler, _p, 0);
-                    _irc += _tv.rgb * _w;
-                }
-                v += alb * (_irc * 0.01) * VOXEL_GI_SELF_BOUNCE;   // ×0.01 外部采样域
-            }
-            #endif
             return v + contrib;   // 表面辐照度 + 沿途发射累积
         }
 
