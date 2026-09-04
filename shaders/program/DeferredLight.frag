@@ -598,7 +598,12 @@ void main() {
     #endif
 
     // 应用环境光亮度与颜色控制（还原旧版：完整 AO，无 mix 门控，无额外 skySH 叠加）
-    sceneOut += ambientAccum * finalAo * AMBIENT_BRIGHTNESS_MULTIPLIER * AMBIENT_COLOR_TINT;
+    // [2026-09-04 修"夜晚整体偏暗 + NIGHT_BRIGHTNESS 宏没效果"] 该宏在两版都只是空定义（一直没接上）。
+    // 这里把它真正接到夜晚环境光上：太阳在地平线下时按 NIGHT_BRIGHTNESS 放大 ambient（默认1.3→夜晚亮30%），
+    // 白天不受影响。想更亮/更暗直接调 NIGHT_BRIGHTNESS（GUI MiscLighting）。
+    float nightAmt = 1.0 - smoothstep(-0.10, 0.00, worldSunDir.y);   // 深夜=1，白天=0，黎明/黄昏过渡
+    sceneOut += ambientAccum * finalAo * AMBIENT_BRIGHTNESS_MULTIPLIER * AMBIENT_COLOR_TINT
+              * mix(1.0, NIGHT_BRIGHTNESS, nightAmt);
 
     // ====== Emissive & Blocklight ======
     #if EMISSIVE_MODE > 0 && defined MC_SPECULAR_MAP
