@@ -80,12 +80,12 @@ void VoxelMipBuildTask(uint task) {
         accOcc += step(0.5, texelFetch(voxelDataSampler, g, 0).z);
         cnt += 1.0;
     }
-    vec4 out;
-    if (cnt < 1e-4) out = vec4(0.0);
-    else            out = vec4(accRad * rcp(cnt), accOcc * rcp(cnt));
+    vec4 res;
+    if (cnt < 1e-4) res = vec4(0.0);
+    else            res = vec4(accRad * rcp(cnt), accOcc * rcp(cnt));
 
     uint parity = uint(frameCounter & 1);            // 偶数帧写 parity0
-    imageStore(voxelConeMip, VoxelConeMipCoord(cell, level, parity), out);
+    imageStore(voxelConeMip, VoxelConeMipCoord(cell, level, parity), res);
 }
 
 //================================================================================================//
