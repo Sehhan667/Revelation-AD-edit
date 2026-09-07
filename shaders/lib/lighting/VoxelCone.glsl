@@ -5,10 +5,12 @@
 // 在**规则网格**上落地：把 IRC 辐照度场（64³×1m，×100 存储）做成 mip 金字塔并**与占用合并为一张
 // 图集**（Iris 全包 image 单元池上限 16，基线已 15 → 锥档只允许 1 张新图）。
 //
-// 图集布局（image.voxelConeMip，64×64×32 rgba16f，rgb=平均辐照度×100，a=平均固体占用）：
+// 图集布局（image.voxelConeMip，64×64×32 rgba16f，rgb=实心子体素辐照度均值×100，a=实心占比）：
 //   每层 4096 texel 一片（64×64）：层索引线性摊进片内（local = lin & 4095 → x=local%64, y=local/64）
 //   奇偶组：parity0（偶数帧写）z 0..7 = 2m 层（32³ 的 8 片），z 8 = 4m 层（16³ 1 片），z 9 = 8m 层；
 //           parity1（上一帧构建，读端用）镜像到 z 10..19。
+// 注：IRC 只在实心体素有值（空气格=0）→ 辐照度只对实心子体素求均值（否则被空气稀释近 0）；
+// 实心占比放 .a，采样端据此在"纯空气→方向天空"间平滑回退。
 // 竞争分析：
 //   - 构建端只读"上一帧已写 IRC 块"（FetchVoxelRadiance 帧奇偶），写当前 parity 的切片；
 //   - 采样端读另一 parity 切片 → 与 IRC 自反弹同级的 1 帧滞后，同 dispatch 读写不同纹理区域；
@@ -68,24 +70,28 @@ void VoxelMipBuildTask(uint task) {
     int  k     = 1 << level;
 
     vec3 accRad = vec3(0.0);
-    float accOcc = 0.0;
-    float cnt = 0.0;
+    float cntSolid = 0.0;
+    float cntAll = 0.0;
     // 辐照度基体素是"上一帧已写块"（上一帧锚定）→ +cDi 对齐当前整数格锚（与 IRC 自反弹读取同口径）；
     // voxelData 是本帧内容（当前锚定）→ 不位移。
+    // 注意：IRC 只在实心体素有值（空气格=0）→ 辐照度均值**只对实心子体素**求（否则被空气格稀释到近 0），
+    // 实心占比单独存 .a 供采样端做"空气→天空回退"。
     ivec3 cdi = cameraPositionInt - previousCameraPositionInt;
     for (int zz = 0; zz < k; ++zz)
     for (int yy = 0; yy < k; ++yy)
     for (int xx = 0; xx < k; ++xx) {
         ivec3 g = cell * k + ivec3(xx, yy, zz);
-        vec4 rv = FetchVoxelRadiance(g + cdi);
-        if (!VoxelConeValid(rv)) { rv = vec4(0.0); }
-        accRad += max(rv.rgb, vec3(0.0));
-        accOcc += step(0.5, texelFetch(voxelDataSampler, g, 0).z);
-        cnt += 1.0;
+        bool sld = texelFetch(voxelDataSampler, g, 0).z > 0.5;
+        if (sld) {
+            vec4 rv = FetchVoxelRadiance(g + cdi);
+            if (VoxelConeValid(rv)) accRad += max(rv.rgb, vec3(0.0));
+            cntSolid += 1.0;
+        }
+        cntAll += 1.0;
     }
     vec4 res;
-    if (cnt < 1e-4) res = vec4(0.0);
-    else            res = vec4(accRad * rcp(cnt), accOcc * rcp(cnt));
+    if (cntSolid < 1e-4) res = vec4(0.0);
+    else                 res = vec4(accRad * rcp(cntSolid), cntSolid * rcp(cntAll));
 
     uint parity = uint(frameCounter & 1);            // 偶数帧写 parity0
     imageStore(voxelConeMip, VoxelConeMipCoord(cell, level, parity), res);
@@ -150,8 +156,37 @@ vec4 VoxelConeMipTri(vec3 cellF, int level) {
     return acc;
 }
 
-// 一条锥沿 dir 采样 4 档（近→远用越来越粗的层），占用做软遮挡；出界按方向天空近似。
-// 返回解码域（×0.01 后）的辐照度近似。
+// 方向天空近似（compute 安全：只用 skyColor；与出界 tap 同款）
+vec3 VoxelConeSkyV(vec3 dir, float skyGate) {
+    return skyColor * saturate(dir.y * 4.0 + 0.5) * skyGate;
+}
+
+// level0 近场混合：实心角取基体素辐照度（×0.01 解码），空气角回退方向天空
+// → 出地表的锥不再被"空气格=0"抹黑；返回解码域（0-1 尺度）。
+vec3 VoxelConeBaseMix(vec3 p, vec3 dir, float skyGate) {
+    ivec3 cdi = cameraPositionInt - previousCameraPositionInt;
+    vec3 sky = VoxelConeSkyV(dir, skyGate);
+    vec3 i = floor(p);
+    vec3 t = p - i;
+    vec3 acc = vec3(0.0);
+    for (int k = 0; k < 8; ++k) {
+        ivec3 off = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+        ivec3 c = clamp(ivec3(i) + off, ivec3(0), ivec3(VOXEL_AREA - 1));
+        float w = (off.x == 0 ? 1.0 - t.x : t.x)
+                * (off.y == 0 ? 1.0 - t.y : t.y)
+                * (off.z == 0 ? 1.0 - t.z : t.z);
+        vec3 v = sky;
+        if (texelFetch(voxelDataSampler, c, 0).z > 0.5) {
+            vec4 rv = FetchVoxelRadiance(c + cdi);   // 上一帧块（当前锚 +cDi）
+            if (VoxelConeValid(rv)) v = max(rv.rgb, vec3(0.0)) * 0.01;
+        }
+        acc += v * w;
+    }
+    return acc;
+}
+
+// 一条锥沿 dir 采样 4 档（近→远用越来越粗的层），占用做软遮挡；空气为主的 tap 回退方向天空。
+// 返回解码域（0-1 尺度）的辐照度近似。
 vec3 VoxelConeTrace(vec3 p0, vec3 dir, float skyGate) {
     const float s[4]  = float[4](1.5, 3.0, 6.0, 12.0);
     const int   lv[4] = int[4](0, 1, 2, 3);
@@ -163,16 +198,18 @@ vec3 VoxelConeTrace(vec3 p0, vec3 dir, float skyGate) {
         int level = lv[i];
         vec3 rad;
         if (any(lessThan(p, vec3(0.0))) || any(greaterThanEqual(p, vec3(float(VOXEL_AREA))))) {
-            // 出界 = 天光方向（compute 安全：只用 skyColor）
-            rad = skyColor * saturate(dir.y * 4.0 + 0.5) * skyGate;
+            rad = VoxelConeSkyV(dir, skyGate);       // 出界 = 方向天空近似
         } else if (level == 0) {
-            rad = VoxelConeBaseTri(p).rgb * 0.01;
-            transm *= exp2(-VOXEL_CONE_OCC_K * VoxelConeSolidTri(p));
+            rad = VoxelConeBaseMix(p, dir, skyGate);
+            float occ = VoxelConeSolidTri(p);
+            transm *= exp2(-VOXEL_CONE_OCC_K * occ);
         } else {
             vec4 v = VoxelConeMipTri(p * (1.0 / float(1 << level)), level);
-            rad = VoxelConeValid(v) ? max(v.rgb, vec3(0.0)) : vec3(0.0);
-            rad *= 0.01;
-            transm *= exp2(-VOXEL_CONE_OCC_K * clamp(v.a, 0.0, 1.0));
+            float occ = clamp(v.a, 0.0, 1.0);
+            vec3 solidRad = VoxelConeValid(v) ? max(v.rgb, vec3(0.0)) * 0.01 : vec3(0.0);
+            // 空气为主（occ 低）→ 回退方向天空；有实体 → 实体均值（避免被空气格稀释）
+            rad = mix(VoxelConeSkyV(dir, skyGate), solidRad, smoothstep(0.03, 0.45, occ));
+            transm *= exp2(-VOXEL_CONE_OCC_K * occ);
         }
         acc += rad * transm;
         if (transm < 0.02) break;
