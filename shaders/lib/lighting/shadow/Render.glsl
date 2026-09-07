@@ -162,6 +162,15 @@ vec3 PercentageCloserFilter(in vec3 shadowScreenPos, in vec3 worldPos, in float 
         vec3 result = vec3(0.0);
         vec2 waterData = vec2(0.0);
 
+        // [2026-09-03 ①] 快速 PCF 单侧早退：玻璃染色依赖“shadowtex1 判亮但 shadowtex0 判被挡”
+        // 的不一致，因此每个 tap 都必须读 shadowtex0 来判定透明玻璃/水，无法省掉该次读取。
+        // 只优化①：前 N-1 个 tap 全同侧且无彩色/水介入时提前结束，并把剩余 tap 按该侧值
+        // 补足 —— 全亮/全阴像素与全量采样逐位一致，仅在半影接触线处省掉末个 tap。
+        bool pureSide = true;
+        float sideVal  = 0.0;
+        // N≥3 才在“前 N-1 个 tap 同侧”时早退并补足最后一个 tap；N=2 保持全量以保证安全。
+        const uint earlyBreakAt = (pcfSamples >= 3u) ? (pcfSamples - 2u) : pcfSamples;
+
         #pragma unroll
         for (uint i = 0u; i < pcfSamples; ++i) {
             // 预计算基础方向
@@ -175,11 +184,13 @@ vec3 PercentageCloserFilter(in vec3 shadowScreenPos, in vec3 worldPos, in float 
             vec2 sampleCoord = baseSampleCoord + offset;
             float sampleDepth1 = textureLod(shadowtex1, vec3(sampleCoord, shadowScreenPos.z), 0).x;
 
+            bool hasColor = false;   // 是否命中透明玻璃/水(命中须保留全量，不可早退)
             #ifdef COLORED_SHADOWS
                 ivec2 sampleTexel = ivec2(sampleCoord * invRes);
                 float sampleDepth0 = texelFetch(shadowtex0, sampleTexel, 0).x;
 
                 if (step(shadowScreenPos.z, sampleDepth0) != sampleDepth1) {
+                    hasColor = true;
                     float waterMask = texelFetch(shadowcolor1, sampleTexel, 0).w;
                     if (waterMask > EPS) {
                         waterData += vec2(sampleDepth0 - shadowScreenPos.z, 1.0);
@@ -190,6 +201,24 @@ vec3 PercentageCloserFilter(in vec3 shadowScreenPos, in vec3 worldPos, in float 
                 } else
             #endif
                 result += sampleDepth1;
+
+            // ① 单侧状态跟踪
+            if (hasColor) {
+                pureSide = false;
+            } else {
+                bool thisSide = sampleDepth1 >= 0.5;
+                if (i == 0u) {
+                    sideVal = thisSide ? 1.0 : 0.0;
+                } else if (thisSide != (sideVal >= 0.5)) {
+                    pureSide = false;
+                }
+            }
+
+            // 前 N-1 个 tap 全同侧且无彩色 → 剩余 tap 补足同侧值并提前结束
+            if (pureSide && i >= earlyBreakAt) {
+                result += vec3(sideVal) * float(pcfSamples - i - 1u);
+                break;
+            }
         }
 
         result *= rSteps;

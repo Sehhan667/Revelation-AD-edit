@@ -39,6 +39,10 @@ layout (r32ui) writeonly uniform uimage3D voxelCoarse;
 layout (r32ui) writeonly uniform uimage3D voxelMask;
 
 void main() {
+	#if !defined GI_ACTIVE_VXGI && !defined GI_ACTIVE_IRC
+		return;
+	#endif
+
 	ivec3 c = ivec3(gl_GlobalInvocationID.xyz);
 	imageStore(voxelData, c, vec4(0.0));          // z=voxelID=0 即空体素（gbuffers 只写命中格，必须清空防跨帧残留）
 	imageStore(voxelLightData, c, uvec4(0u));

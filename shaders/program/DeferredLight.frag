@@ -121,10 +121,10 @@ uniform sampler2D cloudOriginTex;
 #include "/lib/lighting/shadow/Render.glsl"
 
 // [P1 2026-09-02] 按 AO_ENABLED 值只 include 一种 AO 实现，避免 SSAO+GTAO 同时编译徒耗寄存器与编译时间
-#if AO_ENABLED == 1 && !defined SSILVB_ENABLED
+#if AO_ENABLED == 1 && !defined GI_ACTIVE_SSILVB
     #include "/lib/lighting/SSAO.glsl"
 #endif
-#if AO_ENABLED == 2 && !defined SSILVB_ENABLED
+#if AO_ENABLED == 2 && !defined GI_ACTIVE_SSILVB
     #include "/lib/lighting/GTAO.glsl"
 #endif
 
@@ -186,7 +186,7 @@ void main() {
     vec3 activeBlocklightColor = blocklightColor;
     // 是否位于体素网格内（网格内由 GI 提供方块光；网格外走原版方块光）
     bool blocklightInVoxelGrid = false;
-    #ifdef VOXEL_GI_ENABLED
+    #ifdef GI_ACTIVE_VXGI
         vec3 blocklightVoxelCoord = camRelPos + cameraPositionFract + float(VOXEL_RADIUS);
         blocklightInVoxelGrid = all(greaterThanEqual(blocklightVoxelCoord, vec3(0.0))) && all(lessThan(blocklightVoxelCoord, vec3(float(VOXEL_AREA))));
         if (blocklightInVoxelGrid) {
@@ -344,7 +344,18 @@ void main() {
         }
 
         #ifdef SCREEN_SPACE_SHADOWS
-            float contactShadow = ScreenSpaceShadow(screenPos, viewPos + viewNormal * normalOffsetBase, dither, sssAmount);
+            float contactShadow = 1.0;
+            // [优化 2026-09-05 深阴影早退] contactShadow 只被两处消费：
+            //   ① 直接光 shadow *= contactShadow —— 该块以 dot(shadow)>EPS 为门槛，深阴影内 shadow≈0；
+            //   ② SSS 辉光 sss *= mix(1.0, contactShadow, ...) —— 其内部再乘 sssMask =
+            //      saturate(rawShadow 均值)^SSS_CONTRAST_POW，rawShadow<0.01 时 sssMask<5e-5，辉光被压灭。
+            // 故阴影贴图平均亮度 < 0.01 的像素，contactShadow 对最终输出无可感知影响（最坏情形
+            // PCF 平滑半影残留 ~3% 阳光的像素少乘一次 ≤1 的接触值，偏差 <1.5% 阳光），
+            // 整段屏幕空间步进（约 SCREEN_SPACE_SHADOWS_SAMPLES 次深度采样/像素）可安全跳过。
+            // 距离过渡区/阴影贴图外（distanceFade>0，rawShadow 恒 1）不受影响，保持原步进。
+            if (dot(rawShadow, vec3(1.0)) >= 0.03) {   // 平均亮度 ≥ 0.01 才需要接触阴影
+                contactShadow = ScreenSpaceShadow(screenPos, viewPos + viewNormal * normalOffsetBase, dither, sssAmount);
+            }
         #else
             const float contactShadow = 1.0;
         #endif
@@ -402,7 +413,7 @@ void main() {
     }
 
     // ====== Ambient Occlusion ======
-    #if AO_ENABLED > 0 && !defined SSILVB_ENABLED
+    #if AO_ENABLED > 0 && !defined GI_ACTIVE_SSILVB
         float aoVal = 1.0;
         #if AO_ENABLED == 1
             aoVal = CalculateSSAO(screenCoord, viewPos, viewNormal, SampleStbnUnitvec2(texelPos, frameCounter));
@@ -503,17 +514,17 @@ void main() {
     // 网格外的 SH 环境光（与非光追同款），外部光→内部 GI 平滑过渡。
     // voxelEdgeBlend：1=紧贴网格表面（全 SH 混合），0=深入网格
     // VOXEL_EDGE_BLEND_DISTANCE 格后（纯 GI，SH 完全淡出，不干扰内部方向性天光）。
-    // [FIX 2026-08-18 关光追无环境光] 默认值必须是 1.0：关闭 VOXEL_GI_ENABLED
+    // [FIX 2026-08-18 关光追无环境光] 默认值必须是 1.0：关闭 GI_ACTIVE_VXGI
     // 时走到 #else（ambientInVoxelGrid=false），SH 环境光乘 voxelEdgeBlend——
     // 若默认 0 会把 SH 全乘 0 → 整个世界没环境光（用户实测）。
-    // VOXEL_GI_ENABLED 开启时由下方分支按网格内外覆盖为正确值。
+    // GI_ACTIVE_VXGI 开启时由下方分支按网格内外覆盖为正确值。
     float voxelEdgeBlend = 1.0;
 
     // 体素 GI(VXGI) 开启时：网格内由光追天光（skyMapTex 方向辐射）提供环境光，
     // 屏蔽原版 SH 平涂天光，避免方向性天光被环境光盖掉；体素外仍走非光追样式。
     // [2026-09-04 IRC_GI] IRC 逐格 GI 只出阳光+方块光（见 DiffuseIndirect 用天空曝光度门控），
     // **不**屏蔽 SH —— 天空/环境光仍由完整方向性 SH 提供。故此处仅 VOXEL_GI 走"网格内屏蔽 SH"分支。
-    #ifdef VOXEL_GI_ENABLED
+    #ifdef GI_ACTIVE_VXGI
         vec3 ambientVoxelCoord = camRelPos + cameraPositionFract + float(VOXEL_RADIUS);
         bool ambientInVoxelGrid = all(greaterThanEqual(ambientVoxelCoord, vec3(0.0)))
                                && all(lessThan(ambientVoxelCoord, vec3(float(VOXEL_AREA))));
@@ -564,7 +575,7 @@ void main() {
         bool ambientInVoxelGrid = false;
     #endif
 
-    #ifndef SSILVB_ENABLED
+    #ifndef GI_ACTIVE_SSILVB
         // [2026-08-18] 抛弃"网格内 SH 阴影补足"：SH 平涂与 GI 方向天光双重计数，
         // 方块表面出现 z-fighting 感（用户实测）。网格内天光完全交给 GI（出界射线
         // 注入 IRC + 自反弹传播），SH 只在网格外按非光追样式渲染。最小环境光底
@@ -618,17 +629,17 @@ void main() {
         // 被置 0（屏蔽原版方块光），但发光方块自身的表面自发光（萤石/菌光体/火把等）
         // 必须保留——用默认白 × 亮度作基色，不受玩家红绿蓝设置影响。
         vec3 emissiveBaseColor = blocklightColor;
-        #ifdef VOXEL_GI_ENABLED
+        #ifdef GI_ACTIVE_VXGI
             emissiveBaseColor = vec3(1.0) * BLOCKLIGHT_BRIGHTNESS;
         #endif
         vec4 emissive = HardCodeEmissive(materialID, albedo, worldPos, emissiveBaseColor);
-        #ifndef SSILVB_ENABLED
+        #ifndef GI_ACTIVE_SSILVB
             if (emissive.a * lightmap.x > EPS) {
                 lightmap.x = CalculateBlocklightFalloff(lightmap.x);
                 // 体素 GI 开启时：仅在网格内按 VOXEL_GI_BLENDED_LIGHTMAP 屏蔽/混合原版方块光。
                 // 网格外无 GI 数据，原版方块光必须全量保留（否则 VOXEL_GI_BLENDED_LIGHTMAP=0
                 // 会把网格外方块光一起灭掉 → "网格外连方块光都没有"）。
-                #ifdef VOXEL_GI_ENABLED
+                #ifdef GI_ACTIVE_VXGI
                     if (blocklightInVoxelGrid) lightmap.x *= VOXEL_GI_BLENDED_LIGHTMAP;
                 #endif
                 if (lightmap.x > EPS) {
@@ -637,10 +648,10 @@ void main() {
             }
         #endif
         sceneOut += emissive.rgb * EMISSIVE_BRIGHTNESS;
-    #elif !defined SSILVB_ENABLED
+    #elif !defined GI_ACTIVE_SSILVB
         lightmap.x = CalculateBlocklightFalloff(lightmap.x);
         // 仅在网格内屏蔽/混合原版方块光；网格外全量保留（同上方 EMISSIVE_MODE<2 分支）
-        #ifdef VOXEL_GI_ENABLED
+        #ifdef GI_ACTIVE_VXGI
             if (blocklightInVoxelGrid) lightmap.x *= VOXEL_GI_BLENDED_LIGHTMAP;
         #endif
         sceneOut += lightmap.x * mix(finalAo, vec3(1.0), lightmap.x) * activeBlocklightColor;
@@ -659,10 +670,10 @@ void main() {
 
     sceneOut += LightningContribution(worldPos, worldNormal);
 
-    #if defined SSILVB_ENABLED || defined PROBE_GI_ENABLED || defined IRC_GI_ENABLED
-        #ifndef VOXEL_GI_ENABLED  // 与体素 GI 互斥（体素优先）：两者共用 colortex3 信号源，避免重复叠加
+    #if defined GI_ACTIVE_SSILVB || defined PROBE_GI_ENABLED || defined GI_ACTIVE_IRC
+        #ifndef GI_ACTIVE_VXGI  // 与体素 GI 互斥（体素优先）：两者共用 colortex3 信号源，避免重复叠加
             #ifdef SVGF_ENABLED
-                #if defined PROBE_GI_ENABLED || defined IRC_GI_ENABLED
+                #if defined PROBE_GI_ENABLED || defined GI_ACTIVE_IRC
                     // 探针/IRC GI：平滑低频缓存，免降噪——SVGF 链不跑（此时 VOXEL_GI 关），直接读裸信号
                     vec3 radiance = texelFetch(colortex3, texelPos >> 1, 0).rgb;
                 #else
@@ -703,7 +714,7 @@ void main() {
         sceneOut += specularDirect;
         
         // 体素 GI（彩色光源）
-        #ifdef VOXEL_GI_ENABLED
+        #ifdef GI_ACTIVE_VXGI
             #ifdef DEBUG_VOXEL_RADIANCE
             // 单点诊断：整屏显示"玩家所在体素"（网格坐标恒为 VOXEL_RADIUS）的传播缓存，
             // 逐帧演化 = 时间混合/衰减的直观读数（只回答"缓存是否在衰减"这一个问题）。
@@ -724,7 +735,7 @@ void main() {
                 // 经 SVGF 时域累积 + 边缘保持滤波后在此读回；此处补乘 albedo×强度，
                 // 与旧全分辨率路径（VoxelTracePixel × albedo × STRENGTH）视觉语义一致。
                 vec3 voxelGI = vec3(0.0);
-                #ifdef VOXEL_GI_ENABLED
+                #ifdef GI_ACTIVE_VXGI
                     #ifdef VOXEL_GI_DENOISE
                         #ifdef SVGF_ENABLED
                             // UpscaleDiffuseIndirect 返回 YCoCg 空间信号（colortex3 全链路 YCoCg），须显式转回 RGB
@@ -794,7 +805,7 @@ void main() {
                 #endif
             #endif
         #else
-            // 体素 GI 未启用（VOXEL_GI_ENABLED 宏未注入本编译单元）：DEBUG 时品红提示
+            // 体素 GI 未启用（GI_ACTIVE_VXGI 宏未注入本编译单元）：DEBUG 时品红提示
             #ifdef DEBUG_VOXEL_GI
                 sceneOut = vec3(1.0, 0.0, 1.0);
             #endif
@@ -806,5 +817,5 @@ void main() {
     // 不乘强度、不再做伽马(避免双重伽马把绿色压没)——保持覆盖色准。
     sceneOut = YCoCgToRGB(texelFetch(colortex3, texelPos >> 1, 0).rgb);
 #endif
-    
+
 }

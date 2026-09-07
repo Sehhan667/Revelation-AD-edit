@@ -1,0 +1,13 @@
+#define IRC_COMPUTE
+layout (local_size_x = 16, local_size_y = 16) in;
+const ivec3 workGroups = ivec3(32, 32, 1);
+
+#define gl_FragCoord (vec4(gl_GlobalInvocationID.xy, 0.0, 1.0))
+#define main voxelGI_fragment_main
+#include "/program/gi/VoxelGI.frag"
+#undef main
+#undef gl_FragCoord
+
+void main() {
+    voxelGI_fragment_main();
+}

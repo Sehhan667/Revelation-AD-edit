@@ -34,6 +34,11 @@
 // reservoir 用独立 image.reservoirA/B（RGBA16F 半分辨率），与 colortex/voxy 完全无冲突。
 // 语义与现有 Accumulate 时域累积互补（这层"省追踪"，Accumulate 管累积）。默认关。
 // #define VOXEL_REUSE
+// The four optional ReSTIR images are reassigned to IRC's DDGI backend.
+#undef VOXEL_REUSE
+#ifndef GI_ACTIVE_VXGI
+    #undef VOXEL_REUSE
+#endif
 #ifndef VOXEL_REUSE_INTERVAL
     #define VOXEL_REUSE_INTERVAL 8   // [2 4 8 16 32] 重投间隔帧数（复用 N-1 帧 / 重投 1 帧）
 #endif
@@ -118,7 +123,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 
 // 的 TAA/IRC 收敛闪烁，折中调回 0.6~0.8，或再去掉 VoxelHitLightSphere 的 mix(...,1.0,0.15) 保底。
 // [0.5 = 格心小球（默认，防整格全亮）；调大 → 命中率↑ → 火把照亮更远，但光源格光晕溢出相邻格]
-#define VOXEL_GI_LIGHT_RADIUS 0.5    // [0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 发射光球命中半径
+#define VOXEL_GI_LIGHT_RADIUS 0.8    // [0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 发射光球命中半径
 // 追踪端发射光强度（架构：发射光主体由 IRC 时域累积承载——IRC 注入端用
 // VOXEL_GI_BOOST 强注入、时间混合 0.99 平滑；追踪端是每像素每帧 1 条随机光线的
 // 高方差采样，发射光脉冲必须压低，否则贴光源面"命中/未命中"跳变 → 闪烁）。
@@ -126,7 +131,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 我们的追踪端脉冲 = 0.225~1.5（BOOST 1.5）→ 方差高 2 个数量级。此系数把追踪端
 // 脉冲压到 ~0.07~0.45（仍高于 的低配亮度），近场火把光主体依赖 IRC。
 #define VOXEL_GI_TRACE_LIGHT_STRENGTH 0.3
-#define VOXEL_GI_BLEND 0.99             // [0.5 0.6 0.7 0.8 0.9 0.95 0.98 0.99] 时间混合权重
+#define VOXEL_GI_BLEND 0.995            // [0.5 0.6 0.7 0.8 0.9 0.95 0.98 0.99 0.995] 时间混合权重
 // 注：IRC 是随机采样注入（每体素每帧 1 条光线），靠时域累积降噪。
 // 0.99 = 默认时域混合权重，IRC 存"表面体素辐照度"变化慢，
 // 时域稳定；首次进入场景由"旧帧全黑 → 直接写新值"播种（VoxelGI.frag），不会冷启动黑屏。

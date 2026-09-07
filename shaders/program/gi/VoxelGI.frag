@@ -4,7 +4,7 @@
     Copyright (C) 2026 HaringPro
 
     IRC 注入语义：
-    - 只对非空气体素注入（表面/内部固体都投光），空气体素 alpha=1 标记遮挡不注入
+
     - 表面判定（sampleHemisphere）：恰好 1 空邻居 + 非普通方块（abs(ID)>1，
       岩浆/光源等特殊方块）→ 起点沿空邻居方向偏移半格到表面 + 半球采样
       pdf=saturate(dot(dir,n))*2.0；其余（普通实心/内部固体/多空邻居）→ 全方向 pdf=1.6
@@ -87,18 +87,22 @@ uniform sampler2D atlas2D;
 
 // 读取上一帧辐照度（ping-pong 由帧奇偶决定），×0.01 解码内部 ×100 缩放
 vec3 FetchPrevRadiance(ivec3 c) {
+    if (frameCounter < 2) return vec3(0.0);
     if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, ivec3(VOXEL_AREA)))) return vec3(0.0);
-    return ((frameCounter & 1) == 0
+    vec3 value = ((frameCounter & 1) == 0
         ? texelFetch(voxelRadiance2Sampler, c, 0)
         : texelFetch(voxelRadianceSampler, c, 0)).rgb * 0.01;
+    return any(isnan(value)) || any(isinf(value)) ? vec3(0.0) : clamp(value, 0.0, 1.0);
 }
 
 // Phase 1：读取上一帧天空曝光度（voxelRadiance alpha，0-1；越界=0）
 float FetchPrevExposure(ivec3 c) {
+    if (frameCounter < 2) return 0.0;
     if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, ivec3(VOXEL_AREA)))) return 0.0;
-    return ((frameCounter & 1) == 0
+    float value = ((frameCounter & 1) == 0
         ? texelFetch(voxelRadiance2Sampler, c, 0)
         : texelFetch(voxelRadianceSampler, c, 0)).a;
+    return isnan(value) || isinf(value) ? 0.0 : clamp(value, 0.0, 1.0);
 }
 
 uniform sampler2DShadow shadowtex1;
@@ -178,7 +182,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             dir = VoxelRandUnitVector(seed);
             pdf = 1.6;
         }
-        float rcpPdf = rcp(pdf);
+        float rcpPdf = rcp(max(pdf, 1e-4));
 
         // ---- 穿透式 DDA 步进（发射光体素 → 球形光源
         // 平滑贡献 + 穿透不挡光；普通固体命中停止）----
@@ -339,16 +343,21 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
                 const float ircSkyVis = 1.0;
             #endif
             // [2026-08-20] 下界（worldId == -1）无天空：屏蔽出界天光
+            #ifndef GI_ACTIVE_IRC
             if (worldId != -1)
                 contrib += VoxelSkyColor(dir, hitSkylight) * VOXEL_GI_SKY_STRENGTH * ircSkyVis * absorption;
+            #endif
             // NOLIGHT 底光（出界路径专有：NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)；
             // 命中路径无此项，闭塞处底光由自反弹/方块光链路提供）
             contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS
                      * saturate(rayLen * 0.2) * absorption;
             // Phase 1：该样本向上出界即计入曝光度（乘 ircSkyVis 门控，封闭空间不计数）。
+            #ifndef GI_ACTIVE_IRC
             if (dir.y > 0.1) exposure += ircSkyVis;
+            #endif
         }
-        result += contrib * rcpPdf;
+        vec3 sampleValue = contrib * rcpPdf;
+        if (!any(isnan(sampleValue)) && !any(isinf(sampleValue))) result += max(sampleValue, vec3(0.0));
     }
 
     return vec4(result * rcp(float(VOXEL_IRC_SPP)), exposure * rcp(float(VOXEL_IRC_SPP)));
@@ -357,13 +366,34 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
 //======// Main //================================================================================//
 
 /* RENDERTARGETS: 15 */
+#ifndef IRC_COMPUTE
 out vec4 dummyOut;
+#endif
 
 void main() {
+    // IRC now uses the directional DDGI backend maintained in deferred1_a.
+    #if defined GI_ACTIVE_IRC && defined PROBE_GI_ENABLED
+        #ifndef IRC_COMPUTE
+        dummyOut = vec4(0.0);
+        #endif
+        return;
+    #endif
+
+    // Keep the pass harmless when GI_MODE=0 even if Iris dispatches deferred22
+    // through the compatibility override in shaders.properties.
+    #if !defined GI_ACTIVE_VXGI && !defined GI_ACTIVE_IRC
+        #ifndef IRC_COMPUTE
+        dummyOut = vec4(0.0);
+        #endif
+        return;
+    #endif
+
     // [2026-08-19 暂时禁用 IRC] 关闭辐照度缓存更新：不投 IRC 射线、不写 voxelRadiance，
     // 直接返回。照明只由 DiffuseIndirect 的每像素射线追踪提供。
-    #ifdef DISABLE_IRC
+    #if defined DISABLE_IRC && !defined GI_ACTIVE_IRC
+        #ifndef IRC_COMPUTE
         dummyOut = vec4(0.0);
+        #endif
         return;
     #endif
 
@@ -371,11 +401,19 @@ void main() {
 
     // 每个屏幕像素分摊处理若干连续体素（IRC 网格 = 64³，同 voxelRadiance 双缓冲）
     int totalVoxels = VOXEL_AREA * VOXEL_AREA * VOXEL_AREA;
+    #ifdef IRC_COMPUTE
+    // deferred23 compute uses exactly 512x512 invocations: one invocation per
+    // 64^3 voxel. Do not use viewWidth here or rows would contain large gaps.
+    int pixIdx = pix.y * 512 + pix.x;
+    int ia = min(pixIdx, totalVoxels);
+    int ib = min(ia + 1, totalVoxels);
+    #else
     int totalPixels = int(viewWidth) * int(viewHeight);
     int perPixel = max((totalVoxels + totalPixels - 1) / totalPixels, 1);
     int pixIdx = pix.y * int(viewWidth) + pix.x;
     int ia = min(pixIdx * perPixel, totalVoxels);
     int ib = min(ia + perPixel, totalVoxels);
+    #endif
 
     // 整数相机重投影（：cameraPositionInt - previousCameraPositionInt）。
     // 世界对齐网格中，相机仅移动整数格时内容整体平移，用整数差值补偿回读位置；
@@ -395,10 +433,10 @@ void main() {
         if (z >= VOXEL_AREA) break;
         ivec3 c = ivec3(x, y, z);
 
-        // [FIX 2026-08-06] IRC 只被每像素追踪（合并后的 VOXEL_GI_ENABLED）消费 → 按它门控，
+        // [FIX 2026-08-06] IRC 只被每像素追踪（合并后的 GI_ACTIVE_VXGI）消费 → 按它门控，
         // 关体素 GI 后 IRC 不再运行（deferred22 也已按此条件启用；composite2 同样受益）
-        // [2026-09-04 IRC_GI] 逐格注入光场。VXGI(VOXEL_GI_ENABLED) 与 IRC_GI 都进入；探针(废弃)不再。
-        #if defined VOXEL_GI_ENABLED || defined IRC_GI_ENABLED
+        // [2026-09-04 IRC_GI] 逐格注入光场。VXGI(GI_ACTIVE_VXGI) 与 IRC_GI 都进入；探针(废弃)不再。
+        #if defined GI_ACTIVE_VXGI || defined GI_ACTIVE_IRC
 
         // [2026-08-20 注入降频] 每 VOXEL_IRC_UPDATE_INTERVAL 帧才对当前体素重投 IRC 射线，
         // 其余帧直接搬运上一帧旧值到当期缓冲（保持 ping-pong 一致，防下帧读到更旧垃圾）。
@@ -406,9 +444,21 @@ void main() {
         // 与时间混合（0.99）配合，体素低频变化慢 → 降频到 1/N 几乎无视觉代价。
         // pOk=false（新暴露/网格边缘，旧帧无有效值）时不跳过 → 该格仍立即重注入播种，
         // 避免前缘新地形延迟 N-1 帧才亮。
+        #ifdef GI_ACTIVE_IRC
+        const int uIntv = 1;
+        #else
         const int uIntv = VOXEL_IRC_UPDATE_INTERVAL;
+        #endif
+        vec4 vd = texelFetch(voxelDataSampler, c, 0);
+        bool sld = vd.z > 0.5;
+        if (!sld) {
+            if ((frameCounter & 1) == 0) imageStore(voxelRadiance, c, vec4(0.0));
+            else imageStore(voxelRadiance2, c, vec4(0.0));
+            continue;
+        }
         ivec3 pC = ivec3(c) + cDi;
-        bool pOk = all(greaterThanEqual(pC, ivec3(0))) && all(lessThan(pC, ivec3(VOXEL_AREA)));
+        bool pOk = frameCounter >= 2 && all(greaterThanEqual(pC, ivec3(0))) && all(lessThan(pC, ivec3(VOXEL_AREA)))
+                && any(greaterThan(FetchPrevRadiance(pC), vec3(0.0)));
         if (uIntv > 1 && pOk && (((vi + frameCounter) & (uIntv - 1)) != 0)) {
             vec4 o = vec4(max(FetchPrevRadiance(pC), 1e-7) * 100.0, FetchPrevExposure(pC));
             if ((frameCounter & 1) == 0) imageStore(voxelRadiance, c, o);
@@ -416,12 +466,10 @@ void main() {
             continue;
         }
 
-        // ---- 当前帧体素数据（begin1 已在 shadow 前清空，shadow pass 写入本帧数据）----
-        vec4 vd = texelFetch(voxelDataSampler, c, 0);
-        bool sld = vd.z > 0.5; // voxelID 原值（>0 即固体，0=空气）
+
 
         // ---- IRC 随机注入（：只对非空气体素注入）----
-        // 语义：IRC 网格存"体素表面辐照度"，空气体素 alpha=1 标记遮挡、不注入。
+
         // 表面/内部固体都投光，采样方向与 PDF 由 IrcTraceVoxel 内部按 表面判定
         // 选择（恰 1 空邻居 + 特殊方块 → 半球；否则全方向）。空体素不注入
         //（旧实现：空体素全方向注入 = "空气辐照度场"，查询端被空气邻居稀释 → GI
@@ -439,34 +487,53 @@ void main() {
         // 若按 0 混合会把值拉低 10 倍，且自反弹反馈连锁 → 移动时越走越黑（实测）。
         // 直接采用本帧采样值（等价 bw=0），等下一帧旧帧有数据后再恢复时间混合。
         ivec3 prevC = c + cDi;
-        bool pValid = all(greaterThanEqual(prevC, ivec3(0))) && all(lessThan(prevC, ivec3(VOXEL_AREA)));
+        bool pValid = pOk;
         // 新暴露固体格播种：天顶天光 + SimpleSkyLighting 解析下限（按当前体素 sky 门控），避免前缘格闪烁。
         float edgeSky = VoxelUnpack2xU8Y(vd.w);
         float edgeSeedGate = saturate(edgeSky * 2.0 - 1.0);
         vec3 pRC = pValid ? FetchPrevRadiance(prevC)
-                          : (sld ? max(VoxelSkyColor(vec3(0.0, 1.0, 0.0), edgeSky),
-                                       SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)), 0.0, edgeSeedGate))
-                                       * VOXEL_IRC_EDGE_SEED * edgeSeedGate : nRC);
+                          : (sld
+                             ? (
+                                 #ifdef GI_ACTIVE_IRC
+                                     nRC
+                                 #else
+                                     max(VoxelSkyColor(vec3(0.0, 1.0, 0.0), edgeSky),
+                                         SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)), 0.0, edgeSeedGate))
+                                         * VOXEL_IRC_EDGE_SEED * edgeSeedGate
+                                 #endif
+                               )
+                             : nRC);
         // Phase 1：上一帧天空曝光度（新暴露固体格播种，同样乘门控）
         float pExp = pValid ? FetchPrevExposure(prevC)
-                            : (sld ? VOXEL_IRC_EDGE_SEED * edgeSeedGate : nExp);
+                            : (
+                                #ifdef GI_ACTIVE_IRC
+                                    0.0
+                                #else
+                                    sld ? VOXEL_IRC_EDGE_SEED * edgeSeedGate : nExp
+                                #endif
+                              );
 
         // 旧帧全黑（冷启动 / 相机大幅移动新暴露）→ RGB 直接写本帧值（等价 bw=0），
-        // 避免 0.99 混合下黑屏 100+ 帧；但曝光度永远保持时间混合——
-        // exposure 是 1 SPP 二值（0/1），若也跳过混合会直接 0/1 跳 → 天光/DEBUG 蓝红闪
-        // （用户实测 DEBUG_VOXEL_SKY_LEVEL 开阔处来回闪，动起来更严重）。
+
+
+
         float localBw = bw;
-        if (pValid && max(max(pRC.r, pRC.g), pRC.b) < 1e-4) localBw = 0.0;
+        if (!pValid) localBw = 0.0;
 
         // ---- 时间混合（实体/空体素统一；IRC 随机采样靠时域累积降噪）----
         nRC = max(mix(nRC, pRC, localBw), 1e-7);
+        if (!pValid) nRC = max(nRC, pRC);
         // 解析下限在时间混合之后施加：保证阴影 IRC 每帧至少 = SimpleSkyLighting（冷启动不黑死）；
         // lightmap 参数用曝光度（射线自算天空可见度），封闭房间≈0 → 0，开阔出界 → 底光。
+        #ifndef GI_ACTIVE_IRC
         if (sld) {
             nRC = max(nRC, SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
-                                             0.0, saturate(FetchPrevExposure(c) * 2.0 - 1.0)));
+                                             0.0, saturate(pExp * 2.0 - 1.0)));
         }
-        nExp = mix(nExp, pExp, bw);      // Phase 1：曝光度恒用 bw，防二值跳变
+        #endif
+        nExp = pValid ? mix(nExp, pExp, bw) : pExp;
+        if (any(isnan(nRC)) || any(isinf(nRC))) nRC = vec3(1e-7);
+        nExp = isnan(nExp) || isinf(nExp) ? 0.0 : clamp(nExp, 0.0, 1.0);
 
         // ---- 保色压缩：任一分量 >1.0 时按最大分量整体缩放，保持色相不漂白 ----
         float maxC = max(max(nRC.r, nRC.g), nRC.b);
@@ -482,5 +549,7 @@ void main() {
         #endif
     }
 
+    #ifndef IRC_COMPUTE
     dummyOut = vec4(0.0);
+    #endif
 }

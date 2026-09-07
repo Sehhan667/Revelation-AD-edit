@@ -162,11 +162,12 @@ vec4 PingReusePrev(ivec2 p) {
 
             vec3 alb = vec3(hvd.r, hvd.g, VoxelUnpack2xU8X(hvd.w));
             vec3 v = vec3(0.0);
+            float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
 
             if (lD.y > 0.01)
                 v += max(alb, vec3(VOXEL_GI_BLOCK_MIN_ALBEDO)) * VoxelLightColor(abs(hvd.z)) * lD.y * VOXEL_GI_BLOCK_STRENGTH;
 
-#ifndef PROBE_GI_BLOCK_ONLY
+#if !defined PROBE_GI_BLOCK_ONLY && !defined IRC_DISABLE_SUN_GI
             // [临时 2026-09-03 PROBE_GI_BLOCK_ONLY=屏蔽阳光] 只留方块光调试时整体拿掉阳光项。
             if (worldId != -1) {
                 // [FIX 2026-09-03 阳光按 VXGI IRC 对齐] 阳光亮度必须 ×128(同 VoxelTracing 的
@@ -182,14 +183,19 @@ vec4 PingReusePrev(ivec2 p) {
                     directIllum = global.directIlluminance;
                 if (max(max(directIllum.r, directIllum.g), directIllum.b) < 1e-4 && worldSunDir.y > 0.01)
                     directIllum = vec3(128.0);          // 兜底(同 VoxelTracing)
-                v += alb * directIllum * NdotL * sunVis;
+                // DDGI probe safety gate: only surfaces carrying real skylight
+                // may receive bounced sunlight. This prevents cave roofs and
+                // compute-context shadow misses from filling enclosed spaces.
+                float sunSkyGate = smoothstep(0.20, 0.80, hitSkylight);
+                v += alb * directIllum * NdotL * sunVis * sunSkyGate;
             }
 
             // [FIX 2026-09-03 底光按 VXGI 对齐] 用命中体素的真实 skylight(lightmap.y)而非硬编码 0.5,
             // 使洞穴/背阴的底光随 MC lightmap 变化(火把 block light 在 lightmap 里扩散)。
             vec3 shadowlight = sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4));
-            float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
-            v += alb * SimpleSkyLighting(skyColor, shadowlight, hitNormal.y, hitSkylight);
+            #ifndef GI_ACTIVE_IRC
+                v += alb * SimpleSkyLighting(skyColor, shadowlight, hitNormal.y, hitSkylight);
+            #endif
 #endif
             return v + contrib;   // 表面辐照度 + 沿途发射累积
         }
@@ -197,7 +203,9 @@ vec4 PingReusePrev(ivec2 p) {
 #ifndef PROBE_GI_BLOCK_ONLY
         if (worldId != -1) {
             float fade = VoxelSkyHorizonFade(dir);
-            if (fade > 0.001) return max(skyColor * fade, vec3(0.0)) + contrib;
+            #ifndef GI_ACTIVE_IRC
+                if (fade > 0.001) return max(skyColor * fade, vec3(0.0)) + contrib;
+            #endif
         }
 #endif
         return contrib;   // 射程用尽：只留发射累积，距离=无遮挡物
@@ -257,7 +265,9 @@ vec4 PingReusePrev(ivec2 p) {
         // 不做采样器局部变量（GLSL 更稳）。
         bool writeB = ((uint(frameCounter) & 1u) != 0u);
 
-        const int R = PROBE_RAY_SAMPLES;
+        const int R = PROBE_RAY_SAMPLES;         // 每探针平均每帧射线预算：总射线/帧 = 探针数 × R（与周期无关）
+        const int uPeriod = PROBE_UPDATE_PERIOD; // 轮转周期：每帧只更新 1/uPeriod 探针，每个更新投 R×uPeriod 线
+        const int RAY_CHUNK = 64;                // 分块追踪，避免大射线数组压爆寄存器/局部内存
         const int N = PROBE_OCT_SIZE;
         const int O = PROBE_OCT_BORDER;
         const float sp = PROBE_SPACING;
@@ -272,101 +282,211 @@ vec4 PingReusePrev(ivec2 p) {
             int x = vi % G;
             ivec3 tid = ivec3(x, y, z);
 
-            vec3 probeCenter = (gridOriginThis + (vec3(tid) + 0.5) * sp)
-                             - vec3(cameraPositionInt) + float(VOXEL_RADIUS);
-
-            // 逐射线：方向（纯函数 hash）+ 辐照度 + 命中距离（DDA，离屏）。方向在融合时重算，不存数组。
-            vec3 rayRad[PROBE_RAY_SAMPLES];
-            float rayDist[PROBE_RAY_SAMPLES];
-            for (int s = 0; s < R; ++s) {
-                vec3 dir = ProbeRayDir(tid, s);
-                float dd = maxRayDist;
-                vec3 rad = ProbeTrace(probeCenter, dir, dd);
-                // NaN 防护：坏样本置 0（避免污染整个探针 → 缓存闪烁）。
-                if (!all(equal(rad, rad)) || any(lessThan(rad, vec3(0.0)))) rad = vec3(0.0);
-                rayRad[s] = rad;
-                rayDist[s] = dd < 0.0 ? dd : min(dd, maxRayDist);   // 背面记负（遮挡场用 abs）
-            }
-
+            // [2026-09-05 轮转分摊] 每帧更新 vi ≡ frameCounter (mod uPeriod) 的探针（每帧 1/uPeriod），
+            // 每个更新一次投出 R×uPeriod 条射线 → 总射线量/帧与旧版一致，但单更新样本数 ×uPeriod、
+            // 单更新方差 ÷uPeriod（小光源命中/落空抖动再降一档）。新暴露边缘探针强制立即更新播种。
             ivec3 oldCell = tid + reCenterI;
             bool oldInBounds = all(greaterThanEqual(oldCell, ivec3(0)))
                             && all(lessThan(oldCell, ivec3(G)));
+            bool scheduled = (uPeriod <= 1) || ((vi % uPeriod) == (frameCounter % uPeriod));
+            bool updateNow = scheduled || !oldInBounds;
 
-            // ---- 内部 N×N 纹素：DDGI cos-加权融合 + 重时域滞后累积 + 写距离场 ----
-            for (int iy = 0; iy < N; ++iy) {
-                for (int ix = 0; ix < N; ++ix) {
-                    ivec2 octTexel = ivec2(ix + 1, iy + 1);
-                    vec3 texelDir = ProbeOctTexelDir(octTexel);
+            vec3 probeCenter = (gridOriginThis + (vec3(tid) + 0.5) * sp)
+                             - vec3(cameraPositionInt) + float(VOXEL_RADIUS);
 
-                    // 辐照度：ΣL·cos / (2·Σcos)（DDGI：除以 Σcos 而非 N 降方差，再补 1/2）
-                    vec3 accRad = vec3(0.0); float accW = 0.0;
-                    for (int s = 0; s < R; ++s) {
-                        float w = max(0.0, dot(texelDir, ProbeRayDir(tid, s)));
-                        if (w <= 1e-6 || rayDist[s] < 0.0) continue;   // 背面不计辐照度
-                        accRad += rayRad[s] * w;
-                        accW += w;
+            if (updateNow) {
+                // ---- 分块射线追踪：方向为纯函数 hash（融合时按需重算，不存方向），每块 RAY_CHUNK 线 ----
+                const int NI = N * N;
+                vec3 accRad[NI];
+                float accW[NI];
+                float accD[NI];
+                float accD2[NI];
+                float accDW[NI];
+                for (int k = 0; k < NI; ++k) {
+                    accRad[k] = vec3(0.0);
+                    accW[k]   = 0.0;
+                    accD[k]   = 0.0;
+                    accD2[k]  = 0.0;
+                    accDW[k]  = 0.0;
+                }
+                int raysTotal = R * max(uPeriod, 1);   // 本次更新投出的总射线数
+                // [2026-09-05 轮转补偿] PROBE_HYSTERESIS 语义=每帧保留比例：P 帧才更新一次的探针，
+                // 每更新的保留比例应取 hyst^P（而非 hyst^(1/P)！）：P=1 时退回 hyst，P>1 时每次更新
+                // 混入 1-hyst^P，使"每 8 帧等效收敛速率"与逐帧 hyst 完全一致（响应、噪声特性都不随周期漂移）。
+                const float hystUpd = pow(PROBE_HYSTERESIS,      float(max(uPeriod, 1)));
+                const float distUpd = pow(PROBE_DIST_HYSTERESIS, float(max(uPeriod, 1)));
+                for (int c0 = 0; c0 < raysTotal; c0 += RAY_CHUNK) {
+                    int cEnd = min(c0 + RAY_CHUNK, raysTotal);
+                    vec3 rayRad[RAY_CHUNK];
+                    float rayDist[RAY_CHUNK];
+                    for (int s = c0; s < cEnd; ++s) {
+                        vec3 dir = ProbeRayDir(tid, s);
+                        float dd = maxRayDist;
+                        vec3 rad = ProbeTrace(probeCenter, dir, dd);
+                        // NaN 防护：坏样本置 0（避免污染整个探针 → 缓存闪烁）。
+                        if (!all(equal(rad, rad)) || any(lessThan(rad, vec3(0.0)))) rad = vec3(0.0);
+                        rayRad[s - c0] = rad;
+                        rayDist[s - c0] = dd < 0.0 ? dd : min(dd, maxRayDist);   // 背面记负（遮挡场用 abs）
                     }
-                    vec3 newIrrLin = accRad * rcp(2.0 * max(accW, eps));
-                    newIrrLin = min(newIrrLin, vec3(100.0));
-                    vec3 newIrrEnc = pow(max(newIrrLin, vec3(0.0)), vec3(gInv));
-
-                    // 距离场：cos 加权均值/二阶矩（背面用 abs 计入，供查询端 chebyshev 遮挡）
-                    float accD = 0.0, accD2 = 0.0, accDW = 0.0;
-                    for (int s = 0; s < R; ++s) {
-                        float w = max(0.0, dot(texelDir, ProbeRayDir(tid, s)));
-                        if (w <= 1e-6) continue;
-                        float d = min(abs(rayDist[s]), maxRayDist);
-                        accD += d * w; accD2 += d * d * w; accDW += w;
-                    }
-                    vec2 newDist = vec2(accD, accD2) * rcp(2.0 * max(accDW, eps));
-
-                    // 读旧值（重居中后同一 octant）→ 时域滞后混合
-                    vec4 oldIrrV  = oldInBounds
-                        ? texelFetch(writeB ? probeIrradianceSampler  : probeIrradiance2Sampler,
-                                     ProbeOctAtlasCoord(oldCell, octTexel), 0) : vec4(0.0);
-                    vec4 oldDistV = oldInBounds
-                        ? texelFetch(writeB ? probeDistanceSampler     : probeDistance2Sampler,
-                                     ProbeOctAtlasCoord(oldCell, octTexel), 0) : vec4(0.0);
-                    bool oldValid = oldInBounds
-                                 && abs(oldIrrV.a - 1.0) < 0.25
-                                 && all(equal(oldIrrV.rgb, oldIrrV.rgb))
-                                 && all(greaterThanEqual(oldIrrV.rgb, vec3(0.0)))
-                                 && all(lessThan(oldIrrV.rgb, vec3(200.0)));
-
-                    float hyst = oldValid ? PROBE_HYSTERESIS : 0.0;
-                    vec3 outIrr;
-                    if (oldValid) {
-                        // RTXGI 时域：大变化降滞后；变暗时给最小步进避免卡死。
-                        vec3 oldMean = oldIrrV.rgb;
-                        vec3 delta = newIrrEnc - oldMean;
-                        if (ProbeLum(delta) > 0.5) delta *= 0.25;
-                        vec3 lerpDelta = (1.0 - hyst) * delta;
-                        const float cThresh = 1.0 / 1024.0;
-                        if (ProbeMaxComp(newIrrEnc) < ProbeMaxComp(oldMean)) {
-                            // 变暗：给最小步进避免卡死。逐通道 min/max + 手写符（避免 max(float,vec3)/sign(vec3) 翻译问题）。
-                            vec3 absDelta = abs(delta);
-                            vec3 minStep  = min(max(abs(lerpDelta), vec3(cThresh)), absDelta);
-                            lerpDelta = minStep * mix(vec3(-1.0), vec3(1.0), step(vec3(0.0), lerpDelta));
+                    // 本块并入各纹素累积器（与原版相同的 DDGI cos-加权语义）
+                    for (int iy = 0; iy < N; ++iy) {
+                        for (int ix = 0; ix < N; ++ix) {
+                            ivec2 octTexel = ivec2(ix + 1, iy + 1);
+                            vec3 texelDir = ProbeOctTexelDir(octTexel);
+                            int k = iy * N + ix;
+                            for (int s = 0; s < cEnd - c0; ++s) {
+                                float w = max(0.0, dot(texelDir, ProbeRayDir(tid, c0 + s)));
+                                if (w <= 1e-6) continue;
+                                float d = min(abs(rayDist[s]), maxRayDist);
+                                accDW[k] += w;
+                                accD[k]  += d * w;
+                                accD2[k] += d * d * w;
+                                if (rayDist[s] >= 0.0) {   // 背面不计辐照度
+                                    accRad[k] += rayRad[s] * w;
+                                    accW[k]   += w;
+                                }
+                            }
                         }
-                        outIrr = oldMean + lerpDelta;
-                    } else {
-                        outIrr = newIrrEnc;   // 首帧/NaN/越界 → 重置
                     }
-                    // 距离场用更快的滞后（几何静止，快速收敛 → 遮挡更快生效、少漏光）
-                    vec2 outDist = mix(newDist, oldDistV.rg, oldValid ? PROBE_DIST_HYSTERESIS : 0.0);
+                }
+
+                // ---- 内部 N×N 纹素：汇总 + 重时域滞后累积 + 写距离场（与原版一致）----
+                for (int iy = 0; iy < N; ++iy) {
+                    for (int ix = 0; ix < N; ++ix) {
+                        ivec2 octTexel = ivec2(ix + 1, iy + 1);
+                        int k = iy * N + ix;
+
+                        // 辐照度：ΣL·cos / (2·Σcos)（DDGI：除以 Σcos 而非 N 降方差，再补 1/2）
+                        vec3 newIrrLin = accRad[k] * rcp(2.0 * max(accW[k], eps));
+                        newIrrLin = min(newIrrLin, vec3(100.0));
+                        vec3 newIrrEnc = pow(max(newIrrLin, vec3(0.0)), vec3(gInv));
+
+                        // 距离场：cos 加权均值/二阶矩（背面用 abs 计入，供查询端 chebyshev 遮挡）
+                        vec2 newDist = vec2(accD[k], accD2[k]) * rcp(2.0 * max(accDW[k], eps));
+
+                        // 读旧值（重居中后同一 octant）→ 时域滞后混合
+                        vec4 oldIrrV = vec4(0.0);
+                        vec4 oldDistV = vec4(0.0);
+                        if (oldInBounds) {
+                            ivec3 oldCoord = ProbeOctAtlasCoord(oldCell, octTexel);
+                            if (writeB) {
+                                oldIrrV = texelFetch(probeIrradianceSampler, oldCoord, 0);
+                                oldDistV = texelFetch(probeDistanceSampler, oldCoord, 0);
+                            } else {
+                                oldIrrV = texelFetch(probeIrradiance2Sampler, oldCoord, 0);
+                                oldDistV = texelFetch(probeDistance2Sampler, oldCoord, 0);
+                            }
+                        }
+                        bool oldValid = oldInBounds
+                                     && abs(oldIrrV.a - 1.0) < 0.25
+                                     && all(equal(oldIrrV.rgb, oldIrrV.rgb))
+                                     && all(greaterThanEqual(oldIrrV.rgb, vec3(0.0)))
+                                     && all(lessThan(oldIrrV.rgb, vec3(200.0)));
+
+                        float hyst = oldValid ? hystUpd : 0.0;
+                        vec3 outIrr;
+                        if (oldValid) {
+                            // RTXGI 时域：大变化降滞后；变暗时给最小步进避免卡死。
+                            vec3 oldMean = oldIrrV.rgb;
+                            vec3 delta = newIrrEnc - oldMean;
+                            if (ProbeLum(delta) > 0.5) delta *= 0.25;
+                            vec3 lerpDelta = (1.0 - hyst) * delta;
+                            const float cThresh = 1.0 / 1024.0;
+                            if (ProbeMaxComp(newIrrEnc) < ProbeMaxComp(oldMean)) {
+                                // 变暗：给最小步进避免卡死。逐通道 min/max + 手写符（避免 max(float,vec3)/sign(vec3) 翻译问题）。
+                                vec3 absDelta = abs(delta);
+                                vec3 minStep  = min(max(abs(lerpDelta), vec3(cThresh)), absDelta);
+                                lerpDelta = minStep * mix(vec3(-1.0), vec3(1.0), step(vec3(0.0), lerpDelta));
+                            }
+                            outIrr = oldMean + lerpDelta;
+                        } else {
+                            outIrr = newIrrEnc;   // 首帧/NaN/越界 → 重置
+                        }
+                        // 距离场用更快的滞后（几何静止，快速收敛 → 遮挡更快生效、少漏光）；同样做轮转补偿
+                        vec2 outDist = mix(newDist, oldDistV.rg, oldValid ? distUpd : 0.0);
 
 #ifdef DEBUG_PROBE_PLUMBING
-                    // [写端强制测试 2026-09-03] 无视射线/混合/时域：每个探针的所有纹素直接写入
-                    // 与"探针格心世界位置"绑定的彩色渐变（12m 周期）。配合自检显示端读回 →
-                    // 画面应见彩色 4m 方块并钉在世界。判读：
-                    //   有彩色方块 → 写→存→读 链路通，真实 GI 黑 = 射线值/混合问题（查 ProbeTrace）；
-                    //   仍黑/无画面 → 写端没在跑（dispatch/绑定/纹理尺寸问题）。
-                    outIrr = fract((gridOriginThis + (vec3(tid) + 0.5) * sp) * rcp(16.0));
-                    outDist = vec2(10.0, 100.0);   // 大距离场 = 不遮挡（避免测试图被 cheb 压黑）
+                        // [写端强制测试 2026-09-03] 无视射线/混合/时域：每个探针的所有纹素直接写入
+                        // 与"探针格心世界位置"绑定的彩色渐变（12m 周期）。配合自检显示端读回 →
+                        // 画面应见彩色 4m 方块并钉在世界。判读：
+                        //   有彩色方块 → 写→存→读 链路通，真实 GI 黑 = 射线值/混合问题（查 ProbeTrace）；
+                        //   仍黑/无画面 → 写端没在跑（dispatch/绑定/纹理尺寸问题）。
+                        outIrr = fract((gridOriginThis + (vec3(tid) + 0.5) * sp) * rcp(16.0));
+                        outDist = vec2(10.0, 100.0);   // 大距离场 = 不遮挡（避免测试图被 cheb 压黑）
 #endif
 
-                    ProbeStore(tid, octTexel, outIrr, outDist, writeB);
+                        ProbeStore(tid, octTexel, outIrr, outDist, writeB);
+                    }
                 }
+
+                memoryBarrierImage();
+
+#ifdef PROBE_ATLAS_FILTER
+                // ---- [2026-09-05 RTXGI 式八面体图集双边滤波] 写入后对本探针 N×N 内部纹素做 3×3
+                // 边缘保持平滑：邻域权重 = 方向相似度^DIR_POW × 距离边缘 exp2(-Δmean²·DIST_K)。
+                // 目的：火把/萤石这类小光源"命中/落空"的逐纹素高方差被邻域摊平 → 低频浮动大幅减轻，
+                // 不增加任何射线预算。只滤辐照度、不滤距离场（滤距离会增加穿墙漏光风险）。
+                // 邻域 clamp 到内部 [1..N]：此刻边界环还是上一帧内容（镜像拷贝在本块之后执行），
+                // 不许读旧环；clamp 后与中心重合的邻居跳过（避免边缘纹素被中心重复加权过度平滑）。
+                {
+                    const float fltK = PROBE_ATLAS_FILTER_DIST_K;
+                    const float dirPow = PROBE_ATLAS_FILTER_DIR_POW;
+                    for (int iy = 1; iy <= N; ++iy) {
+                        for (int ix = 1; ix <= N; ++ix) {
+                            ivec2 cTexel = ivec2(ix, iy);
+                            ivec3 cAtlas = ProbeOctAtlasCoord(tid, cTexel);
+                            vec4 cIrr = writeB ? imageLoad(probeIrradiance2, cAtlas) : imageLoad(probeIrradiance, cAtlas);
+                            if (cIrr.a < 0.5 || !all(equal(cIrr.rgb, cIrr.rgb))) continue;
+                            vec4 cDist = writeB ? imageLoad(probeDistance2, cAtlas) : imageLoad(probeDistance, cAtlas);
+                            vec3 cDir = ProbeOctTexelDir(cTexel);
+                            vec3 acc = cIrr.rgb;   // 中心权重 = 1
+                            float accW = 1.0;
+                            for (int dy = -1; dy <= 1; ++dy) {
+                                for (int dx = -1; dx <= 1; ++dx) {
+                                    if (dx == 0 && dy == 0) continue;
+                                    ivec2 nTexel = clamp(cTexel + ivec2(dx, dy), ivec2(1), ivec2(N));
+                                    if (nTexel == cTexel) continue;   // 被 clamp 回中心的重复邻居
+                                    ivec3 nAtlas = ProbeOctAtlasCoord(tid, nTexel);
+                                    vec4 nIrr = writeB ? imageLoad(probeIrradiance2, nAtlas) : imageLoad(probeIrradiance, nAtlas);
+                                    if (nIrr.a < 0.5 || !all(equal(nIrr.rgb, nIrr.rgb))) continue;
+                                    vec4 nDist = writeB ? imageLoad(probeDistance2, nAtlas) : imageLoad(probeDistance, nAtlas);
+                                    float wDist = exp2(-sqr(nDist.r - cDist.r) * fltK);
+                                    float wDir  = pow(max(dot(cDir, ProbeOctTexelDir(nTexel)), 0.0), dirPow);
+                                    float w = wDist * wDir;
+                                    acc += nIrr.rgb * w;
+                                    accW += w;
+                                }
+                            }
+                            if (accW > 1e-6) {
+                                vec4 filtered = vec4(acc * rcp(accW), 1.0);
+                                if (writeB) imageStore(probeIrradiance2, cAtlas, filtered);
+                                else        imageStore(probeIrradiance,  cAtlas, filtered);
+                            }
+                        }
+                    }
+                    memoryBarrierImage();
+                }
+#endif
+            } else {
+                // ---- 轮转未轮到：把上一帧旧值（含重居中整数搬移）原样搬入当前乒乓块 ----
+                // 保证查询端按帧奇偶读到的"另一块"永远是最近一帧的值；否则轮转会读到 2 帧前的旧数据。
+                // 走到此处必有 scheduled=false 且 oldInBounds=true（updateNow 定义），搬移源有效。
+                // 旧块本帧无人写（全帧只写另一块），imageLoad 直读安全；各线程只写自己探针的图集区域。
+                for (int iy = 1; iy <= N; ++iy) {
+                    for (int ix = 1; ix <= N; ++ix) {
+                        ivec2 octTexel = ivec2(ix, iy);
+                        ivec3 curAtlas = ProbeOctAtlasCoord(tid, octTexel);
+                        ivec3 oldAtlas = ProbeOctAtlasCoord(oldCell, octTexel);
+                        if (writeB) {
+                            imageStore(probeIrradiance2, curAtlas, imageLoad(probeIrradiance, oldAtlas));
+                            imageStore(probeDistance2,   curAtlas, imageLoad(probeDistance,   oldAtlas));
+                        } else {
+                            imageStore(probeIrradiance,  curAtlas, imageLoad(probeIrradiance2, oldAtlas));
+                            imageStore(probeDistance,    curAtlas, imageLoad(probeDistance2,   oldAtlas));
+                        }
+                    }
+                }
+                memoryBarrierImage();
             }
 
             // ---- 边界 O²-N² 纹素：由本探针内部镜像拷贝（同线程已写，imageLoad 可靠回读）----
@@ -388,16 +508,22 @@ vec4 PingReusePrev(ivec2 p) {
         }
     }
 #endif
-// [2026-09-04 IRC_GI] deferred22(VoxelGI.frag) 维护的 voxelRadiance IRC(64³×1m) 辐照度光场。
+// [2026-09-05 IRC_GI] deferred23(VoxelGI.comp) 维护的 voxelRadiance IRC(64³×1m) 辐照度光场。
 // IRC_GI 查询端直接三线性采样（×0.01）。声明放在 PROBE_GI_ENABLED 块【外】，PROBE 关闭时也不缺声明。
-#ifdef IRC_GI_ENABLED
+#if defined GI_ACTIVE_IRC && !defined PROBE_GI_ENABLED
     uniform sampler3D voxelRadianceSampler;
     uniform sampler3D voxelRadiance2Sampler;
 #endif
 // [管线自检 2 引用锚点] Iris GUI 布尔开关显示条件：必须单独一行 #ifdef。
 #ifdef DEBUG_PROBE_QUERY
 #endif
-#ifdef VOXEL_GI_ENABLED
+// [GUI 布尔锚点 2026-09-05] IRC_DISABLE_SUN_GI（屏蔽 IRC/DDGI 阳光反弹，仅方块光/自发光调试）。
+#ifdef IRC_DISABLE_SUN_GI
+#endif
+// [GUI 布尔锚点 2026-09-05] PROBE_ATLAS_FILTER（探针图集双边滤波开关）。
+#ifdef PROBE_ATLAS_FILTER
+#endif
+#ifdef GI_ACTIVE_VXGI
     // 体素 GI 信号源（阶段④：与 SSILVB 互斥，体素优先）：
     // IRC 采样器/查询 + 每像素漫反射追踪（VoxelTracing 内含 VoxelData/VoxelShape）
     #include "/lib/lighting/VoxelGI.glsl"
@@ -429,13 +555,23 @@ void main() {
     uvec2 localPos = QuadLayout16x16(gl_LocalInvocationIndex);
     ivec2 texelPos = ivec2(localPos + gl_WorkGroupID.xy * gl_WorkGroupSize.xy);
 
+    // Keep the compatibility-forced deferred1_a pass inert when GI_MODE=0.
+    #if !defined GI_ACTIVE_SSILVB && !defined GI_ACTIVE_VXGI && !defined GI_ACTIVE_IRC && !defined PROBE_GI_ENABLED
+        imageStore(colorimg3, texelPos, vec4(0.0));
+        return;
+    #endif
+
 #ifdef PROBE_GI_ENABLED
     // [Plan B] 同一 dispatch 内先更新缓存（写 B 读 A 乒乓），再执行查询（读另一块 = 上帧值）。
     // 放最前，无视地形/早期 return，保证 4096 探针每帧全量覆盖；写 B 读 A（不同纹理），无同 dispatch 读写冲突。
     ProbeUpdateSlice(texelPos);
 #endif
 
-    ivec2 renderTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+	#ifdef GI_ACTIVE_IRC
+	ivec2 renderTexel = texelPos * 2;
+	#else
+	ivec2 renderTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+	#endif
 	float depth = loadDepth0(renderTexel);
 	bool terrainCheck = min(GetClosestDepthN(renderTexel), depth) < 1.0;
 	#if defined LOD_MOD
@@ -557,18 +693,19 @@ void main() {
 		vec3 _wpos = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
 
 		vec4 result;
-		#ifdef IRC_GI_ENABLED
+		#if defined GI_ACTIVE_IRC && !defined PROBE_GI_ENABLED
 			// [2026-09-04 IRC 逐格 GI] 免 SVGF：像素体素坐标直接三线性采样 IRC(1m) 光场。
 			// [2026-09-04b 只保留阳光+方块光] IRC 的 alpha=天空曝光度(露天≈1、洞里≈0)。
 			// 用 (1-alpha) 门控：露天把 IRC 的天光/环境部分收掉(交给完整 SH)，只留洞里/被遮挡的
 			// 阳光+方块光；避免 IRC 与 SH 双重计天空 → 也恢复 SH 的方向性。
 			vec3 _pvc = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract + float(VOXEL_RADIUS);
 			{
-				ivec3 _ircHit = ivec3(_pvc) + (cameraPositionInt - previousCameraPositionInt);
+				vec3 _ircHit = _pvc - FetchGeometryNormal(renderTexel) * 0.05
+				             + vec3(cameraPositionInt - previousCameraPositionInt);
 				vec3 _irc = vec3(0.0);
 				float _skExp = 0.0;
-				if (all(greaterThanEqual(_ircHit, ivec3(0))) && all(lessThan(_ircHit, ivec3(VOXEL_AREA)))) {
-					vec3 _fp = vec3(_ircHit) + 0.5;
+				if (frameCounter >= 2 && all(greaterThanEqual(_ircHit, vec3(0.0))) && all(lessThan(_ircHit, vec3(VOXEL_AREA)))) {
+                                       vec3 _fp = _ircHit - 0.5;
 					ivec3 _fi = ivec3(floor(_fp));
 					vec3 _ft = _fp - vec3(_fi);
 					for (int _k = 0; _k < 8; ++_k) {
@@ -580,19 +717,21 @@ void main() {
 						vec4 _tv = ((frameCounter & 1) == 0)
 						         ? texelFetch(voxelRadiance2Sampler, _p, 0)
 						         : texelFetch(voxelRadianceSampler, _p, 0);
+						if (any(isnan(_tv)) || any(isinf(_tv)) || any(lessThan(_tv, vec4(0.0)))) continue;
 						_irc += _tv.rgb * _w;
 						_skExp += _tv.a * _w;
 					}
 				}
 				_irc *= 0.01;   // IRC ×100 存储 → 采样域 ×0.01
 				if (!all(equal(_irc, _irc)) || any(lessThan(_irc, vec3(0.0)))) _irc = vec3(0.0);
-				_irc *= (1.0 - clamp(_skExp, 0.0, 1.0));   // 去天光：露天收掉(交给 SH)，洞里留(阳光+方块光)
 				result = vec4(_irc * IRC_GI_STRENGTH, 1.0);
 			}
 		#elif defined PROBE_GI_ENABLED
-			// 探针 GI：16³ 平滑缓存 trilinear 查询 → 入射辐照度（此后在 DeferredLight 乘 albedo）。
-			// 无棋盘 SPP、免 SVGF 降噪（PROBE 时 VOXEL_GI 关，deferred4-9 不 dispatch）。
+			// IRC DDGI backend: directional octahedral irradiance and distance visibility.
 			vec3 _pvc = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract + float(VOXEL_RADIUS);
+			vec3 _cacheCol = ProbeSampleRadiance(_pvc,
+				normalize(FetchSurfaceNormal(renderTexel)),
+				normalize(mat3(gbufferModelViewInverse) * viewPos));
 			#ifdef DEBUG_PROBE_QUERY
 			// [管线自检 3 rework] A/B 同屏对照（DDGI）：
 			//   左半屏 = 完整 DDGI 查询读回（被测对象：方向性探针辐照度 + 距离场遮挡）
@@ -600,41 +739,13 @@ void main() {
 			// 判读：左半应是平滑低频光斑（近亮/遮挡暗）、右半稳定渐变；左半不钉世界/随相机漂移
 			// → 查询锚/重居中错；左半全黑 → 写端没写（查写端 dispatch）。只赋 RGB 原始值，勿预转 YCoCg。
 			vec3 _refCol = fract((_pvc + vec3(cameraPositionInt)) * rcp(16.0));
-			vec3 _cacheCol = ProbeSampleRadiance(_pvc,
-				normalize(FetchSurfaceNormal(renderTexel)),
-				normalize(mat3(gbufferModelViewInverse) * viewPos));
 			// 分屏阈值用全分辨率 renderTexel（texelPos 是半分辨率，范围[0,vw/2)）判定。
 			vec3 _dbgCol = (renderTexel.x < (int(viewWidth) >> 1)) ? _cacheCol : _refCol;
 			result = vec4(_dbgCol, 1.0);
 		#else
-			// [2026-09-04 参考 IRC] 免 SVGF 逐格 GI：像素体素坐标直接三线性采样 IRC(1m)光场。
-			// 光已由 deferred22 的逐格射线注入+传播（方块/天/阳光 + 自反弹 → 逐格扩散）。
-			// 这里只做一次三线性采样（×0.01 外部域），乘以表面 albedo 在 DeferredLight 补乘。
-			// cDi(相机平移重投影) 与 VoxelTracing 的 ircHit = vc + cDi 同构（IRC 相机锚定、读上帧）。
-			{
-				ivec3 _ircHit = ivec3(_pvc) + (cameraPositionInt - previousCameraPositionInt);
-				vec3 _irc = vec3(0.0);
-				if (all(greaterThanEqual(_ircHit, ivec3(0))) && all(lessThan(_ircHit, ivec3(VOXEL_AREA)))) {
-					vec3 _fp = vec3(_ircHit) + 0.5;
-					ivec3 _fi = ivec3(floor(_fp));
-					vec3 _ft = _fp - vec3(_fi);
-					for (int _k = 0; _k < 8; ++_k) {
-						ivec3 _fo = ivec3(_k & 1, (_k >> 1) & 1, (_k >> 2) & 1);
-						ivec3 _p = clamp(_fi + _fo, ivec3(0), ivec3(VOXEL_AREA - 1));
-						float _w = (_fo.x == 0 ? 1.0 - _ft.x : _ft.x)
-						         * (_fo.y == 0 ? 1.0 - _ft.y : _ft.y)
-						         * (_fo.z == 0 ? 1.0 - _ft.z : _ft.z);
-						vec4 _tv = ((frameCounter & 1) == 0)
-						         ? texelFetch(voxelRadiance2Sampler, _p, 0)
-						         : texelFetch(voxelRadianceSampler, _p, 0);
-						_irc += _tv.rgb * _w;
-					}
-				}
-				_irc *= 0.01;   // IRC ×100 存储，采样 ×0.01
-				result = vec4(_irc * PROBE_GI_STRENGTH, 1.0);
-			}
+			result = vec4(_cacheCol * IRC_GI_STRENGTH, 1.0);
 		#endif
-		#elif defined VOXEL_GI_ENABLED
+		#elif defined GI_ACTIVE_VXGI
 			#ifdef VOXEL_REUSE
 			// ---- ReSTIR Phase A：几何一致（绝对世界坐标门控）且 reservoir 有效 → 复用上帧，省追踪 ----
 			ivec2 _rp = texelPos;
@@ -699,7 +810,7 @@ void main() {
 
 			result = CalculateSSILVB(screenCoord, viewPos, worldNormal, lightmapSky);
 		#endif
-		#if defined VOXEL_GI_ENABLED && defined VOXEL_REUSE
+		#if defined GI_ACTIVE_VXGI && defined VOXEL_REUSE
 			// ---- ReSTIR：几何一致才与上帧均值合并，否则重置为新样本（避免转动/移动把旧几何混入残影）；随后记录本像素几何 ----
 			{
 				vec4 _pW = PingReusePrev(texelPos);

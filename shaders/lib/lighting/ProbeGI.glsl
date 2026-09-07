@@ -130,18 +130,19 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
     vec3 surfaceBias = (worldNormal * PROBE_NORMAL_BIAS) + (-cameraDir * PROBE_VIEW_BIAS);
     vec3 biasedPos = worldPos + surfaceBias;
 
-    // 基础探针格坐标 + 三线性 alpha
-    ivec3 baseProbe = ivec3(floor((biasedPos - gridOriginPrev) * rcp(spacing)));
-    baseProbe = clamp(baseProbe, ivec3(0), ivec3(PROBE_GI_GRID_SIZE - 1));
-    vec3 baseProbeWorld = gridOriginPrev + (vec3(baseProbe) + 0.5) * spacing;
-    vec3 gridDist = biasedPos - baseProbeWorld;
-    vec3 alpha = clamp(gridDist * rcp(spacing), vec3(0.0), vec3(1.0));
+    // Standard DDGI center-based interpolation. Probe 0 is centered at +0.5 cell,
+    // so subtract 0.5 before floor/fract and keep room for the +1 neighbor.
+    vec3 probeGridPos = (biasedPos - gridOriginPrev) * rcp(spacing) - 0.5;
+    ivec3 baseProbe = clamp(ivec3(floor(probeGridPos)),
+                            ivec3(0), ivec3(PROBE_GI_GRID_SIZE - 2));
+    vec3 alpha = clamp(probeGridPos - vec3(baseProbe), vec3(0.0), vec3(1.0));
 
     // 采样器（上一帧内容的那块，即与写端反相）。直接按帧奇偶把 sampler 传给函数（不做采样器局部变量）。
     bool even = ((uint(frameCounter) & 1u) == 0u);
 
     vec3 irradiance = vec3(0.0);
     float accWeight = 0.0;
+    float accUnoccludedWeight = 0.0;
     float gammaHalf = PROBE_IRRADIANCE_GAMMA * 0.5;
 
     for (int i = 0; i < 8; ++i) {
@@ -158,8 +159,9 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
         float weight = (wrapShading * wrapShading) + 0.2;
 
         // 遮挡：采样"探针→采样点"方向的距离场，做 chebyshev 权重（防穿墙漏光）
-        vec4 distSample = ProbeOctSample(even ? probeDistance2Sampler : probeDistanceSampler,
-                                         adjCell, -biasedPosToAdj);
+        vec4 distSample = even
+            ? ProbeOctSample(probeDistance2Sampler, adjCell, -biasedPosToAdj)
+            : ProbeOctSample(probeDistanceSampler, adjCell, -biasedPosToAdj);
         vec2 filteredDist = 2.0 * distSample.rg;   // 写端 ÷2，读回乘 2
         // 未写入/NaN/垃圾 → 视作"无遮挡"(mean 大)；方差给下限避免 chebyshev 变硬开关(硬边缘)。
         bool distOK = all(equal(filteredDist, filteredDist));
@@ -174,18 +176,24 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
             cheb = variance / max(variance + v * v, 1e-6);
             cheb = max(cheb * cheb * cheb, 0.0);
         }
-        weight *= max(0.05, cheb);
-        weight = max(1e-6, weight);
+        // Keep a tiny probe contribution floor to avoid regular black probe
+        // cells when the biased surface point lies just behind the distance
+        // estimate. The absolute visibility ratio below still suppresses
+        // genuinely occluded walls.
+        weight *= max(0.02, clamp(cheb, 0.0, 1.0));
         const float crush = 0.2;
         if (weight < crush) weight *= (weight * weight) * (1.0 / (crush * crush));
 
         // 三线性权重最后乘（对八探针累加归一化正是 DDGI 的探针间三线性插值）
         vec3 trilinear = max(vec3(0.001), mix(vec3(1.0) - alpha, alpha, vec3(adjOffset)));
-        weight *= trilinear.x * trilinear.y * trilinear.z;
+        float trilinearWeight = trilinear.x * trilinear.y * trilinear.z;
+        accUnoccludedWeight += ((wrapShading * wrapShading) + 0.2) * trilinearWeight;
+        weight *= trilinearWeight;
 
         // 采样辐照度（法线方向纹素）；先判有效性/NaN（写端 alpha=1 标记；首帧另一块未写入 → 跳过）。
-        vec4 irrSample = ProbeOctSample(even ? probeIrradiance2Sampler : probeIrradianceSampler,
-                                        adjCell, worldNormal);
+        vec4 irrSample = even
+            ? ProbeOctSample(probeIrradiance2Sampler, adjCell, worldNormal)
+            : ProbeOctSample(probeIrradianceSampler, adjCell, worldNormal);
         if (irrSample.a < 0.5 || !all(equal(irrSample.rgb, irrSample.rgb))) continue;
         vec3 probeIrr = pow(max(irrSample.rgb, vec3(0.0)), vec3(gammaHalf));
 
@@ -195,6 +203,9 @@ vec3 ProbeSampleRadiance(vec3 vc, vec3 worldNormal, vec3 cameraDir) {
 
     if (accWeight <= 1e-6) return vec3(0.0);
     irradiance *= rcp(accWeight);
+    // Do not let normalization amplify a tiny fully-occluded remainder back to
+    // full brightness. Preserve the absolute visibility fraction.
+    irradiance *= saturate(accWeight * rcp(max(accUnoccludedWeight, 1e-6)));
     irradiance *= irradiance;   // 还原线性（写端 ^ (1/gamma)，读端 ^(gamma/2) 再平方）
     irradiance *= twoPi;
     irradiance *= volFade;      // 体积衰减：网格外无 GI（不无限外延）

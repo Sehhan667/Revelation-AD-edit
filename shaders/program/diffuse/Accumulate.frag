@@ -216,7 +216,7 @@ void main() {
 
     // [FIX 2026-08-06] 光追降噪关闭（settings.glsl 注释 VOXEL_GI_DENOISE）时跳过时域累积：
     // 不写 colortex2/14（DeferredLight 走 texelFetch 半分辨率棋盘，不依赖它们）。
-    #ifdef VOXEL_GI_ENABLED
+    #ifdef GI_ACTIVE_VXGI
         #ifndef VOXEL_GI_DENOISE
             return;
         #endif

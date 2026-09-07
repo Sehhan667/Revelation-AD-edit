@@ -3,7 +3,7 @@
 //================================================================================================//
 #if defined PASS_DEFERRED_LIGHTING
 // [FIX 2026-08-06] 用简单 #if defined 控制（原复合条件 `#if defined SVGF_ENABLED &&
-// (defined SSILVB_ENABLED || defined VOXEL_GI_ENABLED)` 会破坏 Iris 对布尔宏 SVGF_ENABLED 的
+// (defined GI_ACTIVE_SSILVB || defined GI_ACTIVE_VXGI)` 会破坏 Iris 对布尔宏 SVGF_ENABLED 的
 // 扫描 → GUI 开关无法真正注释/取消注释 settings.glsl 的 #define → 关掉 SVGF 降噪仍生效）。
 // [2026-08-28 方案B] 本上采样函数被两条路径共用：SSILVB(SVGF_ENABLED) 与 VXGI(VOXEL_GI_DENOISE)，
 // 两套降噪开关相互独立。用两个独立简单 #ifdef 分支设置可用标记，避免复合条件再次破坏 Iris 扫描。

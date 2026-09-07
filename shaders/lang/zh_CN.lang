@@ -27,10 +27,40 @@ screen.Volumetric=体积雾
 screen.Rainbows=彩虹
 
 screen.GlobalIllumination=全局光照
+option.GI_MODE=GI 模式
+option.GI_MODE.comment=选择一种全局光照实现，模式互斥。VXGI 和 IRC 需要开启体素化，IRC 不经过 SVGF。
+value.GI_MODE.0=关闭
+value.GI_MODE.1=SSILVB
+value.GI_MODE.2=VXGI
+value.GI_MODE.3=IRC
+screen.IRCGI=IRC 方向性探针 GI
+screen.IRCGI.comment=使用带距离可见性的 DDGI 方向性辐照度探针，不经过 SVGF，仅包含方块光和阳光。
+option.IRC_GI_STRENGTH=IRC 全局光照强度
+option.IRC_GI_STRENGTH.comment=调整经过天空曝光度衰减后的缓存间接光强度，不影响方向性 SH 天空光。
+option.PROBE_HYSTERESIS=辐照度时域滞后
+option.PROBE_HYSTERESIS.comment=每帧保留旧值的比例（0.98=每帧只混入 2% 新样本）。越高越稳但响应越慢；光源旁低频浮动明显时调高到 0.99，走动拖影重则调回 0.95。
+option.PROBE_DIST_HYSTERESIS=距离场时域滞后（遮挡）
+option.PROBE_DIST_HYSTERESIS.comment=距离场描述静态几何，可长期缓动；调高可消除 Chebyshev 遮挡权重的逐帧抖动（波动是"浮动"的放大器）。
+option.PROBE_NORMAL_BIAS=法线偏置（米）
+option.PROBE_NORMAL_BIAS.comment=查询点沿表面法线推入几何，抑制数值误差与漏光；过大贴墙会推过头。
+option.PROBE_VIEW_BIAS=视线偏置（米）
+option.PROBE_VIEW_BIAS.comment=查询点沿视线推离墙面，减少贴脸处的探针误遮挡。
+option.PROBE_IRRADIANCE_GAMMA=辐照度编码 Gamma
+option.PROBE_IRRADIANCE_GAMMA.comment=写入探针前的亮度编码指数（DDGI 默认 5）。高值压暗部量化噪声；改大微调整体亮度响应。
+option.IRC_DISABLE_SUN_GI=屏蔽阳光反弹（调试）
+option.IRC_DISABLE_SUN_GI.comment=开启后探针只注入方块光/自发光，便于单独评估方块光链路。
+option.PROBE_ATLAS_FILTER=探针图集双边滤波
+option.PROBE_ATLAS_FILTER.comment=写入后对每探针八面体块做 3×3 边缘保持平滑（RTXGI 同思路），不加射线即可压掉小光源周围的采样噪声与低频浮动。
+option.PROBE_ATLAS_FILTER_DIST_K=滤波距离边缘强度
+option.PROBE_ATLAS_FILTER_DIST_K.comment=邻域距离差权重 exp2(-Δ²·K)；K 越大越保边、越少平滑。
+option.PROBE_ATLAS_FILTER_DIR_POW=滤波方向指数
+option.PROBE_ATLAS_FILTER_DIR_POW.comment=纹素方向相似度 pow(dot, POW)；越大越方向局部化，越小越平滑（越糊）。
+option.MOON_BRIGHTNESS_MULTIPLIER=月面亮度倍率
+option.MOON_BRIGHTNESS_MULTIPLIER.comment=调整可见月面亮度，与夜间环境照明亮度独立。
 screen.SSILVB=SSILVB 屏幕空间GI
 screen.SSILVB.comment=屏幕空间体素化全局光照：基于屏幕空间的近似 GI，开销低，无需体素化
 screen.VXGI=VXGI 体素GI
-screen.VXGI.comment=体素全局光照：64³ 网格 + IRC 辐照度缓存 + 每像素漫反射追踪；与 SSILVB 互斥（体素优先）
+screen.VXGI.comment=体素全局光照：64³ 网格 + IRC 辐照度缓存 + 每像素漫反射追踪。由 GI 模式统一选择。
 screen.PTGIDenoise=PTGI 降噪
 screen.PTGIDenoise.comment=PTGI 风格中值降噪参数（仅对 VXGI 生效，需 VXGI 里「降噪方案」选 PTGI）
 screen.voxel=体素调试
@@ -298,8 +328,6 @@ option.GTAO_SLICES=GTAO方向采样数
 option.GTAO_DIRECTION_SAMPLES=GTAO步进采样数
 option.GTAO_RADIUS=GTAO半径
 
-option.SSILVB_ENABLED=SSILVB全局光照
-option.SSILVB_ENABLED.comment=开启屏幕空间体素化全局光照（基于屏幕缓冲的近似 GI，开销低）；与体素 GI（VXGI）互斥，体素优先
 option.SSILVB_SLICE_COUNT=方向采样数
 option.SSILVB_SAMPLE_COUNT=步进采样数
 option.SSILVB_SECTOR_COUNT=位掩码质量
@@ -660,8 +688,6 @@ option.VOXELIZATION.comment=体素化与全局光照系统
 option.VISUALIZE_VOXELS=体素可视化
 option.VISUALIZE_VOXELS.comment=用体素颜色覆盖方块反照率，直观查看体素化结果
 
-option.VOXEL_GI_ENABLED=体素全局光照
-option.VOXEL_GI_ENABLED.comment=开启基于体素的彩色光源间接光照（射线步进/注入扩散）；含每像素漫反射追踪
 
 option.VOXEL_GI_DENOISE=光追降噪
 option.VOXEL_GI_DENOISE.comment=体素光追的 SVGF 时域+空间降噪；关闭后直接显示半分辨率棋盘信号（未降噪，较闪烁）
@@ -685,10 +711,6 @@ option.NRD_DISOCCLUSION.comment=新暴露/遮挡消除区域（转视角边缘�
 option.VOXEL_DISTANCE=体素化距离
 option.VOXEL_DISTANCE.comment=体素化最远覆盖半径（far 级联）；近/中级联、远处球谐光边界、光追计算距离自动按比例跟随。要求阴影分辨率 ≥1536（三级联平铺总高，固定值，与距离无关）；不足时 far 级联被裁剪，有效 GI 距离降至该值的一半。建议 ≤ 阴影渲染距离
 
-option.VOXEL_GI_MODE=GI 传播模式
-option.VOXEL_GI_MODE.comment=0=纯漫反射注入（低配）| 1=射线步进（推荐，颜色传递更准确）
-value.VOXEL_GI_MODE.0=注入扩散
-value.VOXEL_GI_MODE.1=射线步进
 
 option.VOXEL_GI_STRENGTH=GI 强度
 option.VOXEL_GI_STRENGTH.comment=整体体素 GI 亮度倍率
@@ -696,10 +718,10 @@ option.PROBE_GI_ENABLED=探针全局光照
 option.PROBE_GI_ENABLED.comment=DDGI 风格探针辐照度缓存：16³×4m 平滑低频、天然免降噪。与体素/屏幕空间 GI 互斥，仅开其一；依赖体素化（ENABLE_VOXELIZATION）
 option.PROBE_GI_STRENGTH=探针 GI 强度
 option.PROBE_GI_STRENGTH.comment=探针间接光整体亮度倍率
-option.PROBE_RAY_SAMPLES=每探针采样数
-option.PROBE_RAY_SAMPLES.comment=每个探针每次更新的方向线数，越大覆盖越密、越准、越耗性能
-option.PROBE_UPDATE_PERIOD=更新间隔(帧)
-option.PROBE_UPDATE_PERIOD.comment=每个探针每隔 N 帧更新一次(帧间方向轮转)，节省计算开销
+option.PROBE_RAY_SAMPLES=每探针射线预算（平均每帧）
+option.PROBE_RAY_SAMPLES.comment=每探针平均每帧投出的射线数（总射线量/帧 = 探针数 × 该值，与周期无关）。越大越稳越耗。
+option.PROBE_UPDATE_PERIOD=探针更新周期（帧）
+option.PROBE_UPDATE_PERIOD.comment=每个探针每隔 N 帧更新一次（轮转分摊）；更新时一次投出 N×预算 条射线，单次更新方差随 N 降低。N=1 即每帧全量更新（旧行为）。
 option.PROBE_MAX_FRAMES=时域收敛帧数
 option.PROBE_MAX_FRAMES.comment=EMA 时间常数；越小收敛越快/越易出现噪点
 option.DEBUG_PROBE_PLUMBING=探针管线自检
@@ -780,7 +802,7 @@ option.VOXEL_GI_SELF_BOUNCE=自反弹强度
 option.VOXEL_GI_SELF_BOUNCE.comment=光线命中后从 IRC 缓存取上一帧辐照度作为反弹光的权重；决定阴影/室内光线传播深度（越大越亮但可能发闷）。>1 为超强自反弹放大（每跳反增益），用于传播调试 / 刻意增强间接光；正常建议 0.3~0.8
 
 option.VOXEL_GI_BLEND=时域混合速度
-option.VOXEL_GI_BLEND.comment=IRC 辐照度缓存每帧接受新采样值的比例（0.99=慢速累积更平滑，低值响应快但噪声大）
+option.VOXEL_GI_BLEND.comment=IRC 缓存在 60 FPS 下的历史权重（0.99=99% 历史、1% 新样本）。低值响应快，但噪声更大。
 
 option.VOXEL_IRC_UPDATE_INTERVAL=IRC 注入降频
 option.VOXEL_IRC_UPDATE_INTERVAL.comment=每个体素每 N 帧才重新投一次 IRC 射线，中间帧沿用缓存值，算力降到约 1/N。体素间接光照变化慢，通常看不出差别；1=不降频，2/4=每 2/4 帧重注入 1 次。相机/世界快速移动时注入会滞后至多 N-1 帧

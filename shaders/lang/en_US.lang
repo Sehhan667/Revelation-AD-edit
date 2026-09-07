@@ -27,10 +27,40 @@ screen.Volumetric=Volumetric Fog
 screen.Rainbows=Rainbows
 
 screen.GlobalIllumination=Global Illumination
+option.GI_MODE=GI Mode
+option.GI_MODE.comment=Select one GI implementation. VXGI and IRC require voxelization. IRC does not use SVGF.
+value.GI_MODE.0=Off
+value.GI_MODE.1=SSILVB
+value.GI_MODE.2=VXGI
+value.GI_MODE.3=IRC
+screen.IRCGI=IRC Directional Probe GI
+screen.IRCGI.comment=DDGI directional irradiance probes with distance visibility, without SVGF. Includes block light and sunlight only.
+option.IRC_GI_STRENGTH=IRC GI Strength
+option.IRC_GI_STRENGTH.comment=Scales cached indirect lighting after sky-exposure attenuation; does not scale directional SH sky lighting.
+option.PROBE_HYSTERESIS=Irradiance Temporal Hysteresis
+option.PROBE_HYSTERESIS.comment=Fraction of the previous frame kept per update (0.98 = only 2% of the new sample blends in). Higher = steadier but slower; raise toward 0.99 when low-frequency flicker near light sources is visible, lower it if movement trails bother you.
+option.PROBE_DIST_HYSTERESIS=Distance Field Hysteresis
+option.PROBE_DIST_HYSTERESIS.comment=The distance (occlusion) field describes static geometry, so it can relax slowly; raising it removes per-frame jitter of the Chebyshev visibility weight, which otherwise amplifies flicker.
+option.PROBE_NORMAL_BIAS=Normal Bias (m)
+option.PROBE_NORMAL_BIAS.comment=Pushes the query point into the surface along its normal to avoid numeric error and light leaks; too large sinks the sample into walls.
+option.PROBE_VIEW_BIAS=View Bias (m)
+option.PROBE_VIEW_BIAS.comment=Pushes the query point away from walls along the view ray, reducing false occlusion right against surfaces.
+option.PROBE_IRRADIANCE_GAMMA=Irradiance Encoding Gamma
+option.PROBE_IRRADIANCE_GAMMA.comment=Brightness encoding exponent before probe storage (DDGI default 5). Higher values tame dark-end quantization noise and subtly change the overall brightness response.
+option.IRC_DISABLE_SUN_GI=Disable Sun Bounce (Debug)
+option.IRC_DISABLE_SUN_GI.comment=When on, probes only inject block light / emissives, isolating the block-light path.
+option.PROBE_ATLAS_FILTER=Probe Atlas Bilateral Filter
+option.PROBE_ATLAS_FILTER.comment=Applies a 3x3 edge-preserving smooth to each probe's octahedral block after update (RTXGI-style), reducing sampling noise and low-frequency flicker near small light sources without extra rays.
+option.PROBE_ATLAS_FILTER_DIST_K=Filter Distance Edge K
+option.PROBE_ATLAS_FILTER_DIST_K.comment=Neighbor weight exp2(-delta^2 * K) on the distance field; larger K preserves edges and smooths less.
+option.PROBE_ATLAS_FILTER_DIR_POW=Filter Direction Power
+option.PROBE_ATLAS_FILTER_DIR_POW.comment=Texel direction similarity pow(dot, POW); larger keeps the filter directionally local, smaller smooths (blurs) more.
+option.MOON_BRIGHTNESS_MULTIPLIER=Moon Disc Brightness
+option.MOON_BRIGHTNESS_MULTIPLIER.comment=Scales the visible moon disc, independently of night lighting brightness.
 screen.SSILVB=SSILVB Screen-Space GI
 screen.SSILVB.comment=Screen-space voxelized global illumination: approximate GI from the screen buffer, cheap, no voxelization needed
 screen.VXGI=VXGI Voxel GI
-screen.VXGI.comment=Voxel global illumination: 64^3 grid + IRC irradiance cache + per-pixel diffuse tracing; mutually exclusive with SSILVB (voxel wins)
+screen.VXGI.comment=Voxel global illumination: 64^3 grid + IRC cache + per-pixel diffuse tracing. Selected through GI Mode.
 screen.PTGIDenoise=PTGI Denoise
 screen.PTGIDenoise.comment=PTGI-style median denoise parameters (only affects VXGI; requires Denoise Scheme = PTGI in VXGI)
 screen.voxel=Voxel Debug
@@ -274,8 +304,6 @@ option.GTAO_SLICES=GTAO Direction Samples
 option.GTAO_DIRECTION_SAMPLES=GTAO Marching Samples
 option.GTAO_RADIUS=GTAO Radius
 
-option.SSILVB_ENABLED=SSILVB GI
-option.SSILVB_ENABLED.comment=Screen-space voxelized global illumination (cheap approximate GI from the screen buffer); mutually exclusive with voxel GI (VXGI), voxel wins
 option.SSILVB_SLICE_COUNT=Direction Samples
 option.SSILVB_SAMPLE_COUNT=Marching Samples
 option.SSILVB_SECTOR_COUNT=Sector Count
@@ -491,8 +519,6 @@ option.DEBUG_VOXEL_SKY.comment=Tints surfaces red where the sky light path is hi
 option.DEBUG_VOXEL_SKY_LEVEL=GI Sky Level Debug
 option.DEBUG_VOXEL_SKY_LEVEL.comment=Shows the voxel GI sky level on block surfaces as pseudo-color (IRC sky exposure alpha): blue = no sky light (cave/occluded), red = fully open (open shadow)
 option.DEBUG_VOXEL_RADIANCE=DEBUG_VOXEL_RADIANCE
-option.VOXEL_GI_ENABLED=Voxel Global Illumination
-option.VOXEL_GI_ENABLED.comment=Voxel GI: IRC propagation + per-pixel ray tracing. Single switch (VOXEL_GI_TRACE merged into this). Denoise controlled by VOXEL_GI_DENOISE.
 
 option.VOXEL_GI_DENOISE=Voxel GI Denoise
 option.VOXEL_GI_DENOISE.comment=Spatio-temporal variance-guided filtering for voxel GI ray tracing. Disable to show raw half-res checkerboard signal (noisy).
@@ -523,10 +549,10 @@ option.PROBE_GI_ENABLED=Probe Global Illumination
 option.PROBE_GI_ENABLED.comment=DDGI-style probe irradiance cache: 16^3 x 4m, smooth low-frequency, denoise-free. Mutually exclusive with voxel/screen-space GI (enable only one); requires ENABLE_VOXELIZATION
 option.PROBE_GI_STRENGTH=Probe GI Strength
 option.PROBE_GI_STRENGTH.comment=Overall probe indirect-light brightness multiplier
-option.PROBE_RAY_SAMPLES=Rays per Probe
-option.PROBE_RAY_SAMPLES.comment=Directional rays cast per probe update; higher = denser and more accurate but slower
-option.PROBE_UPDATE_PERIOD=Update Interval (frames)
-option.PROBE_UPDATE_PERIOD.comment=Every probe updates every N frames (round-robin), saving compute
+option.PROBE_RAY_SAMPLES=Rays per Probe (per-frame budget)
+option.PROBE_RAY_SAMPLES.comment=Average rays cast per probe per frame (total rays/frame = probes x budget, independent of period). Higher = steadier but slower.
+option.PROBE_UPDATE_PERIOD=Probe Update Period (frames)
+option.PROBE_UPDATE_PERIOD.comment=Each probe updates once every N frames (round-robin); each update casts N x budget rays, lowering per-update variance. N=1 updates every probe every frame (old behavior).
 option.PROBE_MAX_FRAMES=Temporal Convergence
 option.PROBE_MAX_FRAMES.comment=EMA time constant; lower converges faster but noisier
 option.DEBUG_PROBE_PLUMBING=Probe Pipeline Debug
@@ -583,7 +609,7 @@ option.VOXEL_GI_SELF_BOUNCE=Self-Bounce Strength
 option.VOXEL_GI_SELF_BOUNCE.comment=Weight of the previous-frame IRC radiance used as bounce light on ray hits; determines how deep light propagates into shadows/interiors (higher = brighter but flatter). Values >1 over-amplify self-bounce per hop for propagation debugging / deliberate indirect-light boosting; recommended 0.3-0.8 normally
 
 option.VOXEL_GI_BLEND=Temporal Blend Speed
-option.VOXEL_GI_BLEND.comment=Fraction of new samples the IRC irradiance cache accepts per frame (0.99 = slow accumulation, smoother; lower = faster response but noisier)
+option.VOXEL_GI_BLEND.comment=History weight of the IRC cache at 60 FPS (0.99 = 99% history, 1% new samples). Lower values respond faster but are noisier.
 
 option.VOXEL_IRC_UPDATE_INTERVAL=IRC Inject Interval
 option.VOXEL_IRC_UPDATE_INTERVAL.comment=Re-inject IRC rays into each voxel every N frames, reusing cached values in between; trace cost drops to ~1/N. Voxel indirect light changes slowly, so usually no visible difference; 1 = every frame, 2/4 = every 2/4 frames. Fast camera/world motion lags injection by up to N-1 frames

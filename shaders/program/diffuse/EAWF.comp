@@ -145,7 +145,7 @@ void main() {
 
 	// [FIX 2026-08-06] 光追降噪关闭（settings.glsl 注释 VOXEL_GI_DENOISE）时：
 	// 透传 colortex3（保持棋盘信号，不做边缘保持滤波）。SSILVB 不受影响（非光追模式正常降噪）。
-	#ifdef VOXEL_GI_ENABLED
+	#ifdef GI_ACTIVE_VXGI
 		#ifndef VOXEL_GI_DENOISE
 			imageStore(colorimg3, texelPos, imageLoad(colorimg3, texelPos));
 			return;

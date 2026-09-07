@@ -153,7 +153,6 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define MOON_BRIGHTNESS_MULTIPLIER 1.0 // Brightness of the moon. [0.0 0.5 1.0 1.5 2.0 3.0 5.0]
 
 /* Global Illumination */
-	//#define SSILVB_ENABLED
 	#define SVGF_ENABLED // Enables spatiotemporal variance-guided filtering（SSILVB 降噪）
 	#define VOXEL_GI_DENOISE  // 光追降噪开关（SVGF 时域+空间）；注释此行或 GUI 关闭即关闭光追降噪
 	// [2026-08-28] VXGI 降噪方案：0=SVGF(EAWF a-trous 空间×4，时域累积复用)；1=PTGI 风格(单次中值+深度/法线边缘，更省)。只影响 VXGI 链；SSILVB 不受影响。
@@ -351,10 +350,26 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// #define DEBUG_TONE_MAPPING_PLOT
 	// #define DEBUG_KILL_RIPPLE_GRID
 	// #define FORCE_DISABLE_SUBGROUP_OPS
-	// [FIX 2026-08-06 合并] 体素 GI = 单一开关（原 VOXEL_GI_ENABLED + VOXEL_GI_TRACE 已合并）：
-	// 开启 = IRC 传播 + 每像素漫反射追踪（棋盘半分辨率 + SVGF 时域累积/滤波）。
-	// 降噪由 VOXEL_GI_DENOISE 单独控制（[2026-08-28 方案B] VXGI 与 SSILVB 的 SVGF_ENABLED 独立）。
-	//#define VOXEL_GI_ENABLED
+	#define GI_MODE 3 // [0 1 2 3]
+	// Keep internal boolean aliases for Iris' program-toggle preprocessor.
+	// GI_MODE is the only user-facing selector; these aliases are deliberately
+	// not referenced by any screen entry.
+	#undef SSILVB_ENABLED
+	#undef VOXEL_GI_ENABLED
+	#undef IRC_GI_ENABLED
+	#undef GI_ACTIVE_SSILVB
+	#undef GI_ACTIVE_VXGI
+	#undef GI_ACTIVE_IRC
+	#if GI_MODE == 1
+		#define GI_ACTIVE_SSILVB
+		#define SSILVB_ENABLED
+	#elif GI_MODE == 2
+		#define GI_ACTIVE_VXGI
+		#define VOXEL_GI_ENABLED
+	#elif GI_MODE == 3
+		#define GI_ACTIVE_IRC
+		#define IRC_GI_ENABLED
+	#endif
 	// ENABLE_VOXELIZATION 是 GUI 布尔开关（shaders.properties screen.voxel + profile.Default 默认开）。
 	// Iris 通过"注释/取消注释本行"来开关（setBooleanDefineValue）。要显示开关必须同时满足：
 	//   1) 本行 `#define ENABLE_VOXELIZATION`（无值，可带注释）→ 布尔选项定义锚点；
@@ -362,26 +377,40 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//   缺任一 → GUI 只占位不显示（"空格子"）。注意不能用 `#if defined A && defined B` 复合条件。
 	#define ENABLE_VOXELIZATION  // 体素化：shadow pass 直写 voxelData（3D 纹理）；关闭则无 GI
 
-	// ===== Probe GI（DDGI 风格探针辐照度缓存，独立实验方案，2026-09-03）=====
-	// [2026-09-04 废弃] DDGI 探针链路（4m 方向性探针）暂废弃——射线靠直击光源、多漏光/稀疏/偏移。
-	// 保留代码但不再启用本开关；改走下面的 IRC_GI（逐 1m 格光场，免 SVGF）。勿同时开 IRC_GI。
-	//#define PROBE_GI_ENABLED
+	// ===== IRC DDGI backend（4m 方向性探针 + 距离可见性）=====
+	// GI_MODE=3 内部启用，不作为独立 GUI 模式暴露。
+	#undef PROBE_GI_ENABLED
+	#if GI_MODE == 3
+		// IRC backend: directional DDGI probes with distance visibility.
+		#define PROBE_GI_ENABLED
+	#endif
 	#define PROBE_GI_STRENGTH 1.0       // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0] 探针 GI 总强度
 
-	// ===== IRC GI（逐 1m 格辐照度光场，免 SVGF，2026-09-04）=====
-	// 复用 VXGI 的 IRC（voxelRadiance，deferred22 逐格注入+传播），像素端仅一次三线性采样。
-	// 1m 细粒度、平滑传播、不穿墙；无逐像素追踪、无 SVGF。
-	#define IRC_GI_ENABLED
+	// ===== IRC GI（DDGI 方向性探针后端，免 SVGF）=====
+	// 16³×4m 探针，八面体方向辐照度 + 距离场遮挡；仅方块光与阳光。
 	#define IRC_GI_STRENGTH 1.0         // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0 3.0] IRC GI 总强度
-	#define PROBE_RAY_SAMPLES 64        // [4 8 16 32 48 64] 每探针每次更新方向采样数（高=周围探针更易同时点亮→光斑更圆更居中）
-	#define PROBE_UPDATE_PERIOD 8       // [2 4 8 16 32] 每个探针每隔 N 帧更新一次（帧间方向轮转）
-	#define PROBE_MAX_FRAMES 32.0       // [4 8 16 32 64 128] EMA 时间常数（越小收敛越快/越噪）
+	#define IRC_DISABLE_SUN_GI       // IRC/DDGI 调试：先屏蔽阳光反弹，仅保留方块光/自发光
+	// [2026-09-05 射线预算+轮转分摊已接线] 每帧只更新 1/PROBE_UPDATE_PERIOD 的探针，每个更新一次投出
+	// PROBE_RAY_SAMPLES×PROBE_UPDATE_PERIOD 条射线 → 总射线量/帧 = 探针数 × PROBE_RAY_SAMPLES（与周期无关）。
+	// 单更新样本数 ×周期 → 单更新方差 ÷周期；时域滞后换算 hyst^P 保持"每帧"语义（响应/噪声不随周期漂移）。
+	#define PROBE_RAY_SAMPLES 64        // [4 8 16 32 48 64 96 128 192 256] 每探针射线预算（平均每帧；更新时×周期投出）
+	#define PROBE_UPDATE_PERIOD 8       // [1 2 4 8 16 32] 轮转周期（帧）：每探针每 N 帧更新一次；N=1=每帧全量（旧行为）
+	#define PROBE_MAX_FRAMES 32.0       // [4 8 16 32 64 128] 预留（未接线）：EMA 帧数语义待后续接入
 	// [DDGI 完整重写 2026-09-03] 八面体/边界/滞后/偏置参数。
 	// PROBE_OCT_SIZE=八面体内边数(每探针方向分辨率)；改它必须同步 shaders.properties 的三张纹理尺寸(128→G*(O),同深)。
 	#define PROBE_OCT_SIZE 6            // [4 6 8] 八面体探针映射内边数（含 1 像素边界 → 块边 O=+2）
-	#define PROBE_IRRADIANCE_GAMMA 5.0  // 辐照度亮度编码 gamma（DDGI 默认 5）：改善亮暗收敛与低亮度精度
-	#define PROBE_HYSTERESIS 0.95       // [0.9 0.95 0.97 0.98 0.99] 时域滞后（高=更去噪/收敛慢；64 线降噪足够→可用 0.95 快些）
-	#define PROBE_DIST_HYSTERESIS 0.85 // 距离场(几何,静止)收敛更快 → chebyshev 遮挡更快生效，减少穿墙漏光
+	#define PROBE_IRRADIANCE_GAMMA 5.0  // [2.0 3.0 4.0 5.0 6.0 8.0 10.0] 辐照度亮度编码 gamma（DDGI 默认 5）：改善亮暗收敛与低亮度精度
+	// [2026-09-05 恢复正常值] 早期为压低频浮动把滞后提到 0.98/0.95；轮转分摊(512线/更新)+图集双边滤波
+	// 已接手降噪，恢复常规值 0.95/0.85（响应快、收敛自然）。若仍有浮动再自行提到 0.97/0.9 档。
+	#define PROBE_HYSTERESIS 0.95       // [0.9 0.95 0.97 0.98 0.99] 时域滞后（每帧语义；高=更去噪/收敛慢）
+	// [2026-09-05] 距离场（静态几何）常规值 0.85：快速收敛 → 遮挡更快生效、少漏光；重锚后新暴露走播种。
+	#define PROBE_DIST_HYSTERESIS 0.85 // [0.85 0.9 0.93 0.95 0.97 0.98 0.99] 距离场时域滞后（每帧语义）
+	// [2026-09-05 探针图集双边滤波] RTXGI 同思路：写入后对本探针八面体块内部做 3×3 边缘保持平滑，
+	// 用距离场差异做边缘停止 + 纹素方向相似度^DIR_POW。不加射线即可压掉小光源(火把/萤石)周围的
+	// 逐纹素方差与低频浮动。只滤辐照度；距离场不滤（滤距离会增加穿墙漏光）。
+	#define PROBE_ATLAS_FILTER        // 探针图集双边滤波开关（写入后空间平滑，不加射线压噪）
+	#define PROBE_ATLAS_FILTER_DIST_K 1.0    // [0.25 0.5 1.0 2.0 4.0] 距离边缘停止强度（大=更保边/更少滤）
+	#define PROBE_ATLAS_FILTER_DIR_POW 8.0   // [2.0 4.0 8.0 16.0 32.0] 方向相似度指数（大=更方向局部化/小=更平滑）
 	#define PROBE_NORMAL_BIAS 0.5       // [0.1 0.3 0.5 0.8 1.0] 采样点沿表面法线推向表面（世界尺度）
 	#define PROBE_VIEW_BIAS 0.5         // [0.1 0.3 0.5 0.8 1.0] 采样点沿视线推离墙面（世界尺度）
 	// [临时调试 2026-09-03] 只留方块光 GI：ProbeTrace 屏蔽阳光/天光项，仅保留
@@ -408,7 +437,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// [2026-08-09] 方块光颜色：光追开启时忽略玩家 BLOCKLIGHT_COLOR_R/G/B 设置，
 	// 全局置 0（体素内无原版方块光）；体素外需要原版方块光时由 DeferredLight 的
 	// "网格外强制默认色"逻辑恢复。光追关闭时按玩家设置正常工作。
-	#ifdef VOXEL_GI_ENABLED
+	#ifdef GI_ACTIVE_VXGI
 		const vec3 blocklightColor = vec3(0.0);
 	#else
 		const vec3 blocklightColor = vec3(BLOCKLIGHT_COLOR_R, BLOCKLIGHT_COLOR_G, BLOCKLIGHT_COLOR_B) * BLOCKLIGHT_BRIGHTNESS;

@@ -173,12 +173,11 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
             #else
                 reflection = textureBicubic(skyMapTex, saturate(ProjectSky(skyLightDir))).rgb;
             #endif
-            // [2026-09-02 修复太阳光斑泄漏] 天空反射原只用天光 lightmap.y 门控，
-            // 该值在阳光被遮挡处仍然很高 → 背阳/阴影里的镜面会反射出本不该存在的太阳盘。
-            // 用表面朝向太阳的程度 sunFace（dot(normal, sunDir)）衰减：背阳面（sunFace<=0）
-            // 太阳光斑随朝向平滑消失；朝阳面保持。不新增采样，仅用已有世界法线与太阳方向。
-            float sunFace = saturate(dot(worldNormal, worldSunDir));
-            reflection *= smoothstep(0.3, 0.7, skylight) * sunFace * REFLECTION_FALLBACK_BRIGHTNESS;
+            // [2026-09-03 方案1] 彻底移除 sunFace：此前用它压太阳光斑，但它按
+            // dot(normal, sunDir) 把竖向墙面（法线水平，dot≈0）的天空反射也压成 0，
+            // 导致"开启天空反射也不出天空"（半透明+不透明都有该问题）。恢复 1.0.2b
+            // 的纯 skylight 门控，保证天空反射在任何角度可见。
+            reflection *= smoothstep(0.3, 0.7, skylight) * REFLECTION_FALLBACK_BRIGHTNESS;
             
             if (isRoughReflective) reflection *= max(1.0 - material.roughness * 1.5, 0.1);
             

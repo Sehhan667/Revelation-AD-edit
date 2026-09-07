@@ -7,12 +7,21 @@
 // 【性能提示】保持注释状态可关闭远景 SSAO，能大幅提升面对大范围远景时的游戏帧率。
 // #define SSAO_LOD_ENABLED 
 
+// 近距 early-out 阈值：对应 maxSqLen(viewPosZ²*0.25) 的最小有效值，即 SSAO 采样半径约 0.1m。
+// 像素贴平面前极近时采样半径过小，循环内几乎全部采样被 diffSqLen<maxSqLen 剔除，直接判为无遮蔽。
+const float SSAO_MIN_RADIUS_SQ = 0.01;
+
 //================================================================================================//
 
 float CalculateSSAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dir) {
     float viewPosZ = viewPos.z;
-    float rSteps = 1.0 / float(SSAO_SAMPLES);
     float maxSqLen = viewPosZ * viewPosZ * 0.25;              // sqr(viewPosZ) * 0.25
+
+    // [P2 2026-09-03] 近距 early-out：像素贴平面前极近时采样半径过小，
+    // 循环内几乎所有采样都会被 diffSqLen<maxSqLen 剔除而白跑，直接判为无遮蔽。
+    if (maxSqLen < SSAO_MIN_RADIUS_SQ) return 1.0;
+
+    float rSteps = 1.0 / float(SSAO_SAMPLES);
     float rMaxSqLen = 1.0 / maxSqLen;
     float invViewPosZ = 1.0 / viewPosZ;
     vec2 rayStep = diagonal2(gbufferProjection) * ( -rSteps * invViewPosZ );
@@ -41,7 +50,10 @@ float CalculateSSAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dir)
             }
         #endif
 
-        vec3 difference = ScreenToViewPos(vec3(sampleCoord, sampleDepth)) - viewPos;
+        // [P1 2026-09-03] 用 ScreenToViewPos(vec2, viewDepth) 反投影：先经 ScreenToViewDepth
+        // (1 次除法) 换成视图深度，再对角缩放，避开全矩阵反投影(projMAD + rcp 透视除)。
+        // 与 GTAO.glsl 一致，数学上与 ScreenToViewPos(vec3) 逐位等价。
+        vec3 difference = ScreenToViewPos(vec2(sampleCoord), ScreenToViewDepth(sampleDepth)) - viewPos;
         float diffSqLen = dot(difference, difference);
 
         if (diffSqLen > EPS && diffSqLen < maxSqLen) {
