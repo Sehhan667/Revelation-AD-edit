@@ -530,6 +530,9 @@ vec4 PingReusePrev(ivec2 p) {
 #endif
 #ifdef VOXEL_COS_SAMPLING
 #endif
+// [GUI 布尔锚点 2026-09-06] VOXEL_CONE_GI（锥追踪低质量加速档，Voxel Cone Tracing 思想）。
+#ifdef VOXEL_CONE_GI
+#endif
 #ifdef GI_ACTIVE_VXGI
     // 体素 GI 信号源（阶段④：与 SSILVB 互斥，体素优先）：
     // IRC 采样器/查询 + 每像素漫反射追踪（VoxelTracing 内含 VoxelData/VoxelShape）
@@ -543,6 +546,9 @@ vec4 PingReusePrev(ivec2 p) {
     #include "/lib/lighting/shadow/Common.glsl"
     uniform sampler2DShadow shadowtex1;
     #include "/lib/lighting/VoxelTracing.glsl"
+    #ifdef VOXEL_CONE_GI
+    #include "/lib/lighting/VoxelCone.glsl"
+    #endif
 #endif
 
 float GetClosestDepthN(in ivec2 texel) {
@@ -561,6 +567,16 @@ float GetClosestDepthN(in ivec2 texel) {
 void main() {
     uvec2 localPos = QuadLayout16x16(gl_LocalInvocationIndex);
     ivec2 texelPos = ivec2(localPos + gl_WorkGroupID.xy * gl_WorkGroupSize.xy);
+
+    // [2026-09-06 VOXEL_CONE_GI] IRC 辐照度/占用 mip 金字塔构建：全 dispatch 分摊任务
+    //（读上一帧 IRC 块 → 写当前奇偶组；采样端读另一组，同 dispatch 无竞争）。
+    #if defined GI_ACTIVE_VXGI && defined VOXEL_CONE_GI
+        {
+            uint _taskStride = uint(max((int(viewWidth) >> 1) * (int(viewHeight) >> 1), 1));
+            for (uint _tk = gl_GlobalInvocationIndex; _tk < VOXEL_CONEMIP_TASKS; _tk += _taskStride)
+                VoxelMipBuildTask(_tk);
+        }
+    #endif
 
     // Keep the compatibility-forced deferred1_a pass inert when GI_MODE=0.
     #if !defined GI_ACTIVE_SSILVB && !defined GI_ACTIVE_VXGI && !defined GI_ACTIVE_IRC && !defined PROBE_GI_ENABLED
@@ -753,6 +769,18 @@ void main() {
 			result = vec4(_cacheCol * IRC_GI_STRENGTH, 1.0);
 		#endif
 		#elif defined GI_ACTIVE_VXGI
+			#ifdef VOXEL_CONE_GI
+			// ---- [2026-09-06 锥追踪低质量档] IRC mip 金字塔半球锥采样（免每像素 ≤24 步 DDA）----
+			// 5 锥(法线+45°环)×4 档 mip；近距细节让给 SSS 接触阴影与 SVGF 时域。入射光，albedo 由 DeferredLight 补乘。
+			{
+				vec3 coneN = normalize(FetchSurfaceNormal(renderTexel));
+				vec3 coneG = normalize(FetchGeometryNormal(renderTexel));
+				vec2 coneLM = Unpack2x8U(loadMaterialPack(renderTexel).x);
+				vec3 coneOrigin = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract
+				                 + float(VOXEL_RADIUS) + coneG * 0.15;
+				result = vec4(VoxelConeIrradiance(coneOrigin, coneN, coneLM.y) * VOXEL_GI_TRACE_STRENGTH, 1.0);
+			}
+			#else
 			#ifdef VOXEL_REUSE
 			// ---- ReSTIR Phase A：几何一致（绝对世界坐标门控）且 reservoir 有效 → 复用上帧，省追踪 ----
 			ivec2 _rp = texelPos;
@@ -811,6 +839,7 @@ void main() {
 				}
 				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_SPP)) * VOXEL_GI_TRACE_STRENGTH, 1.0);
 			#endif
+			#endif   // [2026-09-06] 关闭 VOXEL_CONE_GI #else（锥档分支结束）
 		#else
 			vec3 worldNormal = FetchSurfaceNormal(renderTexel);
 			float lightmapSky = Unpack2x8UY(loadMaterialPack(renderTexel).x);

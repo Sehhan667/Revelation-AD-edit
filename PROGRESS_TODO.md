@@ -201,3 +201,13 @@
   `COARSE || FINE`（此前 FINE 单独开无粗块跳跃，全空粗块也逐格查位图，拿不到最大收益）。
   lang/设置注释同步。已知取舍（未改）：实心密集区每格多一次位图采样（粗块内实心格=位图+体素 2 次 3D 采样），
   洞穴/建筑内部 FINE 反而更慢 → 该场景关闭。可选后续：轴向空格运行的整段位图跳跃（竖直射线收益大）。
+- [2026-09-06 Voxel Cone Tracing 实验档 v1] 新增 VOXEL_CONE_GI（默认关，Debug→Voxel 页 GUI）：
+  - lib/lighting/VoxelCone.glsl：IRC 辐照度+占用 mip 金字塔（32/16/8³，A/B 帧奇偶组）构建函数
+    VoxelMipBuildTask（74752 任务由 deferred1_a 全 dispatch 分摊，读上一帧块→写当前奇偶组，
+    采样读另一组 → 与 IRC 自反弹同级的 1 帧滞后，同 dispatch 无竞争）与半球 5 锥×4 档采样
+    VoxelConeIrradiance（占用透射 exp2(-K·occ) 软遮挡；出界=skyColor 方向近似×lightmap 门控）。
+  - DiffuseIndirect：VXGI 分支结果改用锥采样（×VOXEL_GI_TRACE_STRENGTH，与 DDA 档同数值链）；
+    原 DDA/ReSTIR 路径在 #else 完整保留。
+  - 新增 12 张 image（voxelRadMip2/4/8{A,B}、voxelOccMip2/4/8{A,B}），settings/lang 双语已加。
+  - 待实测（A/B）：开/关亮度校准（VOXEL_CONE_STRENGTH vs 1.0）、墙体漏光（VOXEL_CONE_OCC_K 2.2 调大）、
+    帧数提升幅度、与 COARSE/FINE/SSS 叠加效果。已知近似：近距细节与天空/阳光方向性弱于 DDA 档。
