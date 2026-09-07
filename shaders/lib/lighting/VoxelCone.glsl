@@ -70,11 +70,14 @@ void VoxelMipBuildTask(uint task) {
     vec3 accRad = vec3(0.0);
     float accOcc = 0.0;
     float cnt = 0.0;
+    // 辐照度基体素是"上一帧已写块"（上一帧锚定）→ +cDi 对齐当前整数格锚（与 IRC 自反弹读取同口径）；
+    // voxelData 是本帧内容（当前锚定）→ 不位移。
+    ivec3 cdi = cameraPositionInt - previousCameraPositionInt;
     for (int zz = 0; zz < k; ++zz)
     for (int yy = 0; yy < k; ++yy)
     for (int xx = 0; xx < k; ++xx) {
         ivec3 g = cell * k + ivec3(xx, yy, zz);
-        vec4 rv = FetchVoxelRadiance(g);             // 上一帧已写块（帧奇偶选择）
+        vec4 rv = FetchVoxelRadiance(g + cdi);
         if (!VoxelConeValid(rv)) { rv = vec4(0.0); }
         accRad += max(rv.rgb, vec3(0.0));
         accOcc += step(0.5, texelFetch(voxelDataSampler, g, 0).z);
@@ -91,51 +94,86 @@ void VoxelMipBuildTask(uint task) {
 //================================================================================================//
 // 采样端（读另一 parity = 上一帧构建结果）
 //================================================================================================//
+// 相机整数格平移补偿：基/mip 内容均按上一帧锚定，采样统一 +cDi 对齐当前锚
+//（与 IRC 自反弹 FetchVoxelRadianceTrilinear 读取端同口径）→ 消除移动时逐格忽有忽无。
 
-// 采样一个 tap：level 0 = 基体素（64³ 上一帧块，返回 vec4(rgb×100, exposure)）；
-// level 1/2/3 = 图集 2/4/8m 层（rgb×100, a=占用）。
-vec4 VoxelConeTapFetch(ivec3 cell, int level, out bool oob) {
-    if (level == 0) {
-        oob = any(lessThan(cell, ivec3(0))) || any(greaterThanEqual(cell, ivec3(VOXEL_AREA)));
-        if (oob) return vec4(0.0);
-        return FetchVoxelRadiance(cell);
+// 基体素辐照度三线性（连续体素坐标，越界 clamp；rgb=×100 域）
+vec4 VoxelConeBaseTri(vec3 p) {
+    ivec3 cdi = cameraPositionInt - previousCameraPositionInt;
+    vec3 i = floor(p);
+    vec3 t = p - i;
+    vec4 acc = vec4(0.0);
+    for (int k = 0; k < 8; ++k) {
+        ivec3 off = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+        ivec3 c = clamp(ivec3(i) + off, ivec3(0), ivec3(VOXEL_AREA - 1)) + cdi;
+        float w = (off.x == 0 ? 1.0 - t.x : t.x)
+                * (off.y == 0 ? 1.0 - t.y : t.y)
+                * (off.z == 0 ? 1.0 - t.z : t.z);
+        vec4 v = FetchVoxelRadiance(c);
+        if (!VoxelConeValid(v)) v = vec4(0.0);
+        acc += v * w;
     }
-    uint n = (level == 1) ? 32u : ((level == 2) ? 16u : 8u);
-    oob = any(lessThan(cell, ivec3(0))) || any(greaterThanEqual(cell, ivec3(n)));
-    if (oob) return vec4(0.0);
-    uint readParity = 1u - uint(frameCounter & 1);   // 上一帧构建组
-    return texelFetch(voxelConeMipSampler, VoxelConeMipCoord(cell, level, readParity), 0);
+    return acc;
 }
 
-// 一条锥沿 dir 采样 4 档（近→远用越来越粗的层），占用 a 做软遮挡；出界按方向天空近似。
+// 基体素固体占用三线性（本帧 voxelData、当前锚定 → 不加 cDi）
+float VoxelConeSolidTri(vec3 p) {
+    vec3 i = floor(p);
+    vec3 t = p - i;
+    float acc = 0.0;
+    for (int k = 0; k < 8; ++k) {
+        ivec3 off = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+        ivec3 c = clamp(ivec3(i) + off, ivec3(0), ivec3(VOXEL_AREA - 1));
+        float w = (off.x == 0 ? 1.0 - t.x : t.x)
+                * (off.y == 0 ? 1.0 - t.y : t.y)
+                * (off.z == 0 ? 1.0 - t.z : t.z);
+        acc += step(0.5, texelFetch(voxelDataSampler, c, 0).z) * w;
+    }
+    return acc;
+}
+
+// mip 层三线性：cellF 为层内连续格坐标（调用方已做 cDi 位移）
+vec4 VoxelConeMipTri(vec3 cellF, int level) {
+    vec3 i = floor(cellF);
+    vec3 t = cellF - i;
+    uint n = (level == 1) ? 32u : ((level == 2) ? 16u : 8u);
+    uint readParity = 1u - uint(frameCounter & 1);   // 上一帧构建组
+    vec4 acc = vec4(0.0);
+    for (int k = 0; k < 8; ++k) {
+        ivec3 off = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+        ivec3 c = clamp(ivec3(i) + off, ivec3(0), ivec3(int(n) - 1));
+        float w = (off.x == 0 ? 1.0 - t.x : t.x)
+                * (off.y == 0 ? 1.0 - t.y : t.y)
+                * (off.z == 0 ? 1.0 - t.z : t.z);
+        acc += texelFetch(voxelConeMipSampler, VoxelConeMipCoord(c, level, readParity), 0) * w;
+    }
+    return acc;
+}
+
+// 一条锥沿 dir 采样 4 档（近→远用越来越粗的层），占用做软遮挡；出界按方向天空近似。
 // 返回解码域（×0.01 后）的辐照度近似。
 vec3 VoxelConeTrace(vec3 p0, vec3 dir, float skyGate) {
     const float s[4]  = float[4](1.5, 3.0, 6.0, 12.0);
     const int   lv[4] = int[4](0, 1, 2, 3);
+    vec3 cdiF = vec3(cameraPositionInt - previousCameraPositionInt);
     float transm = 1.0;
     vec3 acc = vec3(0.0);
     for (int i = 0; i < 4; ++i) {
-        vec3 p = p0 + dir * s[i];
+        vec3 p = p0 + dir * s[i] + cdiF;             // cDi 位移后的体素坐标
         int level = lv[i];
-        ivec3 cell = ivec3(p);
-        if (level > 0) cell >>= level;               // level 格坐标（2m/4m/8m 格）
-        bool oob = false;
-        vec4 v = VoxelConeTapFetch(cell, level, oob);
         vec3 rad;
-        float occ;
-        if (level == 0) {
-            // 基体素（64³）的 .a = 天空曝光度，占用须另查 voxelData（固体）
-            occ = oob ? 0.0 : step(0.5, texelFetch(voxelDataSampler, cell, 0).z);
-        } else {
-            occ = oob ? 0.0 : clamp(v.a, 0.0, 1.0);  // 图集层 .a = 平均固体占用
-        }
-        if (oob) {
+        if (any(lessThan(p, vec3(0.0))) || any(greaterThanEqual(p, vec3(float(VOXEL_AREA))))) {
+            // 出界 = 天光方向（compute 安全：只用 skyColor）
             rad = skyColor * saturate(dir.y * 4.0 + 0.5) * skyGate;
+        } else if (level == 0) {
+            rad = VoxelConeBaseTri(p).rgb * 0.01;
+            transm *= exp2(-VOXEL_CONE_OCC_K * VoxelConeSolidTri(p));
         } else {
+            vec4 v = VoxelConeMipTri(p * (1.0 / float(1 << level)), level);
             rad = VoxelConeValid(v) ? max(v.rgb, vec3(0.0)) : vec3(0.0);
-            rad *= 0.01;                              // ×100 存储 → 解码
+            rad *= 0.01;
+            transm *= exp2(-VOXEL_CONE_OCC_K * clamp(v.a, 0.0, 1.0));
         }
-        if (!oob) transm *= exp2(-VOXEL_CONE_OCC_K * occ);
         acc += rad * transm;
         if (transm < 0.02) break;
     }
