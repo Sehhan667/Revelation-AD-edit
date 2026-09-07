@@ -524,8 +524,6 @@ option.VOXEL_GI_DENOISE=Voxel GI Denoise
 option.VOXEL_GI_DENOISE.comment=Spatio-temporal variance-guided filtering for voxel GI ray tracing. Disable to show raw half-res checkerboard signal (noisy).
 option.VOXEL_GI_DENOISE_MODE=Denoise Scheme
 option.VOXEL_GI_DENOISE_MODE.comment=0=SVGF (EAWF a-trous spatial x4, reuses temporal accumulation); 1=PTGI style (single median + depth/normal edge, cheaper). Only affects VXGI; SSILVB unaffected
-option.VOXEL_ADAPTIVE_TERMINATE=Deep-Dark Pixel Early-Out
-option.VOXEL_ADAPTIVE_TERMINATE.comment=Monte-Carlo-style adaptive termination: when the pixel's MC lightmap (sky & block) is ~0, the whole voxel trace is ~0 by construction, so it is skipped and left to the temporal filter - big savings in caves/enclosed areas. Light changes always show up in the lightmap first, so the criterion auto-releases; if bright spots go black, disable and report.
 option.PTGI_MEDIAN_RADIUS=Median Radius
 option.PTGI_MEDIAN_RADIUS.comment=1=3x3, 2=5x5. Larger = stronger denoise but blurs detail (targets fireflies/single-pixel noise)
 option.PTGI_EDGE_STRENGTH=Edge Preserve Strength

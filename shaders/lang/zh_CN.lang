@@ -693,8 +693,6 @@ option.VOXEL_GI_DENOISE=光追降噪
 option.VOXEL_GI_DENOISE.comment=体素光追的 SVGF 时域+空间降噪；关闭后直接显示半分辨率棋盘信号（未降噪，较闪烁）
 option.VOXEL_GI_DENOISE_MODE=降噪方案
 option.VOXEL_GI_DENOISE_MODE.comment=0=SVGF(EAWF a-trous 空间×4，时域累积复用)；1=PTGI 风格(单次中值+深度/法线边缘，更省)。只影响 VXGI 降噪，SSILVB 不受影响
-option.VOXEL_ADAPTIVE_TERMINATE=深黑像素早退
-option.VOXEL_ADAPTIVE_TERMINATE.comment=蒙特卡洛自适应终止：像素 MC 光照(天空/方块光)都≈0 时，整条体素追踪结果必然≈0 → 直接跳过交给时域，洞穴/封闭场景显著省计算。光照变化会先反映在光照贴图、判据自动解除；若发现本该亮的位置发黑请关闭反馈。
 option.PTGI_MEDIAN_RADIUS=中值半径
 option.PTGI_MEDIAN_RADIUS.comment=1=3×3，2=5×5。越大去噪越强、细节越糊（去孤点亮噪/firefly）
 option.PTGI_EDGE_STRENGTH=边缘保持强度
