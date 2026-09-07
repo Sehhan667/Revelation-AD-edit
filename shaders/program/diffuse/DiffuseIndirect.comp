@@ -789,6 +789,16 @@ void main() {
 			// 由 IRC 曝光度链路另行处理，不在追踪端叠加。
 			vec3 voxelCoord = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract + float(VOXEL_RADIUS);
 			float skyLightmap = lightmap.y;
+			// [2026-09-06 蒙特卡洛自适应终止] 深黑像素早退：像素 MC lightmap 天空/方块光都≈0 时，
+			// 整条 ≤24 步 DDA 的结果必然≈0——命中面阳光项被 saturate(max(hitSkylight,sky)*444) 压灭、
+			// 出界天空被 VoxelSkyColor 漏光门控归零、IRC 曝光≈0、无方块光注入。直接写 0 交给 SVGF
+			// 时域；光照变化必先反映在 lightmap → 判据自动解除。阈值保守（天空<0.03≈<半格、方块光<0.02）。
+			#ifdef VOXEL_ADAPTIVE_TERMINATE
+			if (skyLightmap < 0.03 && lightmap.x < 0.02) {
+				result = vec4(0.0);
+			} else
+			#endif
+			{
 			// 种子：全分辨率像素索引哈希 + 帧计数（每帧不同方向，棋盘 offset 轮转 4 帧全覆盖）
 			uint traceSeed = triple32(uint(renderTexel.x + renderTexel.y * int(viewWidth)) * 0x9E3779B1u
 			                          + uint(frameCounter + 1) * 0x85EBCA77u);
@@ -811,6 +821,7 @@ void main() {
 				}
 				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_SPP)) * VOXEL_GI_TRACE_STRENGTH, 1.0);
 			#endif
+			}
 		#else
 			vec3 worldNormal = FetchSurfaceNormal(renderTexel);
 			float lightmapSky = Unpack2x8UY(loadMaterialPack(renderTexel).x);
