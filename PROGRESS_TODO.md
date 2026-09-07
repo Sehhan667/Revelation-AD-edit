@@ -211,3 +211,8 @@
   - 新增 12 张 image（voxelRadMip2/4/8{A,B}、voxelOccMip2/4/8{A,B}），settings/lang 双语已加。
   - 待实测（A/B）：开/关亮度校准（VOXEL_CONE_STRENGTH vs 1.0）、墙体漏光（VOXEL_CONE_OCC_K 2.2 调大）、
     帧数提升幅度、与 COARSE/FINE/SSS 叠加效果。已知近似：近距细节与天空/阳光方向性弱于 DDA 档。
+  - [2026-09-06 放弃并彻底移除] 定位澄清：锥追踪是"换质量换速度的低质量档"，不保留逐像素
+    追踪的方块光/自发光近场（点光源采不到）→ 用户决定放弃。已删除 VoxelCone.glsl、properties
+    image/screen 条目、settings/lang 定义与 DiffuseIndirect 接入。逐像素追踪本身的**无损**加速
+    已有：VOXEL_COARSE_ACCEL/FINE_ACCEL（空洞跳跃，已 GUI 化）；另可恢复 ReSTIR（VOXEL_REUSE，
+    需补 4 张 reservoir image + 去 VoxelLighting 强制 undef）。

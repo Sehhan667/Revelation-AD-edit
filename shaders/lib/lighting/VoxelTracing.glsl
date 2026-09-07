@@ -174,16 +174,31 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
 
         ivec3 vc = ivec3(voxelCoord);
         #if defined VOXEL_COARSE_ACCEL || defined VOXEL_FINE_ACCEL
-            // ---- coarse 空洞跳跃（"空气跳过"）：所在 4³ 粗块全空 → 主轴向一步跨到粗块外，省逐格 fetch ----
+            // ---- coarse 空洞链跳（"空气链跳"，2026-09-06）：所在 4³ 粗块全空时，沿射线方向在
+            // 粗块空间连续推进，一次跨过一串全空粗块，直到进入首个非空粗块边界或离开网格——
+            // 与逐块跳逐位等价（每块仍一次 coarse texelFetch），但省掉中间若干次细格循环迭代开销。
+            // 网格面贴边（t≈0 无法前移）时交回逐格步进，由外层越界检查收尾。
             if (texelFetch(voxelCoarseSampler, vc >> VOXEL_COARSE_SHIFT, 0).r == 0u) {
-                ivec3 _cc = vc >> VOXEL_COARSE_SHIFT;
-                vec3 _cb = vec3(_cc) * float(VOXEL_COARSE_GS);
-                vec3 _next = _cb + vec3(step(0.0, sdir)) * float(VOXEL_COARSE_GS);
-                vec3 _tE = mix(vec3(1e30), ((_next - voxelCoord) * sdir) * abs(rdir),
-                               greaterThan(abs(sdir), vec3(0.0)));
-                float _tM = VoxelMin3(_tE);
-                vec3 _grow = step(_tE, vec3(_tM));
-                voxelCoord += (_next - voxelCoord) * _grow;
+                const float _gs = float(VOXEL_COARSE_GS);
+                const int _maxHop = 32;                 // 安全上限：64³ 全空对角线也不超过 ~28 块
+                int _hop = 0;
+                while (_hop < _maxHop) {
+                    ++_hop;
+                    ivec3 _cc = ivec3(voxelCoord) >> VOXEL_COARSE_SHIFT;
+                    vec3 _cb = vec3(_cc) * _gs;
+                    vec3 _next = _cb + vec3(step(0.0, sdir)) * _gs;
+                    vec3 _tE = mix(vec3(1e30), ((_next - voxelCoord) * sdir) * abs(rdir),
+                                   greaterThan(abs(sdir), vec3(0.0)));
+                    float _tM = VoxelMin3(_tE);
+                    if (_tM < 1e-4) break;              // 贴面/无法前移 → 交回逐格步进
+                    vec3 _grow = step(_tE, vec3(_tM));
+                    voxelCoord += (_next - voxelCoord) * _grow;
+                    if (any(lessThan(voxelCoord, vec3(0.0)))
+                     || any(greaterThanEqual(voxelCoord, vec3(float(VOXEL_AREA)))))
+                        break;                          // 出网格：外层越界检查收尾
+                    if (texelFetch(voxelCoarseSampler, ivec3(voxelCoord) >> VOXEL_COARSE_SHIFT, 0).r != 0u)
+                        break;                          // 进入非空粗块：交回逐格检查
+                }
                 totalStep = (sdir * (voxelCoord - origin + 0.5) + 0.5) * abs(rdir);
                 continue;
             }
