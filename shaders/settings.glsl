@@ -190,7 +190,8 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define VOXEL_COS_SAMPLING  // 余弦密度半球采样（pdf=cosθ/π、权重 1，期望同 均匀×2cos，方差更低）
 
 	// [2026-09-06 锥追踪实验档（Voxel Cone Tracing, Crassin 2011 思想）] 开启后 VXGI 每像素
-	// 漫反射追踪(DDA)改为"IRC mip 金字塔 5 锥采样"（构建 32/16/8³ 辐照度+占用 mip，每帧廉价规约）。
+	// 漫反射追踪(DDA)改为"IRC mip 5 锥采样"。mip 金字塔(2/4/8m，辐照度+占用合一)每帧廉价规约，
+	// 存储为单张 64x64x32 图集（Iris 全包 image 单元池 16 上限，只允许 1 张新图）。
 	// 低质量/加速档：近距细节与锐度下降（接触阴影由 SSS 屏幕空间阴影补），帧数换质量，默认关。
 	//#define VOXEL_CONE_GI         // 锥追踪低质量档（Debug→Voxel 页开关；需 VXGI 模式）
 	#define VOXEL_CONE_STRENGTH 1.0    // [0.1 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] 锥追踪 GI 强度（校准：对比 DDA 档亮度）
