@@ -782,7 +782,12 @@ void main() {
 				vec2 coneLM = Unpack2x8U(loadMaterialPack(renderTexel).x);
 				vec3 coneOrigin = mat3(gbufferModelViewInverse) * viewPos + cameraPositionFract
 				                 + float(VOXEL_RADIUS) + coneG * 0.15;
-				result = vec4(VoxelConeIrradiance(coneOrigin, coneN, coneLM.y) * VOXEL_GI_TRACE_STRENGTH, 1.0);
+				// 与 DDA 档一致：起点在 64³ 网格外无体素数据 → 返回 0（交 DeferredLight 非光追路径）
+				if (any(lessThan(coneOrigin, vec3(0.0))) || any(greaterThanEqual(coneOrigin, vec3(float(VOXEL_AREA))))) {
+					result = vec4(0.0);
+				} else {
+					result = vec4(VoxelConeIrradiance(coneOrigin, coneN, coneLM.y) * VOXEL_GI_TRACE_STRENGTH, 1.0);
+				}
 			}
 			#else
 			#ifdef VOXEL_REUSE

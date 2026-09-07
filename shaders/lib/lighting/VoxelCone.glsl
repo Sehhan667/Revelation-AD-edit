@@ -83,7 +83,8 @@ void VoxelMipBuildTask(uint task) {
         ivec3 g = cell * k + ivec3(xx, yy, zz);
         bool sld = texelFetch(voxelDataSampler, g, 0).z > 0.5;
         if (sld) {
-            vec4 rv = FetchVoxelRadiance(g + cdi);
+            ivec3 gc = clamp(g + cdi, ivec3(0), ivec3(VOXEL_AREA - 1));   // cdi 越界防 OOB
+            vec4 rv = FetchVoxelRadiance(gc);
             if (VoxelConeValid(rv)) accRad += max(rv.rgb, vec3(0.0));
             cntSolid += 1.0;
         }
@@ -102,25 +103,6 @@ void VoxelMipBuildTask(uint task) {
 //================================================================================================//
 // 相机整数格平移补偿：基/mip 内容均按上一帧锚定，采样统一 +cDi 对齐当前锚
 //（与 IRC 自反弹 FetchVoxelRadianceTrilinear 读取端同口径）→ 消除移动时逐格忽有忽无。
-
-// 基体素辐照度三线性（连续体素坐标，越界 clamp；rgb=×100 域）
-vec4 VoxelConeBaseTri(vec3 p) {
-    ivec3 cdi = cameraPositionInt - previousCameraPositionInt;
-    vec3 i = floor(p);
-    vec3 t = p - i;
-    vec4 acc = vec4(0.0);
-    for (int k = 0; k < 8; ++k) {
-        ivec3 off = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
-        ivec3 c = clamp(ivec3(i) + off, ivec3(0), ivec3(VOXEL_AREA - 1)) + cdi;
-        float w = (off.x == 0 ? 1.0 - t.x : t.x)
-                * (off.y == 0 ? 1.0 - t.y : t.y)
-                * (off.z == 0 ? 1.0 - t.z : t.z);
-        vec4 v = FetchVoxelRadiance(c);
-        if (!VoxelConeValid(v)) v = vec4(0.0);
-        acc += v * w;
-    }
-    return acc;
-}
 
 // 基体素固体占用三线性（本帧 voxelData、当前锚定 → 不加 cDi）
 float VoxelConeSolidTri(vec3 p) {
@@ -177,7 +159,8 @@ vec3 VoxelConeBaseMix(vec3 p, vec3 dir, float skyGate) {
                 * (off.z == 0 ? 1.0 - t.z : t.z);
         vec3 v = sky;
         if (texelFetch(voxelDataSampler, c, 0).z > 0.5) {
-            vec4 rv = FetchVoxelRadiance(c + cdi);   // 上一帧块（当前锚 +cDi）
+            ivec3 cc = clamp(c + cdi, ivec3(0), ivec3(VOXEL_AREA - 1));   // cdi 越界防 OOB
+            vec4 rv = FetchVoxelRadiance(cc);   // 上一帧块（当前锚 +cDi）
             if (VoxelConeValid(rv)) v = max(rv.rgb, vec3(0.0)) * 0.01;
         }
         acc += v * w;
