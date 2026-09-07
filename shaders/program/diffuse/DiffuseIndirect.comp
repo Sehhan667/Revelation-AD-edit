@@ -572,9 +572,13 @@ void main() {
     //（读上一帧 IRC 块 → 写当前奇偶组；采样端读另一组，同 dispatch 无竞争）。
     #if defined GI_ACTIVE_VXGI && defined VOXEL_CONE_GI
         {
-            uint _taskStride = uint(max((int(viewWidth) >> 1) * (int(viewHeight) >> 1), 1));
-            for (uint _tk = gl_GlobalInvocationIndex; _tk < VOXEL_CONEMIP_TASKS; _tk += _taskStride)
-                VoxelMipBuildTask(_tk);
+            // GLSL 无 gl_GlobalInvocationIndex：用填充后的组网格尺寸自算唯一线性号
+            int _padX = ((int(viewWidth) >> 1) + 15) / 16 * 16;
+            int _padY = ((int(viewHeight) >> 1) + 15) / 16 * 16;
+            int _total = max(_padX * _padY, 1);
+            int _lin = int(gl_GlobalInvocationID.y) * _padX + int(gl_GlobalInvocationID.x);
+            for (int _tk = _lin; _tk < int(VOXEL_CONEMIP_TASKS); _tk += _total)
+                VoxelMipBuildTask(uint(_tk));
         }
     #endif
 
