@@ -523,6 +523,13 @@ vec4 PingReusePrev(ivec2 p) {
 // [GUI 布尔锚点 2026-09-05] PROBE_ATLAS_FILTER（探针图集双边滤波开关）。
 #ifdef PROBE_ATLAS_FILTER
 #endif
+// [GUI 布尔锚点 2026-09-06] VOXEL_COARSE_ACCEL / VOXEL_FINE_ACCEL / VOXEL_COS_SAMPLING（VXGI 追踪加速/采样）。
+#ifdef VOXEL_COARSE_ACCEL
+#endif
+#ifdef VOXEL_FINE_ACCEL
+#endif
+#ifdef VOXEL_COS_SAMPLING
+#endif
 #ifdef GI_ACTIVE_VXGI
     // 体素 GI 信号源（阶段④：与 SSILVB 互斥，体素优先）：
     // IRC 采样器/查询 + 每像素漫反射追踪（VoxelTracing 内含 VoxelData/VoxelShape）

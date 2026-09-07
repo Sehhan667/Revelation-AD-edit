@@ -39,8 +39,9 @@
 // 阳光阴影判定（SimpleShadow 实时阴影贴图 + SimpleShadowTracing 体素 DDA 短程遮挡）
 #include "/lib/lighting/VoxelSunShadow.glsl"
 
-// coarse occupancy（空洞跳跃）：VOXEL_COARSE_ACCEL 开启时读，R32UI bitmap
-#ifdef VOXEL_COARSE_ACCEL
+// coarse occupancy（空洞跳跃）：VOXEL_COARSE_ACCEL 或 VOXEL_FINE_ACCEL 开启时读，R32UI bitmap
+// [2026-09-06] FINE 单独开启也产生并读取 coarse：全空 4³ 粗块跳过的收益最大，细格逐格只补非空块内部。
+#if defined VOXEL_COARSE_ACCEL || defined VOXEL_FINE_ACCEL
 uniform usampler3D voxelCoarseSampler;
 #endif
 // 细格 occupancy（逐格空气跳过）：VOXEL_FINE_ACCEL 开启时读
@@ -172,7 +173,7 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         }
 
         ivec3 vc = ivec3(voxelCoord);
-        #ifdef VOXEL_COARSE_ACCEL
+        #if defined VOXEL_COARSE_ACCEL || defined VOXEL_FINE_ACCEL
             // ---- coarse 空洞跳跃（"空气跳过"）：所在 4³ 粗块全空 → 主轴向一步跨到粗块外，省逐格 fetch ----
             if (texelFetch(voxelCoarseSampler, vc >> VOXEL_COARSE_SHIFT, 0).r == 0u) {
                 ivec3 _cc = vc >> VOXEL_COARSE_SHIFT;

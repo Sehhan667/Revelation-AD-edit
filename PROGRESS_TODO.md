@@ -191,3 +191,13 @@
   已改为 hyst^P（P=8、hyst 0.95 → 每更新保留 0.95^8≈0.66，等效逐帧 5% 混入，响应/噪声与 P=1 一致）。
   同时时域参数恢复正常值：PROBE_HYSTERESIS 0.98→0.95、PROBE_DIST_HYSTERESIS 0.95→0.85（降噪交给
   512线/更新 + 图集双边滤波）。待实测：收敛速度/拖影是否恢复正常、浮动是否仍在（若在再提 0.97/0.9）。
+- [2026-09-06] VXGI 加速/采样开关恢复 GUI 可用（Debug→Voxel，默认关=原行为）：
+  VOXEL_COARSE_ACCEL / VOXEL_FINE_ACCEL（occupancy 生产者本就在 Shadow.frag 原子置位、begin1 清零，
+  但无 settings 定义+锚点 → GUI 点不动；已补定义行/锚点并把生产者按宏门控，默认关时省两笔原子写/片元）
+  与 VOXEL_COS_SAMPLING（余弦密度半球采样）。待实测：COARSE 开看帧数与漏光；FINE 开若见空洞则关；
+  COS 采样亮度观感是否偏移。
+- [2026-09-06 细格跳过改进] VOXEL_FINE_ACCEL 单独开启现在也自动包含 4³ 粗块空洞跳跃：
+  VoxelTracing 的 coarse 采样器声明/粗块跳跃代码与 Shadow.frag 的 coarse 置位门控合并为
+  `COARSE || FINE`（此前 FINE 单独开无粗块跳跃，全空粗块也逐格查位图，拿不到最大收益）。
+  lang/设置注释同步。已知取舍（未改）：实心密集区每格多一次位图采样（粗块内实心格=位图+体素 2 次 3D 采样），
+  洞穴/建筑内部 FINE 反而更慢 → 该场景关闭。可选后续：轴向空格运行的整段位图跳跃（竖直射线收益大）。
