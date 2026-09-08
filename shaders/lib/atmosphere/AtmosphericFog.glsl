@@ -107,7 +107,6 @@ mat2x3 RaymarchAtmosphericFog(in vec3 startPos, in vec3 endPos, in float dither,
     }
 
     vec3 midPos = startPos + worldDir * (rayLength * 0.5);
-    vec3 endPoint = startPos + worldDir * rayLength;
 
     float LdotV = dot(worldLightDir, worldDir);
     vec2 phase = AtmospherePhase(LdotV);
@@ -138,11 +137,22 @@ mat2x3 RaymarchAtmosphericFog(in vec3 startPos, in vec3 endPos, in float dither,
 
     float uniformFog = (8.0 * rainFactor) / maxDist;
 
-    // Simpson integration
-    vec2 densityStart = CalculateFogDensity(startPos, uniformFog);
-    vec2 densityMid   = CalculateFogDensity(midPos, uniformFog);
-    vec2 densityEnd   = CalculateFogDensity(endPoint, uniformFog);
-    vec2 avgDensity   = (densityStart + densityMid * 2.0 + densityEnd) * 0.25;
+    // [2026-09 雾环修复尝试] 原 3 点(2 段)梯形：采样点固定在 0/50%/100%，视线与
+    // y≈VF_HEIGHT 雾层壳的交点扫过采样点时，估算误差发生几何相关的确定性突变，
+    // 在雾层上表现为随相机高度变化的同心环（散射通道最明显）。
+    // 对策：加密到 VF_FOG_PANELS 段梯形 + 用每像素 dither 抖动整组采样相位，
+    // 把确定性环误差打成噪声交给 TAA 收敛。想回旧行为：VF_FOG_PANELS 改 2。
+    #ifndef VF_FOG_PANELS
+        #define VF_FOG_PANELS 8
+    #endif
+    float sampleJitter = (dither - 0.5) * (0.75 / float(VF_FOG_PANELS));
+    vec2 densitySum = vec2(0.0);
+    for (int i = 0; i <= VF_FOG_PANELS; ++i) {
+        float t = clamp(float(i) / float(VF_FOG_PANELS) + sampleJitter, 0.0, 1.0);
+        vec2 sampleDensity = CalculateFogDensity(startPos + worldDir * (rayLength * t), uniformFog);
+        densitySum += sampleDensity * ((i == 0 || i == VF_FOG_PANELS) ? 0.5 : 1.0);
+    }
+    vec2 avgDensity = densitySum / float(VF_FOG_PANELS);
 
     // ---- 全局浓度控制（在此生效） ----
     avgDensity *= VF_DENSITY_MULT;
