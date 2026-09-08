@@ -1,53 +1,126 @@
 /*
---------------------------------------------------------------------------------
-
+-------------------------------------------------------------------------------
     Revelation Shaders
-
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
-    Pass: Cached Gaussian blur for bloom tiles (Ping-Pong Setup)
+    Pass: Cached Gaussian blur for bloom tiles (L0 canvas only)
 
---------------------------------------------------------------------------------
+    [AD-edit] 单级泛光的半径控制从 Downsample 移到这里：
+    用不同宽度的 binomial 高斯核（离散高斯，tap 间距 = 1，各向同性）
+    代替原来的对角角点"扩散"，点光源不可能再裂成四瓣。
+
+    - 只覆盖左上象限 L0 画布 (workGroupsRender = 0.5, 0.5)，
+      不再向下半区写 TAA 历史残留。
+    - 边缘 clamp：模糊核不得越过画布边界采样（否则混入历史场景残留）。
+    - 共享内存缓存保留：每线程只取 1~2 次纹素（另由 128 宽工作组首尾补充
+      halo），整行/整列数据经 LDS 复用，带宽开销小。
+-------------------------------------------------------------------------------
 */
+
+//======// 模糊半径 → 核半宽 ================================================//
+
+// BLOOM_DOWNSAMPLE_BLUR_RADIUS 原先控制 Downsample 对角采样的半径（正是
+// 小体积光源裂成四瓣的根源）。语义保留为"泛光模糊范围"，现在选择核半宽：
+//   radius 1-2  →  9 tap  (σ≈1.41 canvas texel)    C=4
+//   radius 3-5  → 17 tap  (σ≈2.00)                 C=8   (默认 3)
+//   radius 6-9  → 25 tap  (σ≈2.45)                 C=12
+//   radius >=10 → 33 tap  (σ≈2.83)                 C=16
+#ifndef BLOOM_DOWNSAMPLE_BLUR_RADIUS
+    #define BLOOM_DOWNSAMPLE_BLUR_RADIUS 3 // [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
+#endif
+
+#if BLOOM_DOWNSAMPLE_BLUR_RADIUS <= 2
+    #define BLOOM_KERNEL_C 4
+#elif BLOOM_DOWNSAMPLE_BLUR_RADIUS <= 5
+    #define BLOOM_KERNEL_C 8
+#elif BLOOM_DOWNSAMPLE_BLUR_RADIUS <= 9
+    #define BLOOM_KERNEL_C 12
+#else
+    #define BLOOM_KERNEL_C 16
+#endif
+
+#define BLOOM_KERNEL_TAPS (BLOOM_KERNEL_C * 2 + 1)
 
 //======// Input //===============================================================================//
 
-const vec2 workGroupsRender = vec2(0.5, 1.0);
+const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 //======// Uniform //=============================================================================//
 
-// 【优化】输出端保持不变
-layout (r11f_g11f_b10f) restrict uniform image2D colorimg4; 
+layout (r11f_g11f_b10f) restrict uniform image2D colorimg4;
 
-// 【核心优化】引入标准的 sampler2D 作为输入端，激活显卡 L1 纹理缓存
-// 提示：如果是横向 Pass，这里读 colortex4；如果是纵向 Pass，这里读中转的 colortex5
-uniform sampler2D colortex4; 
+// 输入端用 sampler2D 激活显卡 L1 纹理缓存（横向/纵向 pass 均就地读写 colortex4）
+uniform sampler2D colortex4;
+uniform vec2 viewSize;
+
+//======// Kernel //==============================================================================//
+
+#if BLOOM_KERNEL_C == 4
+const float bloomKernel[BLOOM_KERNEL_TAPS] = float[BLOOM_KERNEL_TAPS](
+    0.0039062500000, 0.0312500000000, 0.1093750000000, 0.2187500000000,
+    0.2734375000000, 0.2187500000000, 0.1093750000000, 0.0312500000000,
+    0.0039062500000
+);
+#elif BLOOM_KERNEL_C == 8
+const float bloomKernel[BLOOM_KERNEL_TAPS] = float[BLOOM_KERNEL_TAPS](
+    0.0000152587891, 0.0002441406250, 0.0018310546875, 0.0085449218750,
+    0.0277709960938, 0.0666503906250, 0.1221923828125, 0.1745605468750,
+    0.1963806152344, 0.1745605468750, 0.1221923828125, 0.0666503906250,
+    0.0277709960938, 0.0085449218750, 0.0018310546875, 0.0002441406250,
+    0.0000152587891
+);
+#elif BLOOM_KERNEL_C == 12
+const float bloomKernel[BLOOM_KERNEL_TAPS] = float[BLOOM_KERNEL_TAPS](
+    0.0000000596046, 0.0000014305115, 0.0000164508820, 0.0001206398010,
+    0.0006333589554, 0.0025334358215, 0.0080225467682, 0.0206294059753,
+    0.0438374876976, 0.0779333114624, 0.1168999671936, 0.1487817764282,
+    0.1611802577972, 0.1487817764282, 0.1168999671936, 0.0779333114624,
+    0.0438374876976, 0.0206294059753, 0.0080225467682, 0.0025334358215,
+    0.0006333589554, 0.0001206398010, 0.0000164508820, 0.0000014305115,
+    0.0000000596046
+);
+#else
+const float bloomKernel[BLOOM_KERNEL_TAPS] = float[BLOOM_KERNEL_TAPS](
+    0.0000000002328, 0.0000000074506, 0.0000001154840, 0.0000011548400,
+    0.0000083725899, 0.0000468865037, 0.0002109892666, 0.0007836744189,
+    0.0024489825591, 0.0065306201577, 0.0150204263628, 0.0300408527255,
+    0.0525714922696, 0.0808792188764, 0.1097646541893, 0.1317175850272,
+    0.1399499340914, 0.1317175850272, 0.1097646541893, 0.0808792188764,
+    0.0525714922696, 0.0300408527255, 0.0150204263628, 0.0065306201577,
+    0.0024489825591, 0.0007836744189, 0.0002109892666, 0.0000468865037,
+    0.0000083725899, 0.0000011548400, 0.0000001154840, 0.0000000074506,
+    0.0000000002328
+);
+#endif
 
 //======// Shared Memory //=======================================================================//
 
-shared vec3 sharedData[128 + 8];
+shared vec3 sharedData[128 + BLOOM_KERNEL_C * 2];
 
 //======// Main //================================================================================//
 void main() {
     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
     uint index = gl_LocalInvocationIndex;
 
-    // 【硬件加速】改用 texelFetch 代替 imageLoad
-    // 完美的 0 级别 Mipmap 像素直取，直接白嫖显卡的 Texture Filter Unit 缓存，带宽开销暴跌
-    sharedData[index] = texelFetch(colortex4, texel - (OFFSET << 2), 0).rgb;
-    if (index < 8) {
-        sharedData[index + 128] = texelFetch(colortex4, texel + OFFSET * (128 - 4), 0).rgb;
+    // L0 画布边界（colortex4 左上象限半分辨率区）。模糊 tap 越界会被 clamp 到
+    // 画布边缘，而不是混入右侧/下侧的 TAA 历史残留。
+    ivec2 canvasLimit = ivec2(ceil(viewSize * 0.5)) - 1;
+    ivec2 zero = ivec2(0);
+
+    // 每线程把自己的纹素装入共享槽 index（槽 j 存放 texel - C + j 的值），
+    // 行首 C 个与行尾 C 个 halo 由边界线程补充。
+    sharedData[index] = texelFetch(colortex4, clamp(texel - OFFSET * BLOOM_KERNEL_C, zero, canvasLimit), 0).rgb;
+    if (index < uint(BLOOM_KERNEL_C * 2)) {
+        sharedData[index + 128] = texelFetch(colortex4, clamp(texel + OFFSET * (128 - BLOOM_KERNEL_C), zero, canvasLimit), 0).rgb;
     }
     barrier();
 
-    const float kernel[5] = float[5](0.27343750, 0.21875000, 0.10937500, 0.03125000, 0.00390625);
-
     vec3 bloomTiles = vec3(0.0);
-    for (int i = 0; i < 9; ++i) {
-        bloomTiles += sharedData[index + i].rgb * kernel[abs(i - 4)];
+    for (uint i = 0; i < uint(BLOOM_KERNEL_TAPS); ++i) {
+        bloomTiles += sharedData[index + i] * bloomKernel[i];
     }
 
-    // 写入目标（确保此处的写入目标与上面的读取采样器不是同一张图）
+    // 写入目标（覆盖范围与读取范围一致，均为左上象限 L0 画布）
     imageStore(colorimg4, texel, vec4(bloomTiles, 1.0));
 }

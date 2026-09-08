@@ -1,14 +1,18 @@
 /*
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
     Revelation Shaders
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
     Pass: Downsample bloom tiles (Single-Level Only)
-    Generates a single half‑resolution bloom tile with adjustable blur.
-    Macro BLOOM_DOWNSAMPLE_BLUR_RADIUS controls blur spread (default 4).
+    Generates a single half-resolution bloom tile (L0) by 2x2 box filtering.
     All higher levels are skipped.
---------------------------------------------------------------------------------
+
+    [AD-edit] 泛光扩散(半径)由 Blur.comp 的宽高斯核负责
+    (BLOOM_DOWNSAMPLE_BLUR_RADIUS 选择 9/17/25/33 tap)。
+    本 pass 只做纯 box 降采样，保证点光源的响应是单个各向同性像素，
+    不再产生四瓣/十字分裂。
+-------------------------------------------------------------------------------
 */
 
 //======// Input //===============================================================================//
@@ -36,14 +40,6 @@ uniform sampler2D colortex4; // Bloom tile input (not used in Level 0)
 uniform vec2 viewSize;
 uniform vec2 viewPixelSize;
 
-//======// 自定义模糊半径宏 ======================================================================//
-
-// 控制降采样时伴随的模糊程度。值越大，采样点离中心越远，模糊范围越大。
-// 推荐范围：1 ~ 16。1 为几乎无扩散，12 为强扩散。
-#ifndef BLOOM_DOWNSAMPLE_BLUR_RADIUS
-    #define BLOOM_DOWNSAMPLE_BLUR_RADIUS 3 // [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
-#endif
-
 //======// Function //============================================================================//
 
 #if DOWNSAMPLE_LEVEL == 0
@@ -53,23 +49,14 @@ uniform vec2 viewPixelSize;
 #endif
 
 vec3 CalculateBloomTile(in vec2 centerUV) {
-    // centerUV 已经是正确的归一化坐标，直接使用
-    // 采样半径（归一化坐标单位），值越大扩散越远
-    float radius = float(BLOOM_DOWNSAMPLE_BLUR_RADIUS);
-    vec2 offset = vec2(radius) * viewPixelSize;
-
-    // 中心采样：恰好是对应 2x2 块的装箱降采样（硬件的双线性过滤）。
-    // 缺失中心是此前“半径过大 → 小体积光源变中空四瓣”的根因。
-    vec3 cCenter = textureLod(bloomTileTex, centerUV, 0.0).rgb;
-
-    // 四个角点采样（以中心为基准，向外扩展 radius 个像素，负责扩散）
-    vec3 c00 = textureLod(bloomTileTex, centerUV + vec2(-offset.x, -offset.y), 0.0).rgb;
-    vec3 c01 = textureLod(bloomTileTex, centerUV + vec2( offset.x, -offset.y), 0.0).rgb;
-    vec3 c10 = textureLod(bloomTileTex, centerUV + vec2(-offset.x,  offset.y), 0.0).rgb;
-    vec3 c11 = textureLod(bloomTileTex, centerUV + vec2( offset.x,  offset.y), 0.0).rgb;
-
-    // 中心加权更高，保证点光源核心连续，不分裂成四瓣
-    return (cCenter * 4.0 + c00 + c01 + c10 + c11) * 0.125;
+    // 中心采样：centerUV 位于对应 2x2 全分辨率像素块的内角点上，
+    // 硬件双线性过滤 = 精确的 2x2 box 平均（装箱降采样），完全各向同性。
+    //
+    // 旧实现在此基础上又加了 (±R, ±R) 四个对角角点采样来"扩大模糊半径"，
+    // 但该核不是各向同性的：点光源的脉冲响应 = 中心亮点 + 4 个对角"卫星"点，
+    // 体积过小的光源经两级模糊后仍裂成四瓣。扩散职责已移交 Blur.comp 的
+    // 宽高斯核（tap 间距为 1 的 binomial 卷积，各向同性），这里只保留 box。
+    return textureLod(bloomTileTex, centerUV, 0.0).rgb;
 }
 
 //======// Main //================================================================================//
@@ -88,9 +75,9 @@ void main() {
         return;
     }
 
-    // 降采样并可控扩散
+    // 降采样（纯 2x2 box）
     vec3 bloomTile = CalculateBloomTile(centerUV);
 
-    // 写入半分辨率目标纹理 (colorimg4)
+    // 写入半分辨率目标纹理 (colorimg4) —— 左上象限
     imageStore(colorimg4, ivec2(gl_GlobalInvocationID.xy), vec4(bloomTile, 1.0));
 }

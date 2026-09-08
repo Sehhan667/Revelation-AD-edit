@@ -615,6 +615,7 @@ option.COMPENSATION_DELAY.comment=在屏幕上没有天空像素的一段时间�
 option.COMPENSATION_AO_BOOST=ao补偿
 option.COMPENSATION_AO_BOOST.comment=增强光照补偿区域的ao强度
 option.BLOOM_DOWNSAMPLE_BLUR_RADIUS=泛光模糊范围
+option.BLOOM_DOWNSAMPLE_BLUR_RADIUS.comment=选择泛光高斯核宽度（1-2：9 tap；3-5：17 tap；6-9：25 tap；10+：33 tap）。模糊保持各向同性，点光源不会再裂成四瓣
 option.FOG_NOISE_ENABLED=启用体积雾噪声
 screen.Compensation=光照补偿
 option.PCF_FAST_SAMPLES=PCF过滤采样数

@@ -426,6 +426,8 @@ option.BLOOM_KARIS_AVERAGE=Karis Average
 option.BLOOM_INTENSITY=Bloom Intensity
 option.BLOOMY_FOG=Bloomy Fog
 option.BLOOMY_FOG_INTENSITY=Bloomy Fog Intensity
+option.BLOOM_DOWNSAMPLE_BLUR_RADIUS=Bloom Blur Radius
+option.BLOOM_DOWNSAMPLE_BLUR_RADIUS.comment=Selects the bloom gaussian kernel width (1-2: 9-tap; 3-5: 17-tap; 6-9: 25-tap; 10+: 33-tap). The blur is isotropic, so point lights no longer split into four petals
 
 option.EXPOSURE_MODE=Exposure Mode
 value.EXPOSURE_MODE.MANUAL=Manual

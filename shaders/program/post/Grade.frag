@@ -64,16 +64,12 @@ vec3 Fast_Reinhard(in vec3 x) {
 void CombineBloomAndFog(inout vec3 scene, in ivec2 texel, in float activeExposure) {
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
 
-    // 低端保底优化：精准截取前两层 Tile 并对齐 8px 缓冲带
-    vec2 coord1 = screenCoord * 0.5;
-    vec3 tile1 = textureLod(colortex4, coord1, 0.0).rgb;
+    // 泛光数据 = colortex4 左上象限的 L0 画布（半分辨率 box 降采样 + 宽高斯）。
+    // 旧代码在此之上又按 0.47 混了一层"tile2"：单级管线从不向 colortex4 下半区
+    // 写第二级降采样，那里只有 TAA 历史/上一帧残留 —— 会叠出错位、滞后一帧的
+    // 重影（点光源呈四个分离小点/双影的元凶之一）。现只取当前帧 L0 画布。
+    vec3 bloomData = textureLod(colortex4, screenCoord * 0.5, 0.0).rgb;
 
-    // [优化] 将原本分散的常量加法和 Uniform 乘法打包。
-    // 这样编译器会直接把它当成单次 MAD 指令处理，移除了运行时的重复向量加法开销
-    vec2 coord2 = screenCoord * 0.25 + (viewPixelSize * 8.0 + vec2(0.0, 0.5));
-    vec3 tile2 = textureLod(colortex4, coord2, 0.0).rgb;
-
-    vec3 bloomData = mix(tile1, tile2, 0.47);
     float bloomIntensity = BLOOM_INTENSITY * 0.1;
 
     #ifdef BLOOMY_FOG

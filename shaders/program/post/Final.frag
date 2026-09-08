@@ -341,6 +341,10 @@ void main() {
         }
     #endif
 
-    finalOut += (bayer16(gl_FragCoord.xy) - 0.5) * rcp255;
+    // [2026-09 A/B 结论] 静态 Bayer(bayer16/64) 会在雾这类平滑渐变上留下固定
+    // 矩阵条纹（等亮度轮廓沿矩阵阈值线排列，静止不动、随雾亮度场锚定）。
+    // 改为逐帧 STBN 时空蓝噪声：帧间图案去相关 → 无固定条纹，同时压 8-bit 量化带。
+    // 若静止画面仍有可见量化带，把振幅 rcp255 后乘 1.5~2.0；若嫌时间噪声明显则乘 0.75。
+    finalOut += (SampleStbnVec1(texelPos, frameCounter) - 0.5) * rcp255;
     
 }
