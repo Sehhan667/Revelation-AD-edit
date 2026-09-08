@@ -238,7 +238,7 @@ void main() {
 	vec2 _tapRot = vec2(1.0, 0.0);
 #ifdef VOXEL_EAWF_TAP_JITTER
 	{
-		float _ta = 6.2831853 * BlueNoise(texelPos, frameCounter * 3u + uint(FILTER_PASS_INDEX) * 7u).x;
+		float _ta = 6.2831853 * BlueNoise(texelPos, frameCounter * 3 + FILTER_PASS_INDEX * 7).x;
 		_tapRot = vec2(cos(_ta), sin(_ta));
 	}
 #endif
