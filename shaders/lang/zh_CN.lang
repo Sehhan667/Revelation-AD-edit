@@ -567,8 +567,6 @@ option.VOXEL_LD_SAMPLING=低差异采样
 option.VOXEL_LD_SAMPLING.comment=用 Halton(2,3) 低差异序列代替伪随机采样方向，跨帧半球上分布更均匀、减少随机聚簇，通常能降低闪噪/交底噪。默认关；若出现规律性条带/网格伪影请关闭
 option.VOXEL_COS_SAMPLING=余弦加权采样
 option.VOXEL_COS_SAMPLING.comment=改用余弦密度采样（Malley 映射，pdf∝cosθ）代替均匀半球×2cos权重。期望一致、方差更低，常驻同采样成本下更干净或同噪底更省。默认关；若室内/暗处亮度偏暗或偏亮请关闭反馈
-option.VOXEL_INTERLEAVED=交错分层采样（Interleaved）
-option.VOXEL_INTERLEAVED.comment=方向域 4×4=16 层：每像素固定相位、逐次轮转层号并保留层内蓝噪声 → 邻域互补、短时域/运动期方差更低。默认关；低样本下边缘重建可能露图案条带，出现则关闭。
 option.VOXEL_REUSE=ReSTIR 时域复用
 option.VOXEL_REUSE.comment=相机静止时每隔若干帧才重投一次漫反射样本，其余帧复用上帧 reservoir，省追踪带宽。开启提升静止/缓动时的性能并加快收敛；兼容 VOXY 编译、仅相机静止生效，移动时自动退回每帧追踪
 option.VOXEL_REUSE_INTERVAL=重投间隔帧数

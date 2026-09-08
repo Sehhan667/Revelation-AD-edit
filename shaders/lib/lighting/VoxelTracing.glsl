@@ -88,28 +88,7 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
     // 时序变化仍由 frame 驱动；平移每像素恒定。
     vec2 _pu = vec2(pixel) * 0.1591549;
     vec2 _pur = vec2(fract(sin(_pu.x) * 43758.5453), fract(sin(_pu.y) * 43758.5453));
-    vec2 _bn;
-    #ifdef VOXEL_INTERLEAVED
-    // [2026-09-06 Interleaved Sampling（Keller & Heidrich 2001）] 单位域 4×4=16 层：
-    // 每像素固定相位（hash(pixel) 定起始层），每次重投按 van der Corput（4bit 位反转）轮转层号，
-    // 层内保留蓝噪声抖动 → 任意时刻邻域像素覆盖互补层（空间交错 + 重建互相借用），
-    // 单像素时域转满 16 次恰好覆盖全层（分层积分：短时域/运动期方差更低）。
-    // 注意：棋盘下同一全分辨率像素每 4 帧才重投一次 → 时间步取 (frameCounter>>2)。
-    // 已知边界（先想到的失败模式）：低样本 + EAWF/双线性边缘重建可能露"图案条带"；
-    // 若出现 → 关掉本开关回蓝噪声（默认关，A/B 验证用）。
-    {
-        int _tb = (frameCounter >> 2) + int(sampleIndex);   // 本像素第几次重投（近似）
-        uint _ph = uint(fract(sin(dot(vec2(pixel), vec2(12.9898, 78.233))) * 43758.5453) * 65536.0);
-        uint _t = uint(_tb) + _ph;
-        uint _br = ((_t & 1u) << 3u) | ((_t & 2u) << 1u) | ((_t & 4u) >> 1u) | ((_t & 8u) >> 3u);
-        uint _cell = (_br + (_ph >> 4u)) & 15u;             // 16 层格之一（相位平移避免像素同步）
-        vec2 _cellXY = vec2(float(_cell & 3u), float(_cell >> 2u));
-        vec2 _jit = fract(SampleStbnVec2(pixel, frameCounter + sampleIndex) + _pur);
-        _bn = (_cellXY + _jit) * 0.25;                      // [0,1)² 16 层之一
-    }
-    #else
-        _bn = fract(SampleStbnVec2(pixel, frameCounter + sampleIndex) + _pur);
-    #endif
+    vec2 _bn = fract(SampleStbnVec2(pixel, frameCounter + sampleIndex) + _pur);
     #ifdef VOXEL_COS_SAMPLING
         dir = VoxelHemisphereCosineUnitVector(normal, _bn);
         if (dot(dir, vertexNormal) <= 0.0)

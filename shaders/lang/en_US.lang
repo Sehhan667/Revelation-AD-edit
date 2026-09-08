@@ -506,8 +506,6 @@ option.VOXEL_LD_SAMPLING=Low-Discrepancy Sampling
 option.VOXEL_LD_SAMPLING.comment=Replaces pseudo-random sample directions with a Halton(2,3) low-discrepancy sequence, spreading rays more evenly over the hemisphere across frames and reducing clustering, usually lowering flicker/noise floor. Default off; disable if regular banding/grid artifacts appear
 option.VOXEL_COS_SAMPLING=Cosine-Weighted Sampling
 option.VOXEL_COS_SAMPLING.comment=Switches to cosine-density sampling (Malley map, pdf∝cosθ) instead of uniform hemisphere x 2cos weight. Same expectation, lower variance: cleaner at equal sampling cost or cheaper at equal noise. Default off; disable & report if indoor/ambient brightness shifts off
-option.VOXEL_INTERLEAVED=Interleaved Sampling
-option.VOXEL_INTERLEAVED.comment=Stratifies the direction domain into 4x4=16 cells: each pixel gets a fixed phase and rotates cells over time (van der Corput) with in-cell blue noise, so neighbors cover complementary cells and short-history/motion variance drops. Default off; at low sample counts edge reconstruction can show patterned banding - turn it off if that appears.
 option.VOXEL_REUSE=ReSTIR Temporal Reuse
 option.VOXEL_REUSE.comment=While the camera is still, re-trace a diffuse sample only every N frames and reuse the previous-frame reservoir in between, saving trace bandwidth. Improves performance and convergence when still/slow-moving; compatible with VOXY builds, only active when the camera is still (motion falls back to per-frame tracing)
 option.VOXEL_REUSE_INTERVAL=Re-trace Interval (frames)
