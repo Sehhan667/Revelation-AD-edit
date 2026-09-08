@@ -188,7 +188,6 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define VOXEL_COARSE_ACCEL  // 4³ 粗块空洞跳跃：纯空气粗块整块跳过（性能大头）
 	//#define VOXEL_FINE_ACCEL    // 细格 occupancy 逐格空气跳过（比 coarse 更细；单独开即自动含粗块空洞跳跃。注：未被体素化但有注入光/发射光的格会被当空气→若见空洞请关闭）
 	//#define VOXEL_COS_SAMPLING  // 余弦密度半球采样（pdf=cosθ/π、权重 1，期望同 均匀×2cos，方差更低）
-	//#define VOXEL_HIST_GRADIENT // 信号梯度自适应历史（Schied 2018-lite，默认关）：运动中在光照/几何边压低历史权重减拖影；静止恒 1 不牺牲静态降噪
 
 
 	#define SSILVB_MAX_ACCUM_FRAMES 64.0 // [5.0 10.0 15.0 20.0 24.0 28.0 32.0 36.0 40.0 48.0 56.0 64.0 72.0 80.0 96.0 112.0 128.0 144.0 160.0 192.0 224.0 256.0 320.0 384.0 448.0 512.0 640.0 768.0 896.0 1024.0]

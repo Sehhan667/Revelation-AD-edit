@@ -118,36 +118,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
             sumWeight = 1.0 / sumWeight;
             prevDiffuse *= sumWeight;
 
-            // [2026-09-06 VOXEL_HIST_GRADIENT 信号梯度自适应历史（Schied 2018-lite，默认关）]
-            // 用"上一帧积分历史"的半分辨率亮度梯度估计光照/几何边：仅当本像素发生运动
-            // （prevCoord-currCoord 位移）时，把历史权重在强梯度处压低（mix→0.3）——运动中的
-            // 光照边界少借旧样本 → 减拖影/边缘闪；静止时 _mSig=0 → 权重恒 1（不牺牲静态降噪）。
-            // 梯度源取历史而非当前帧：当前帧 1SPP 噪声会让梯度不可用。梯度信号是 GI 入射光
-            //（未乘 albedo），无纹理高频 → 梯度主要落在真实光/影边界上。若运动中边界噪点变多
-            // 或静止出现微闪 → 关闭。K=10：历史 Y 每像素差 0.1 → gNorm≈1。
-            float _histW = 1.0;
-#ifdef VOXEL_HIST_GRADIENT
-            {
-                vec2 _mv = prevCoord - currCoord;
-                float _mSig = smoothstep(0.02, 0.08, length(_mv));
-                ivec2 _hp = clamp(ivec2(round(prevTexel)), ivec2(0), ivec2(halfViewSize) - 1);
-                float _gx = abs(texelFetch(colortex2, clamp(_hp + ivec2(1, 0), ivec2(0), ivec2(halfViewSize) - 1), 0).r
-                            - texelFetch(colortex2, clamp(_hp - ivec2(1, 0), ivec2(0), ivec2(halfViewSize) - 1), 0).r);
-                float _gy = abs(texelFetch(colortex2, clamp(_hp + ivec2(0, 1), ivec2(0), ivec2(halfViewSize) - 1), 0).r
-                            - texelFetch(colortex2, clamp(_hp - ivec2(0, 1), ivec2(0), ivec2(halfViewSize) - 1), 0).r);
-                float _gNorm = saturate((_gx + _gy) * 0.5 * 10.0);
-                _histW = mix(1.0, mix(1.0, 0.3, _gNorm), _mSig);
-            }
-#endif
-
             // [2026-08-19 离线渲染] 持续累计：把帧数上限拉高，让时域累积权重更均匀、收敛到更低噪声。
             // 关闭宏时用原 SSILVB_MAX_ACCUM_FRAMES，与之前完全一致。
             // [2026-08-28 ] 累积帧数乘上 maxGeometryWeight（上帧几何可信度）连续衰减：
             // 静止一致 → ≈1，a 正常累加；遮挡/移动/几何剧变 → 骤降 → alpha 变大 → 几乎不混历史。
             #ifdef OFFLINE_RENDER
-                integratedDiffuse.a = min(prevDiffuse.a * (maxGeometryWeight * _histW) + 1.0, 1024.0);
+                integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, 1024.0);
             #else
-                integratedDiffuse.a = min(prevDiffuse.a * (maxGeometryWeight * _histW) + 1.0, SSILVB_MAX_ACCUM_FRAMES);
+                integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, SSILVB_MAX_ACCUM_FRAMES);
             #endif
 
             if (integratedDiffuse.a < 8.0) {
