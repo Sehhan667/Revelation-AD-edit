@@ -232,24 +232,9 @@ void main() {
 	float16_t sumWeight = float16_t(1.0);
 	// filteredColVar *= vec4(vec3(sumWeight), sumWeight * sumWeight);
 	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, frameCounter + FILTER_PASS_INDEX) - vec2(0.5)) * jitterSize;
-	// [2026-09-06 ReBLUR/NRD 式核旋转抖动] 每 (像素,pass,帧) 蓝噪声角度旋转采样图案 →
-	// 多帧/多 pass 后等效覆盖更连续的核，减轻固定 a-trous 的图案化与振铃；round 后个别
-	// tap 可能与邻位合并（被 sumWeight 归一化吸收）。默认关：若帧间微闪则关闭。
-	vec2 _tapRot = vec2(1.0, 0.0);
-#ifdef VOXEL_EAWF_TAP_JITTER
-	{
-		float _ta = 6.2831853 * BlueNoise(texelPos, frameCounter * 3u + uint(FILTER_PASS_INDEX) * 7u).x;
-		_tapRot = vec2(cos(_ta), sin(_ta));
-	}
-#endif
 
 	for (uint i = 0u; i < 9u; ++i) {
-		vec2 _off = offset3x3[i] * offsetScale;
-#ifdef VOXEL_EAWF_TAP_JITTER
-		_off = vec2(_off.x * _tapRot.x - _off.y * _tapRot.y,
-		            _off.x * _tapRot.y + _off.y * _tapRot.x);
-#endif
-		ivec2 sampleTexel = ivec2(round(sampleTexelBase + _off));
+		ivec2 sampleTexel = ivec2(round(sampleTexelBase + offset3x3[i] * offsetScale));
 		if (clamp(sampleTexel, ivec2(1), ivec2(halfViewSize) - 2) == sampleTexel) {
 			f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 
@@ -278,12 +263,7 @@ void main() {
 	    else if (_le == 2) _axis = vec2( 1.0,  0.0);
 	    else               _axis = vec2( 0.0,  1.0);
 	    for (int _d = 0; _d < 2; ++_d) {
-	        vec2 _o2 = _axis * offsetScale * (_d == 0 ? 1.0 : -1.0);
-#ifdef VOXEL_EAWF_TAP_JITTER
-	        _o2 = vec2(_o2.x * _tapRot.x - _o2.y * _tapRot.y,
-	                   _o2.x * _tapRot.y + _o2.y * _tapRot.x);
-#endif
-	        ivec2 sampleTexel = texelPos + ivec2(round(_o2));
+	        ivec2 sampleTexel = texelPos + ivec2(round(_axis * offsetScale * (_d == 0 ? 1.0 : -1.0)));
 	        if (clamp(sampleTexel, ivec2(1), ivec2(halfViewSize) - 2) == sampleTexel) {
 	            f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 	            f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
