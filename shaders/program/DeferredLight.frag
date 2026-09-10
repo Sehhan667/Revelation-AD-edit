@@ -718,6 +718,21 @@ void main() {
                     // "全亮"假设下的贡献（未乘接触阴影）
                     vec3 sssLit = sunlightBase * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
 
+                    // [2026-09] 入射因子 —— 修正"阴影距离外靠近太阳时异常发亮、失去阴影"：
+                    // 旧版 SSS 公式里没有 N·L（平加性项），阴影距离内是靠 pow(rawShadow, ...) 的
+                    // 贴图门控替它遮挡自阴影的。但两件事叠加后它就露出来了：
+                    //   ① 阴影距离外不再有贴图（rawShadow 恒 1，门控恒为 1）；
+                    //   ② "视角朝太阳"这个几何会让屏幕空间阴影退化 —— ScreenSpaceShadow 里
+                    //      rayDir = ViewToScreenPos(viewLightDir * |viewPos.z| + viewPos) - rayPos，
+                    //      太阳方向接近视线方向时该点几乎与像素重合 → rayDir → 0，随后的
+                    //      除法/逆平方根发散，接触阴影返回 1（当作无遮挡）。
+                    // 结果：朝太阳看时可见面多为背光面（N·L < 0，直接光本就是黑的），
+                    // 贴图没了、接触阴影又失效，平加性 SSS 于是拿到满强度 → 异常发亮。
+                    // 这里只补"背光抑制"：N·L ≥ 0 时恒为 1，因此受光面/掠射面与原实现逐位一致；
+                    // N·L 从 0 降到 -0.4 期间平滑压到 0，正好盖住上面那个失效区间。
+                    float sssEntry = saturate(dot(worldNormal, worldLightDir) * 2.5 + 1.0);
+                    sssLit *= sssEntry;
+
                     // ---- 暗部来源：与直接光**同刻**换挡 ----
                     // CalculatePCSS 只在 distanceFade < EPS 时执行，直接光就是在那一刻失去贴图阴影的；
                     // SSS 的暗部也在同一刻完全交给屏幕空间接触阴影：
