@@ -33,6 +33,13 @@
 	const int 	colortex17Format 			= RGBA16_SNORM;
 #endif
 
+	// [2026-09-10] Iris 官方常量（location: composite/deferred/final/prepare）：
+	// shadow.culling = reversed 时，玩家周围这个半径内的几何在 shadow pass 里不剔除、
+	// 之外按正常视锥剔除；shadowDistance(64) 不能小于它。模式 0/1 下此常量不参与计算。
+	// 见 shaders.properties 的 SHADOW_CULLING_MODE 与
+	// https://shaders.properties/current/reference/constants/voxeldistance/
+	const float voxelDistance = 48.0;
+
 	const bool	colortex0Clear				= false;
 	const bool 	colortex1Clear				= false;
 	const bool	colortex2Clear				= false;

@@ -222,6 +222,13 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 	#define SHADOW_BACKFACE_CULLING // Enables backface culling for shadows
 
+	// 阴影视锥剔除（Iris 官方指令 shadow.culling，实际发射在 shaders.properties 的 #if 块里）：
+	//   0 = 关闭剔除（原作者默认值；阴影视距内的几何一律进 shadow pass，最慢）
+	//   1 = 开启剔除（剔除「投影不进视锥」的几何；最快，代价是视锥外的高物体可能不再投影）
+	//   2 = reversed（voxelDistance 半径内不剔除、之外剔除，需要 Iris 1.8+；本机 1.10.7 支持）
+	// 见 https://shaders.properties/current/reference/shadersproperties/rendering/#shadowculling
+	#define SHADOW_CULLING_MODE 0 // [0 1 2]
+
 //======// Materials //===========================================================================//
 
 	#define TEXTURE_FORMAT 0 // [0 1 2]

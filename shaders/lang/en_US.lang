@@ -288,6 +288,11 @@ option.SHADOW_BACKFACE_CULLING=Shadow Backface Culling
 option.SHADOW_DISTORTION_STRENGTH=Shadow Distortion Strength
 
 option.SCREEN_SPACE_SHADOWS=Screen-Space Shadows
+option.SHADOW_CULLING_MODE=Shadow Frustum Culling
+option.SHADOW_CULLING_MODE.comment=0=off (pack default; everything inside the shadow distance is rendered, slowest); 1=on (cull geometry that cannot cast a shadow into the view frustum, fastest, tall off-screen casters may stop casting); 2=reversed (no culling within voxelDistance of the player, culling outside)
+value.SHADOW_CULLING_MODE.0=Off
+value.SHADOW_CULLING_MODE.1=On
+value.SHADOW_CULLING_MODE.2=Reversed
 option.SCREEN_SPACE_SHADOWS_SAMPLES=Screen-Space Shadows Samples
 
 option.BLOCKLIGHT_BRIGHTNESS=Blocklight Brightness
