@@ -101,7 +101,7 @@ vec3 CalculateSubsurfaceScattering(
     in float frontVisibility,   // 正面阴影可见性（不含接触阴影）
     in float backVisibility,    // 穿出物体后的可见性（仅薄片采样）
     in vec3 ambientIrradiance,  // 环境/天光辐照
-    in float ambientOcclusion    // 环境项遮蔽（AO；直射项不受其影响）
+    in vec3 ambientOcclusion    // 环境项遮蔽（多弹射 RGB AO；直射项不受其影响）
 ) {
     if (sssAmount <= EPS) return vec3(0.0);
 
@@ -133,8 +133,8 @@ vec3 CalculateSubsurfaceScattering(
     }
 
     // ③ 天光/环境（按 AO 衰减——环境光来自各个方向，遮蔽对它是成立的）
-    vec3 ambient = ambientIrradiance * (SSS_AMBIENT_WRAP * SUBSURFACE_SCATTERING_AMBIENT * ambientOcclusion)
-                 * ambientTransmittance;
+    vec3 ambient = ambientIrradiance * (SSS_AMBIENT_WRAP * SUBSURFACE_SCATTERING_AMBIENT)
+                 * ambientOcclusion * ambientTransmittance;
 
     return (SSS_EMISSION * beta * sssAmount) * (diffusion + transmission + ambient);
 }

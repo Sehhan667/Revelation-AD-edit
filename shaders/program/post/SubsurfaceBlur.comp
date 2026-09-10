@@ -79,9 +79,9 @@ const vec2 workGroupsRender = vec2(1.0, 1.0);
 void main() {
     ivec2 outPos = ivec2(gl_GlobalInvocationID.xy);
 
+    // 三张缓冲同为半分辨率，用源缓冲的尺寸做边界判断即可（writeonly 图像不做尺寸查询）
     ivec2 srcSize = imageSize(SSS_SRC_IMAGE);
-    ivec2 outSize = imageSize(SSS_OUT_IMAGE);
-    if (any(greaterThanEqual(outPos, outSize))) return;
+    if (any(greaterThanEqual(outPos, srcSize))) return;
 
     // 半分辨率像素 <-> 全分辨率 2x2 块（左上 texel），深度取块中心附近即可
     ivec2 centerFullTexel = outPos * 2;
