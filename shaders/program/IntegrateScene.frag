@@ -368,10 +368,46 @@ void main() {
                 float fogPresence = saturate(luminance(fogData[0]) * 50.0);
                 sceneColor += shafts * fogPresence;
             #endif
+
         #else
             vec4 volumeLight = textureLod(colortex11, screenCoord, 0);
             sceneColor = sceneColor * volumeLight.a + volumeLight.rgb;
         #endif
+    #endif
+
+    // [2026-09 独立日晕] 太阳/月亮保底光晕：不依赖体积雾浓度、也不依赖体积光开关
+    // （VOLUMETRIC_FOG/VOLUMETRIC_LIGHT 均关也生效），由 SUN_HALO 独立总控。
+    // 只在天空像素上绘制（地形/实体轮廓自然遮挡）；白天能量 ≈ directIlluminance×0.03，
+    // 夜晚月光补蓝项按 ×0.5 档；强度 SUN_HALO_STRENGTH（0=关）、角宽 SUN_HALO_WIDTH、
+    // 低角暖金→正午白。
+    #ifdef SUN_HALO
+    {
+        float isSkyH = step(1.0 - 1e-4, depth);
+        if (isSkyH > 0.5) {
+            float moonAmtH = smoothstep(-0.10, -0.25, worldSunDir.y);
+            vec3 haloDir = worldLightDir;
+            float haloAlt = smoothstep(-0.03, 0.05, worldSunDir.y);
+            float haloMoon = 0.0;
+            if (moonAmtH > 0.0) {
+                haloDir = -worldSunDir;
+                haloAlt = smoothstep(-0.03, 0.05, -worldSunDir.y);
+                haloMoon = 1.0;
+            }
+            float cosH = dot(worldDir, haloDir);
+            if (cosH > 0.0 && haloAlt > 1e-4) {
+                float expoH = 48.0 / (SUN_HALO_WIDTH * SUN_HALO_WIDTH);
+                float shapeH = pow(cosH, expoH);
+                float warmH = 1.0 - smoothstep(0.03, 0.30, max(worldSunDir.y, 0.0));
+                vec3 haloColor = mix(vec3(1.0, 0.60, 0.25), vec3(1.0, 0.97, 0.92), 1.0 - warmH);
+                if (haloMoon > 0.5) haloColor = vec3(0.8, 0.9, 1.0);
+                vec3 haloEnergy = global.directIlluminance;
+                if (haloMoon > 0.5) haloEnergy += vec3(0.30, 0.42, 0.85) * VOXEL_MOON_STRENGTH;
+                float haloScale = mix(0.03, 0.5, haloMoon);
+                sceneColor += haloColor * haloEnergy * (haloScale * shapeH)
+                           * SUN_HALO_STRENGTH * haloAlt;
+            }
+        }
+    }
     #endif
 
 

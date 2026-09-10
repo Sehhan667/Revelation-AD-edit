@@ -215,6 +215,12 @@ option.VF_VOLUME_MAX_STEPS=Volumetric Light Max Steps
 option.VF_VOLUME_MAX_STEPS.comment=Ray march steps at quarter resolution. Higher = finer beams, more cost
 option.VF_SHAFT_COLOR_BRIGHTNESS=Volumetric Light Color Brightness
 option.VF_SHAFT_COLOR_BRIGHTNESS.comment=Overall brightness of shafts / moon halo (unified intensity knob for daylight sun and night moonlight). Higher = brighter
+option.SUN_HALO=Sun Halo (Base)
+option.SUN_HALO.comment=Base glow around the sun/moon, independent of fog density (visible even without fog); drawn on sky pixels only
+option.SUN_HALO_STRENGTH=Sun Halo Strength
+option.SUN_HALO_STRENGTH.comment=Base halo strength (0 disables the halo)
+option.SUN_HALO_WIDTH=Sun Halo Width
+option.SUN_HALO_WIDTH.comment=Angular width of the halo (larger = wider and softer)
 
 option.UW_VOLUMETRIC_FOG=Underwater Volumetric Fog
 option.UW_VF_MAX_SAMPLES=Underwater Volumetric Fog Max Samples

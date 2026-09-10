@@ -227,6 +227,12 @@ option.VF_VOLUME_MAX_STEPS=体积光最大步进数
 option.VF_VOLUME_MAX_STEPS.comment=1/4 分辨率下的光线步进次数。越高光束越细腻，性能开销越大
 option.VF_SHAFT_COLOR_BRIGHTNESS=体积光颜色亮度
 option.VF_SHAFT_COLOR_BRIGHTNESS.comment=光柱/月晕整体亮度倍率（白天阳光与夜晚月光的统一强度旋钮）。调大更亮、调小更暗
+option.SUN_HALO=太阳日晕（保底）
+option.SUN_HALO.comment=太阳/月亮周围光晕，独立于体积雾浓度（无雾也有基础强度）；仅天空区域绘制
+option.SUN_HALO_STRENGTH=日晕强度
+option.SUN_HALO_STRENGTH.comment=日晕保底强度（0=关闭光晕）
+option.SUN_HALO_WIDTH=日晕宽度
+option.SUN_HALO_WIDTH.comment=日晕角宽（越大越宽越柔）
 
 option.UW_VOLUMETRIC_FOG=水下体积雾
 option.UW_VF_MAX_SAMPLES=水下体积雾最大采样数

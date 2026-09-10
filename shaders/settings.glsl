@@ -94,6 +94,12 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define VF_VOLUME_MAX_STEPS 32 // 体积光最大步进数（1/4 分辨率）。 [4 8 12 16 20 24 28 32 40 48 64 96 128]
 	#define VF_SHAFT_COLOR_BRIGHTNESS 1.0 // 体积光颜色亮度倍率（相对体积雾散射色，保持色相只提亮）。 [0.25 0.5 0.75 1.0 1.25 1.5 1.75 2.0 2.5 3.0 4.0 5.0 6.0 8.0 10.0]
 
+	// [2026-09] 太阳/月亮"日晕"：与体积雾浓度解耦的保底光晕（天空像素上绘制）。
+	// 完全独立开关 SUN_HALO：不开体积雾、不开体积光也生效，雾再薄也有基础强度。
+	#define SUN_HALO // 独立日晕开关（不开体积雾也生效，仅天空区域）
+	#define SUN_HALO_STRENGTH 1.0 // 日晕保底强度。 [0.0 0.2 0.4 0.6 0.8 1.0 1.5 2.0 3.0]
+	#define SUN_HALO_WIDTH 1.0 // 日晕角宽（越大越宽越柔）。 [0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0]
+
 	#ifdef PER_BIOME_FOG
 	#endif
 	#ifdef VF_TIME_FADE
