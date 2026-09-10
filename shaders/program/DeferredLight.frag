@@ -715,15 +715,13 @@ void main() {
 
                     float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
 
-                    // [2026-09] 阴影贴图只在 distanceFade < EPS 时被采样（即阴影距离前 8 格起就不再采，
-                    // CalculatePCSS 直接跳过），于是这段斜坡里 rawShadow 恒为 1、
-                    // pow(sssFrontVisibility, SSS_CONTRAST_POW) 的贴图门控完全失效；
-                    // 而旧的混合系数 saturate(distanceFade + cutout) 要走到斜坡末端才等于 1，
-                    // 就会出现"贴图已经没了、接触阴影还没接上"的一段空白 → 这一小段距离里 SSS 既没有
-                    // 贴图阴影、也没有接触阴影，整块发亮。
-                    // 现在让接触阴影在斜坡开头两格内就接管（distanceFade * 4：0.25 即第 2 格）：
-                    // 这段距离和更远处一样由屏幕空间阴影充当暗部，观感连续。
-                    float sssContactMix = saturate(distanceFade * 4.0 + cutout * 0.75);
+                    // [2026-09] 与直接光严格同步换挡：
+                    // CalculatePCSS 只在 distanceFade < EPS 时执行，直接光就是在跨过这一刻失去贴图阴影的；
+                    // SSS 的"暗部来源"必须在同一位置交给屏幕空间接触阴影，否则两者之间会露出一段
+                    // "贴图没了、接触阴影还没接上"的区间（用户看到的"失去阴影的间距"）。
+                    // 之前写成 distanceFade * 4.0（约 2 格渐变）仍会残留 2 格，这里改成同一时刻切换。
+                    // 连续性由接触阴影本身保证（它是屏幕空间步进的结果，随距离连续变化），不需要渐变。
+                    float sssContactMix = saturate(float(distanceFade >= EPS) + cutout * 0.75);
                     sss *= mix(1.0, sssContactShadow, sssContactMix);
 
                     vec3 sssRadiance = mix(sunlightBase * SUBSURFACE_SCATTERING_FAR_SCALE + ambientAccum,
