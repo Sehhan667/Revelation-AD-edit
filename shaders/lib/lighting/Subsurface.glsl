@@ -65,7 +65,10 @@ const float SSS_SCATTERING = 1.0;
 // 而不是把整片受光面整体提亮。透光项（薄片背光）与环境项保持各自的量级。
 const float SSS_DIFFUSE_GAIN = 1.0;
 const float SSS_TRANSMISSION_GAIN = 2.5;
-const float SSS_AMBIENT_GAIN = 1.0;
+// [2026-09] 天光项是唯一不依赖「太阳方向 / 面朝向」的一项，因此它才是"阴影里、背光面也看得见 SSS"
+// 的主力。第一版给它 1.0 太小（受光面标定压下去之后，阴影里 SSS 约只剩环境光的 10%，看起来就是
+// 没有效果）→ 提到 2.5，并把环境路径从 1.6 放宽到 1.0（厚冰在环境光下不该被惩罚得那么狠）。
+const float SSS_AMBIENT_GAIN = 2.5;
 
 // 正面项的过渡带加权：把 1.0 推向 (1 - saturate(N·L))。
 //   0.0 = 不加权（受光面也有完整的正面项，即旧行为）
@@ -77,8 +80,8 @@ const float SSS_TERMINATOR_BIAS = 0.5;
 const float SSS_DIFFUSE_WRAP = 0.5;
 // 光线斜射时投影余弦的下限（限制最大路径长度、避免除零）
 const float SSS_MIN_COS = 0.25;
-// 环境光等效路径倍率（各向同性光照的平均路径 ≈ 厚度的 1.6 倍）
-const float SSS_AMBIENT_PATH = 1.6;
+// 环境光等效路径倍率（各向同性光照的平均路径；1.0 = 直接用厚度，避免厚材质在环境光下过暗）
+const float SSS_AMBIENT_PATH = 1.0;
 const float SSS_AMBIENT_WRAP = 0.8;
 
 // 背光透光（distortion 近似）参数

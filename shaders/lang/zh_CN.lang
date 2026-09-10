@@ -404,7 +404,7 @@ option.SUBSURFACE_SCATTERING_TRANSMISSION.comment=树叶/草/藤等薄片逆光�
 option.SUBSURFACE_SCATTERING_DIFFUSE=正面扩散强度
 option.SUBSURFACE_SCATTERING_DIFFUSE.comment=受光面的次表面亮度补充。默认 0.25 时受光面只比普通方块亮约 10%（贡献集中在明暗交界/掠射处）；0 = 完全关闭正面项（受光面与普通方块一致，交界软化也一并消失）。
 option.SUBSURFACE_SCATTERING_AMBIENT=天光次表面强度
-option.SUBSURFACE_SCATTERING_AMBIENT.comment=阴影里/室内的次表面散射（环境项，按 AO 衰减）。0 = 关闭，此时只有被直射光照到的面才有 SSS。
+option.SUBSURFACE_SCATTERING_AMBIENT.comment=唯一不依赖太阳方向与面朝向的一项：阴影里/背光面/室内（按 AO 与室内门控衰减）也能看到 SSS。这是"平时不朝太阳也有次表面感"的主力，0 = 关闭后只剩太阳直射相关的两项。
 option.SUBSURFACE_SCATTERING_DIFFUSION=屏幕空间扩散（当前停用）
 option.SUBSURFACE_SCATTERING_DIFFUSION.comment=把 SSS 源项做半分辨率两趟可分离模糊（深度感知 + 抖动）再合成：边缘有真实渗色、大面积材质过渡更柔和。关闭则退回逐像素 SSS。代码与缓冲都保留，想启回只需在 settings.glsl 里取消 #define SUBSURFACE_SCATTERING_DIFFUSION 的注释；当前按需求默认停用，所以此开关在 GUI 里不出现。
 
