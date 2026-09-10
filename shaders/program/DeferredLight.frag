@@ -714,16 +714,17 @@ void main() {
                     #endif
 
                     float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
-                    sss *= mix(1.0, sssContactShadow, saturate(distanceFade + cutout * 0.75));
 
-                    // [2026-09] 阴影距离外「整块纯亮」的修正：
-                    // 旧版 SSS 是平加性项（不含 N·L），阴影距离内靠 pow(rawShadow, SSS_CONTRAST_POW)
-                    // 的门控替它做明暗；而距离外 rawShadow 恒为 1（不再采样，distanceFade >= EPS 时
-                    // CalculatePCSS 直接跳过），于是朝光面与背光面拿到同样的满强度 → 整块看起来纯亮。
-                    // 这里用包裹 N·L 作为"自遮挡"的代理（若阴影贴图可用，背光面本来也会被判为遮挡），
-                    // 并按 sssSunGate 淡入：近处系数 = 1（与原实现完全等价），远处 = 包裹 N·L。
-                    float sssFarSelfShadow = saturate(dot(worldNormal, worldLightDir) * 0.7 + 0.3);
-                    sss *= mix(sssFarSelfShadow, 1.0, sssSunGate);
+                    // [2026-09] 阴影贴图只在 distanceFade < EPS 时被采样（即阴影距离前 8 格起就不再采，
+                    // CalculatePCSS 直接跳过），于是这段斜坡里 rawShadow 恒为 1、
+                    // pow(sssFrontVisibility, SSS_CONTRAST_POW) 的贴图门控完全失效；
+                    // 而旧的混合系数 saturate(distanceFade + cutout) 要走到斜坡末端才等于 1，
+                    // 就会出现"贴图已经没了、接触阴影还没接上"的一段空白 → 这一小段距离里 SSS 既没有
+                    // 贴图阴影、也没有接触阴影，整块发亮。
+                    // 现在让接触阴影在斜坡开头两格内就接管（distanceFade * 4：0.25 即第 2 格）：
+                    // 这段距离和更远处一样由屏幕空间阴影充当暗部，观感连续。
+                    float sssContactMix = saturate(distanceFade * 4.0 + cutout * 0.75);
+                    sss *= mix(1.0, sssContactShadow, sssContactMix);
 
                     vec3 sssRadiance = mix(sunlightBase * SUBSURFACE_SCATTERING_FAR_SCALE + ambientAccum,
                                            sunlightBase, sssSunGate);
