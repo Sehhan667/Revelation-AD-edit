@@ -715,6 +715,16 @@ void main() {
 
                     float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
                     sss *= mix(1.0, sssContactShadow, saturate(distanceFade + cutout * 0.75));
+
+                    // [2026-09] 阴影距离外「整块纯亮」的修正：
+                    // 旧版 SSS 是平加性项（不含 N·L），阴影距离内靠 pow(rawShadow, SSS_CONTRAST_POW)
+                    // 的门控替它做明暗；而距离外 rawShadow 恒为 1（不再采样，distanceFade >= EPS 时
+                    // CalculatePCSS 直接跳过），于是朝光面与背光面拿到同样的满强度 → 整块看起来纯亮。
+                    // 这里用包裹 N·L 作为"自遮挡"的代理（若阴影贴图可用，背光面本来也会被判为遮挡），
+                    // 并按 sssSunGate 淡入：近处系数 = 1（与原实现完全等价），远处 = 包裹 N·L。
+                    float sssFarSelfShadow = saturate(dot(worldNormal, worldLightDir) * 0.7 + 0.3);
+                    sss *= mix(sssFarSelfShadow, 1.0, sssSunGate);
+
                     vec3 sssRadiance = mix(sunlightBase * SUBSURFACE_SCATTERING_FAR_SCALE + ambientAccum,
                                            sunlightBase, sssSunGate);
                     sceneOut += sssRadiance * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
