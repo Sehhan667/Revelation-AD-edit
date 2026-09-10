@@ -301,8 +301,18 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define SUBSURFACE_SCATTERING_AMBIENT 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0]
 	// [2026-09] 屏幕空间扩散：SSS 源项先做半分辨率两趟可分离模糊（深度感知 + 抖动）再合成，
 	// 边缘有真实渗色、大面材质过渡更柔和；关闭则退回逐像素 SSS（第 1 步行为），
-	// 同时省掉全分辨率源缓冲 colortex18 的写入与两趟模糊（约 0.4 ms）。
-	#define SUBSURFACE_SCATTERING_DIFFUSION // Enables screen-space diffusion (two-pass separable blur) of the SSS source
+	// 同时省掉源缓冲 colortex18 的写入与两趟模糊。
+	// [2026-09 暂时停用] 按用户要求先关掉（保留全部实现，随时可启回）：
+	//   代码仍在：colortex18/19/20、world*/composite1.csh、world*/composite3.csh、
+	//   program/post/SubsurfaceBlur.comp、DeferredLight 的 imageStore、IntegrateScene 的合成。
+	//   想启回来：取消下面这行的注释即可（shaders.properties 会同步打开两个 pass）。
+	// #define SUBSURFACE_SCATTERING_DIFFUSION // Enables screen-space diffusion (two-pass separable blur) of the SSS source
+	// [2026-09] 阴影距离外是否完全关闭 SSS（默认关）：
+	//   关（保持注释）= 阴影距离外不关 SSS，只把太阳项（正面扩散 + 背光透光）按
+	//                  1 - distanceFade 平滑淡出，只留下天光/环境项 → 远处半透明方块
+	//                  不会因为"太阳透过"凭空变亮，也不会有硬跳变；
+	//   开（取消注释）= 旧行为：阴影距离外整块关闭 SSS。
+	// #define SSS_DISABLE_BEYOND_SHADOW_DIST
 
 	#ifndef RP_SUPPORT
 		#undef NORMAL_MAPPING

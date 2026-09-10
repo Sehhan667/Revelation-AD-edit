@@ -405,8 +405,8 @@ option.SUBSURFACE_SCATTERING_DIFFUSE=正面扩散强度
 option.SUBSURFACE_SCATTERING_DIFFUSE.comment=受光面的次表面亮度补充。默认 0.25 时受光面只比普通方块亮约 10%（贡献集中在明暗交界/掠射处）；0 = 完全关闭正面项（受光面与普通方块一致，交界软化也一并消失）。
 option.SUBSURFACE_SCATTERING_AMBIENT=天光次表面强度
 option.SUBSURFACE_SCATTERING_AMBIENT.comment=阴影里/室内的次表面散射（环境项，按 AO 衰减）。0 = 关闭，此时只有被直射光照到的面才有 SSS。
-option.SUBSURFACE_SCATTERING_DIFFUSION=屏幕空间扩散
-option.SUBSURFACE_SCATTERING_DIFFUSION.comment=把 SSS 源项做半分辨率两趟可分离模糊（深度感知 + 抖动）再合成：边缘有真实渗色、大面积材质过渡更柔和。关闭则退回逐像素 SSS，并省掉两趟模糊（约 0.2 ms）。
+option.SUBSURFACE_SCATTERING_DIFFUSION=屏幕空间扩散（当前停用）
+option.SUBSURFACE_SCATTERING_DIFFUSION.comment=把 SSS 源项做半分辨率两趟可分离模糊（深度感知 + 抖动）再合成：边缘有真实渗色、大面积材质过渡更柔和。关闭则退回逐像素 SSS。代码与缓冲都保留，想启回只需在 settings.glsl 里取消 #define SUBSURFACE_SCATTERING_DIFFUSION 的注释；当前按需求默认停用，所以此开关在 GUI 里不出现。
 
 option.SSRT_MAX_SAMPLES=反射最大采样数
 option.SSRT_REFINEMENT=反射重采样
@@ -644,7 +644,8 @@ option.REFLECTION_FALLBACK_BASE=天空光为零时的基础反射亮度
 option.REFLECTION_FALLBACK_BRIGHTNESS=未命中反射时的亮度补偿
 option.REFLECTION_FALLBACK_BRIGHTNESS.comment=与天空光/基础值相乘
 option.GTAO_INTENSITY=GTAO强度
-option.SSS_DISABLE_BEYOND_SHADOW_DIST=阴影距离外不渲染次表面散射
+option.SSS_DISABLE_BEYOND_SHADOW_DIST=阴影距离外完全关闭次表面散射
+option.SSS_DISABLE_BEYOND_SHADOW_DIST.comment=默认关：阴影距离外不关 SSS，只把太阳项（正面扩散 + 背光透光）按 1 - distanceFade 平滑淡出，保留天光/环境项——远处半透明方块不会因为"太阳透过"凭空变亮，也没有硬跳变。打开则退回旧行为（距离外整块关闭）。
 option.SPECULAR_BLOOM_BOOST=反射高光强度
 option.METAL_SSR_MODE=物体反射模式
 value.METAL_SSR_MODE.0=无反射（只有天空反射）

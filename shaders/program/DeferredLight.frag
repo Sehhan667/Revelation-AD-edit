@@ -7,6 +7,9 @@
     Pass: Deferred lighting and sky combination
     Optimized: Early sun-light culling, deferred bicubic sampling, constant folding.
     Added: SSS_DISABLE_BEYOND_SHADOW_DIST macro to skip SSS outside shadow distance.
+    [2026-09] That macro is now a real GUI option (declared in settings.glsl, default off);
+              by default SSS keeps running outside the shadow distance but its sun-driven
+              terms fade out there (only the sky/ambient term remains).
     Added: SPECULAR_BLOOM_BOOST for enhancing specular bloom (glare).
     Added: Skip compensation in The End / Nether.
     Added: SUN_BRIGHTNESS_MULTIPLIER and MOON_BRIGHTNESS_MULTIPLIER for independent tuning.
@@ -40,7 +43,9 @@
 #endif
 
 // ====== 次表面散射距离控制 ======
-#define SSS_DISABLE_BEYOND_SHADOW_DIST
+// [2026-09] 原来这里有一行无条件的 #define SSS_DISABLE_BEYOND_SHADOW_DIST，导致 GUI 里的
+// 同名开关完全失效（用户设为关也不生效）。已删除，改为在 settings.glsl 里声明（默认注释掉）。
+// 默认行为：阴影距离外不关 SSS，只把太阳项平滑淡出（见下方 SSS 段）。
 
 // ====== 镜面高光泛光增强 ======
 #ifndef SPECULAR_BLOOM_BOOST
@@ -661,19 +666,24 @@ void main() {
     //   ③ 新增天光/环境项（阴影里/室内不再完全没有 SSS，并按 AO 衰减）；
     //   ④ 薄片（树叶/草/藤）走 Barré-Brisebois distortion 背光透光，并用一次背向阴影采样
     //      保证「光确实能到达物体背面」。
-    // 旧的 sssAllowed 语义（超出阴影距离即关闭）保留。
+    // [2026-09 距离行为] 阴影距离外的太阳项按用户要求忽略：
+    //   距离外阴影贴图采不到（rawShadow 恒 1、背向采样越界），太阳项（正面扩散 + 背光透光）
+    //   会给远处的半透明方块凭空补亮度——现在用 sssSunGate = 1 - distanceFade 把它平滑淡出，
+    //   只保留天光/环境项；由于 distanceFade 本身在最后 8 格是线性斜坡，这里不会出现硬跳变。
+    //   SSS_DISABLE_BEYOND_SHADOW_DIST（GUI，默认关）打开时退回旧行为：距离外整块关闭 SSS。
     #if SHADOW_SOFT_TYPE > 0
         #ifdef SSS_DISABLE_BEYOND_SHADOW_DIST
             bool sssAllowed = (distanceFade < EPS);
+            float sssSunGate = 1.0;
         #else
-            // 过渡区 (0 < distanceFade < 1) 禁用 SSS：该区间阴影贴图不可靠
-            bool sssAllowed = (distanceFade < EPS) || (distanceFade >= 1.0 - EPS);
+            bool sssAllowed = true;
+            float sssSunGate = 1.0 - distanceFade;
         #endif
 
         if (sssAllowed && sssAmount > EPS) {
             vec3 sss = CalculateSubsurfaceScattering(
                 materialID, sssAmount, albedo, worldNormal,
-                -worldDir, worldLightDir, sunlightBase,
+                -worldDir, worldLightDir, sunlightBase * sssSunGate,
                 sssFrontVisibility, sssBackVisibility, ambientAccum, finalAo);
             #ifdef SUBSURFACE_SCATTERING_DIFFUSION
                 // 交给 composite1/composite3 两趟可分离模糊，再由 IntegrateScene 软门控合成。

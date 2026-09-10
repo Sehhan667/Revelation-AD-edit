@@ -381,8 +381,10 @@ option.SUBSURFACE_SCATTERING_DIFFUSE=Front Diffusion
 option.SUBSURFACE_SCATTERING_DIFFUSE.comment=Brightness added on lit faces. At the default 0.25 a lit face is only ~10% brighter than a normal block (most of the contribution sits near the terminator/grazing angles). 0 removes the front term entirely.
 option.SUBSURFACE_SCATTERING_AMBIENT=Ambient Subsurface
 option.SUBSURFACE_SCATTERING_AMBIENT.comment=Subsurface scattering from sky/ambient light in shade and indoors (attenuated by AO). 0 disables it, leaving SSS only on directly lit surfaces.
-option.SUBSURFACE_SCATTERING_DIFFUSION=Screen-Space Diffusion
-option.SUBSURFACE_SCATTERING_DIFFUSION.comment=Blur the SSS source with a depth-aware half-res separable filter before compositing: real bleeding across edges and softer transitions over large areas. Off falls back to per-pixel SSS and skips both blur passes (~0.2 ms).
+option.SUBSURFACE_SCATTERING_DIFFUSION=Screen-Space Diffusion (currently disabled)
+option.SUBSURFACE_SCATTERING_DIFFUSION.comment=Blur the SSS source with a depth-aware half-res separable filter before compositing: real bleeding across edges and softer transitions over large areas. Off falls back to per-pixel SSS. Code and buffers are kept; re-enable by uncommenting #define SUBSURFACE_SCATTERING_DIFFUSION in settings.glsl. Disabled by default per request, so this toggle does not show up in the GUI right now.
+option.SSS_DISABLE_BEYOND_SHADOW_DIST=Fully Disable SSS Beyond Shadow Distance
+option.SSS_DISABLE_BEYOND_SHADOW_DIST.comment=Off by default: beyond the shadow distance SSS keeps running, but its sun-driven terms (front diffusion + backlight translucency) fade out as 1 - distanceFade, leaving only the sky/ambient term - so distant translucent blocks do not gain brightness from sunlight passing through and there is no hard cutoff. On restores the old behaviour of disabling SSS entirely outside the shadow distance.
 
 option.SSRT_MAX_SAMPLES=Raytrace Samples
 option.SSRT_REFINEMENT=Raytrace Refinement
