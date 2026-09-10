@@ -293,6 +293,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//       背光透光（默认关）、与屏幕空间阴影解耦、不含相机方向。
 	// 注意：下面的 DIFFUSE / TRANSMISSION / AMBIENT / DIFFUSION 四项只对重写版生效。
 	#define SUBSURFACE_SCATTERING_MODEL 0 // [0 1]
+	// [2026-09] 阴影距离外太阳项的倍率（只对旧版模型生效）：
+	// 旧版整项都是太阳驱动的，距离外没有阴影数据，取一个"部分受光"的保守值，
+	// 而不是把整项清零（清零会让远处完全没有 SSS）。1.0 = 完全保留原亮度（等于没修）。
+	#define SUBSURFACE_SCATTERING_FAR_SCALE 0.35 // [0.0 0.1 0.2 0.3 0.35 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 	#define SUBSURFACE_SCATTERING_MODE 0 // [0 1 2]
 	#define SUBSURFACE_SCATTERING_STRENGTH 0.5 // [0.0 0.01 0.02 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 3.0 4.0 5.0 7.0 10.0 15.0]
 	#define SUBSURFACE_SCATTERING_BRIGHTNESS 3.0 // [0.0 0.1 0.2 0.3 0.5 0.7 1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0 8.5 9.0 9.5 10.0]

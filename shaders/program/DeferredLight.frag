@@ -695,9 +695,13 @@ void main() {
         if (sssAllowed && sssAmount > EPS) {
             #if SUBSURFACE_SCATTERING_MODEL == 0
                 // ---------- 旧版模型 ----------
-                // sunlightFactor 是原实现的外层门槛（夜晚/未受天光的像素本来就整段跳过），
-                // 这里保留它，只额外乘上 sssSunGate。
-                if (sunlightFactor > EPS && sssSunGate > EPS) {
+                // sunlightFactor 是原实现的外层门槛（夜晚/未受天光的像素本来就整段跳过）。
+                // [2026-09 修正] 旧版整项都是太阳驱动的，直接按 (1 - distanceFade) 淡出会让
+                // 阴影距离外**完全没有** SSS。正确做法是把太阳那份降级而不是清零：
+                //   近处：完全等价于原实现（radiance = sunlightBase）
+                //   远处：太阳 × SUBSURFACE_SCATTERING_FAR_SCALE + 环境辐照
+                // 即"不知道远处有没有被遮挡 → 取部分受光的保守值"，远处仍有可见的次表面感。
+                if (sunlightFactor > EPS) {
                     vec3 beta = approxSqrt(normalize(albedo));
                     vec3 sigmaA = oms(beta) * 16.0 / (sssAmount * SUBSURFACE_SCATTERING_STRENGTH);
                     vec3 sigmaS = 4.0 * beta * sssAmount;
@@ -711,7 +715,9 @@ void main() {
 
                     float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
                     sss *= mix(1.0, sssContactShadow, saturate(distanceFade + cutout * 0.75));
-                    sceneOut += sunlightBase * sss * (SUBSURFACE_SCATTERING_BRIGHTNESS * sssSunGate);
+                    vec3 sssRadiance = mix(sunlightBase * SUBSURFACE_SCATTERING_FAR_SCALE + ambientAccum,
+                                           sunlightBase, sssSunGate);
+                    sceneOut += sssRadiance * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
                 }
             #else
                 // ---------- 重写版模型 ----------

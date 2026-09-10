@@ -394,7 +394,9 @@ option.EMISSIVE_CURVE=自发光曲线
 option.SUBSURFACE_SCATTERING_MODEL=次表面散射模型
 value.SUBSURFACE_SCATTERING_MODEL.0=旧版
 value.SUBSURFACE_SCATTERING_MODEL.1=重写版
-option.SUBSURFACE_SCATTERING_MODEL.comment=旧版＝还原重构前的实现，只额外去掉「阴影距离外朝太阳提亮」；重写版＝材质分类真实厚度 + 天光项 + 与屏幕空间阴影解耦、不含相机方向。下方的正面扩散/背光透光/天光/半径四项只对重写版生效。
+option.SUBSURFACE_SCATTERING_MODEL.comment=旧版＝还原重构前的实现，仅额外把「阴影距离外」的太阳项降级（见下面那个倍率项）；重写版＝材质分类真实厚度 + 天光项 + 与屏幕空间阴影解耦、不含相机方向。下方的正面扩散/背光透光/天光/半径四项只对重写版生效。
+option.SUBSURFACE_SCATTERING_FAR_SCALE=阴影距离外太阳项倍率（旧版）
+option.SUBSURFACE_SCATTERING_FAR_SCALE.comment=旧版 SSS 整项都由阳光驱动，而阴影距离外没有阴影数据，所以取一个「部分受光」的保守值：0 = 距离外完全没有 SSS，0.35（默认）≈ 保留三分之一左右，1.0 = 完全保留原亮度（等于不修）。距离内不受此项影响。
 option.SUBSURFACE_SCATTERING_MODE=次表面散射模式
 value.SUBSURFACE_SCATTERING_MODE.0=仅硬编码
 value.SUBSURFACE_SCATTERING_MODE.1=硬编码+PBR
