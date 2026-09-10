@@ -17,8 +17,9 @@
     所以不做归一化除法，非 SSS 邻域自然趋近 0。
 
     两个 pass 共用本文件（wrapper 各定义一个宏）：
-      world*/composite1.csh  定义 SSS_BLUR_HORIZONTAL：colortex18 -> colortex19（横向）
-      world*/composite3.csh  未定义：                colortex19 -> colortex20（纵向）
+      worldN/composite1.csh  定义 SSS_BLUR_HORIZONTAL：colortex18 -> colortex19（横向）
+      worldN/composite3.csh  未定义：                colortex19 -> colortex20（纵向）
+    （注意：本注释块里不要出现星号加斜杠的序列，否则会提前闭合块注释。）
 
     逐样本权重（两趟一致）：
       w = 归一化高斯(i) x 深度权重 exp2(-SSS_BLUR_DEPTH_FALLOFF x |dz|)

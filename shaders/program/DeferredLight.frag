@@ -409,8 +409,10 @@ void main() {
             backScreenPos.z -= 3e-8 * (1.0 + dither) * shadowProjInv1y * backDistortion * SHADOW_BIAS_STRENGTH;
             sssBackVisibility = 1.0;
             if (saturate(backScreenPos) == backScreenPos) {
-                ivec2 backTexel = clamp(ivec2(backScreenPos.xy * realShadowMapRes), ivec2(0), ivec2(realShadowMapRes) - 1);
-                sssBackVisibility = step(backScreenPos.z, texelFetch(shadowtex1, backTexel, 0).x);
+                // shadowtex1 在 shadowHardwareFiltering1 = true 时是 sampler2DShadow（见 config.glsl），
+                // 只能做硬件深度比较（textureLod 的 vec3 形式），不能对 shadow sampler 用 texelFetch。
+                // 返回 1.0 = 该点未被遮挡（与 lib/lighting/shadow/Render.glsl 的用法一致）。
+                sssBackVisibility = textureLod(shadowtex1, vec3(backScreenPos.xy, backScreenPos.z), 0).x;
             }
         }
 
