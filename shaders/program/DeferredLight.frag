@@ -956,6 +956,19 @@ void main() {
         #endif
     }
 
+#ifdef DEBUG_SHADOW_WARP
+    // [2026-09] 阴影 warp 可视化（RTWSM 骨架）：
+    //   R/G = 变形后的 shadow clip xy（-1..1 映射到 0..1）
+    //   B   = 局部缩放 / 4（越亮说明此处从阴影图分到的分辨率越高）
+    // SHADOW_WARP_RTWSM 开/关各看一次，即可直接对比"表驱动可分离 warp"与"解析径向 warp"。
+    {
+        vec3 shadowClip = projMAD(shadowProjection, transMAD(shadowModelView, worldPos));
+        vec3 warpedClip = DistortShadowSpace(shadowClip);
+        sceneOut = vec3(warpedClip.xy * 0.5 + 0.5,
+                        saturate(CalcDistortionFactor(shadowClip.xy) * 0.25));
+    }
+#endif
+
 #ifdef DEBUG_PROBE_GI_VIZ
     // [调试 2026-09-03 探针格覆盖] 纯色覆盖图：绿=探针格内、红=格外。直接 YCoCgToRGB，
     // 不乘强度、不再做伽马(避免双重伽马把绿色压没)——保持覆盖色准。

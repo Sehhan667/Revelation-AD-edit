@@ -524,6 +524,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define DEBUG_PROBE_GI_VIZ
 	//#define VISUALIZE_VOXELS
 	//#define DEBUG_VOXEL_GI  // 调试(备用)：按体素 voxelID 标色（青绿=活板门/门 橙棕=形状块[楼梯/半砖/栅栏/墙] 黄=全块 蓝=空 红=越界）
+	// [2026-09] 阴影 warp 可视化（RTWSM 骨架）：R/G = 变形后的 shadow clip xy（-1..1 → 0..1），
+	// B = 局部缩放/4（越亮说明此处从阴影图分到的分辨率越高）。开关 SHADOW_WARP_RTWSM 前后对比，
+	// 可直接看出表驱动 warp 与解析径向 warp 的差异场。
+	//#define DEBUG_SHADOW_WARP
 	//#define DEBUG_VOXEL_RADIANCE  // 调试：直接显示传播后的体素辐照度（验证"体素化+传播"链路）
 	// 调试：天光路径命中时返回红色（验证路径是否跑通、门控是否放行）
 	//#define DEBUG_VOXEL_SKY

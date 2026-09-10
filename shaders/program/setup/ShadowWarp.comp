@@ -1,0 +1,65 @@
+/*
+--------------------------------------------------------------------------------
+    Revelation Shaders
+    Copyright (C) 2026 HaringPro
+    Apache License 2.0
+
+    Pass: 阴影 warp 表构建（RTWSM 骨架，setup12，跑在 shadow pass 之前）
+
+    [2026-09] 每帧填写 256 x 2 的 warp 表（见 lib/lighting/shadow/Warp.glsl）：
+      row0 = x 轴、row1 = y 轴，每项 = (变形后坐标, 局部缩放 dW/du)。
+
+    骨架阶段的内容 = **现有解析径向曲线的可分离类比**：
+      原式（Common.glsl）factor 只是 |p| 的函数，xy 同乘该因子；
+      沿坐标轴（p = (u, 0)）时 |p| = |u|，所以取
+          curve(u) = 原曲线在 |u| 处的值，warpped(u) = u · curve(u)
+      → **两条坐标轴上与现有实现逐点一致**，离轴方向是可分离近似
+      （这正是 RTWSM 与径向 warp 的差别所在）。
+
+    第二阶段才会把表的内容换成内容驱动的 importance 分配（深度边缘密度 → 1D 前缀和 → warp），
+    那一步才带来实际画质收益；本 pass 目前只负责把"写入 / 查询 / bias 缩放"管线打通。
+
+    成本：workGroupsRender=(1,1) 在本包约定里是"按屏幕尺寸 dispatch"（见 SkyView.comp 的说明），
+    所以真正干活的只有前 512 个 invocation（256 x 2），其余在 guard 处直接 return，可忽略。
+--------------------------------------------------------------------------------
+*/
+
+layout (local_size_x = 16, local_size_y = 16) in;
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+
+// 输出：warp 表（shaders.properties 里声明为
+//   image.shadowWarpImg = shadowWarpTex RGBA RGBA16F HALF_FLOAT false false 256 2）
+writeonly uniform image2D shadowWarpImg;
+
+#include "/lib/Utility.glsl"
+
+// Common.glsl 会带上 Warp.glsl（表接口）与 SHADOW_DISTORTION_STRENGTH（曲线来源）
+#include "/lib/lighting/shadow/Common.glsl"
+
+// 现有解析曲线在"单轴"上的取值：等价于原式 CalcDistortionFactor(vec2(u, 0))
+float WarpAxisCurve(in float u) {
+    float r = max(abs(u), 1e-5);
+    float invClipLength = rcp(r);
+    float distortionCurve = log((exp(SHADOW_DISTORTION_STRENGTH) - 1.0) / invClipLength + 1.0);
+    return distortionCurve * invClipLength * rcp(SHADOW_DISTORTION_STRENGTH);
+}
+
+float WarpAxis(in float u) {
+    return clamp(u * WarpAxisCurve(u), -1.0, 1.0);
+}
+
+void main() {
+    ivec2 tid = ivec2(gl_GlobalInvocationID.xy);
+    if (tid.x >= SHADOW_WARP_TABLE_SIZE || tid.y >= 2) return;
+
+    float last = float(SHADOW_WARP_TABLE_SIZE - 1);
+    float u = (float(tid.x) / last) * 2.0 - 1.0;   // 表项 → 未变形的 shadow clip 坐标 [-1,1]
+
+    float warped = WarpAxis(u);
+
+    // 局部缩放 dW/du：中心差分（表按 u 均匀采样，差分即导数）
+    float h = (2.0 / last) * 0.5;
+    float scale = (WarpAxis(u + h) - WarpAxis(u - h)) / (2.0 * h);
+
+    imageStore(shadowWarpImg, tid, vec4(warped, max(scale, 0.0), 0.0, 1.0));
+}
