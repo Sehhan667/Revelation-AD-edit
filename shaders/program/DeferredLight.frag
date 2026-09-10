@@ -388,8 +388,11 @@ void main() {
 
         if (dot(shadow, vec3(1.0)) > EPS) {
             // ---------- 夜间阴影增强 ----------
+            // [2026-09-10 性能] isNight 是 step() 的结果（恒 0 或 1），旧式 pow(shadow,
+            // mix(1.0, NIGHT_SHADOW_BOOST, isNight)) 在白天指数精确为 1.0 → pow(x,1.0) 是恒等变换，
+            // 每个受光像素白付 3 次 pow（SFU 吞吐 1/4）。worldSunDir 是 uniform → 无 warp 分歧。
             float isNight = step(0.0, -worldSunDir.y);
-            shadow = pow(shadow, vec3(mix(1.0, NIGHT_SHADOW_BOOST, isNight)));
+            if (isNight > 0.5) shadow = pow(shadow, vec3(NIGHT_SHADOW_BOOST));
 
             shadow *= contactShadow * sunlightBase;
             #ifdef PARALLAX_SHADOW

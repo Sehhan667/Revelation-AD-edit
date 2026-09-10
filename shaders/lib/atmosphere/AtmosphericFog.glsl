@@ -73,6 +73,21 @@ vec2 CalculateFogDensity(in vec3 rayPos, in float uniformFog) {
     return max(density, vec2(0.0));
 }
 
+// [2026-09-10 性能] 把 CalculateFogDensity 拆成「壳层 exp2 包络」与「均匀雾项」两个无噪声部分，
+// 供 RaymarchAtmosphericFog 的包络梯形使用，使噪声可以独立低采样（见该函数的说明）。
+// 等价性依据：梯形积分是线性的，∫(A+B) = ∫A + ∫B；而旧实现里噪声只乘在壳层通道(y)上、
+// 均匀雾项是在噪声之后相加的，所以两部分必须分开累加才能保持语义。
+vec2 CalculateFogShellEnvelope(in vec3 rayPos) {
+    vec3 worldPos = rayPos + cameraPosition;
+    float heightDiff = abs(worldPos.y - VF_HEIGHT) * oms(step(worldPos.y, VF_HEIGHT) * 0.5);
+    return exp2(heightDiff * FOG_HEIGHT_FALLOFF);
+}
+
+float CalculateFogUniformTerm(in vec3 rayPos, in float uniformFog) {
+    vec3 worldPos = rayPos + cameraPosition;
+    return uniformFog * linearstep(cumulusTopAltitude, cumulusBottomAltitude, worldPos.y);
+}
+
 //================================================================================================//
 
 #if !defined CLOUD_SHADOWS || defined PASS_SKY_MAP
@@ -145,14 +160,47 @@ mat2x3 RaymarchAtmosphericFog(in vec3 startPos, in vec3 endPos, in float dither,
     #ifndef VF_FOG_PANELS
         #define VF_FOG_PANELS 8
     #endif
+    // [2026-09-10 性能] 噪声采样与包络段数解耦。
+    // 环伪影来自 exp2 壳层折点相对采样点的几何误差 → 包络必须保持 VF_FOG_PANELS 段（环行为不变）。
+    // 但 FOG_NOISE 是乘性白噪声调制，对折点几何没有确定性依赖，且早已被 per-pixel dither + TAA 平均，
+    // 用 9 个包络节点去估计「噪声沿视线的平均值」属于过度采样：旧实现每像素付 9 点 × 2 次 noisetex
+    // = 18 次噪声采样，其中 2 次（噪声）与 9 次（包络）本可独立取值。
+    // 现改为：包络仍 9 点梯形（完全不变），噪声单独用 VF_FOG_NOISE_SAMPLES 个中点均值估计。
+    // 想回旧行为（噪声逐包络节点采样、最精细）：把 VF_FOG_NOISE_SAMPLES 设为 VF_FOG_PANELS。
+    // 语义一致性：旧式 y_i = env_i·noise_i²·storm + uni_i（噪声只乘壳层通道、均匀雾项在噪声之后相加），
+    // 因此这里把壳层包络与均匀雾项分开累加（梯形积分线性：∫(A+B)=∫A+∫B），噪声只作用在包络均值上。
+    #ifndef VF_FOG_NOISE_SAMPLES
+        #define VF_FOG_NOISE_SAMPLES 3
+    #endif
     float sampleJitter = (dither - 0.5) * (0.75 / float(VF_FOG_PANELS));
-    vec2 densitySum = vec2(0.0);
+    vec2 envSum = vec2(0.0);
+    float uniformSum = 0.0;
     for (int i = 0; i <= VF_FOG_PANELS; ++i) {
         float t = clamp(float(i) / float(VF_FOG_PANELS) + sampleJitter, 0.0, 1.0);
-        vec2 sampleDensity = CalculateFogDensity(startPos + worldDir * (rayLength * t), uniformFog);
-        densitySum += sampleDensity * ((i == 0 || i == VF_FOG_PANELS) ? 0.5 : 1.0);
+        vec3 samplePos = startPos + worldDir * (rayLength * t);
+        float nodeWeight = (i == 0 || i == VF_FOG_PANELS) ? 0.5 : 1.0;
+        envSum += CalculateFogShellEnvelope(samplePos) * nodeWeight;
+        uniformSum += CalculateFogUniformTerm(samplePos, uniformFog) * nodeWeight;
     }
-    vec2 avgDensity = densitySum / float(VF_FOG_PANELS);
+    vec2 envAvg = envSum / float(VF_FOG_PANELS);
+    float uniformAvg = uniformSum / float(VF_FOG_PANELS);
+
+    #ifdef FOG_NOISE_ENABLED
+        float noiseFactor = 0.0;
+        for (int i = 0; i < VF_FOG_NOISE_SAMPLES; ++i) {
+            float t = clamp((float(i) + 0.5 + sampleJitter) / float(VF_FOG_NOISE_SAMPLES), 0.0, 1.0);
+            noiseFactor += sqr(GetFogNoise(startPos + worldDir * (rayLength * t) + cameraPosition));
+        }
+        noiseFactor *= rcp(float(VF_FOG_NOISE_SAMPLES));
+    #else
+        float noiseFactor = 1.0;
+    #endif
+    // 风暴/沙尘倍率（循环不变量）：旧实现放在 CalculateFogDensity 内、每个采样点重复一次
+    noiseFactor *= (2.0 + biomeSandstorm * 8.0 + biomeSnowstorm * 4.0);
+
+    // 通道语义与旧实现一致：x = 壳层 + 均匀雾（无噪声）；y = 壳层×噪声×风暴因子 + 均匀雾
+    vec2 avgDensity = vec2(envAvg.x + uniformAvg,
+                           envAvg.y * noiseFactor + uniformAvg);
 
     // ---- 全局浓度控制（在此生效） ----
     avgDensity *= VF_DENSITY_MULT;

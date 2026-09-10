@@ -269,41 +269,53 @@ void main() {
 
         sceneColor = loadSceneMain(refractedTexel);
 
-        vec4 translucent = ExtractSpecularTex(materialPack);
-        vec3 albedo = sRGBToLinear(translucent.rgb);
+        // [2026-09-10 性能] 半透明解码下沉：translucent/albedo 只在 materialID==500、
+        // 玻璃、水这三种情况下被消费（见下方两个分支），对绝大多数不透明像素是无用功
+        //（ExtractSpecularTex + sRGBToLinear(3 次真 pow) [+ 可能的 colortex6 回退取样]）。
+        // 包进与消费者完全相同的条件里 → 输出逐位相同。
+        if (glassMask || waterMask || materialID == 500u) {
+            vec4 translucent = ExtractSpecularTex(materialPack);
+            vec3 albedo = sRGBToLinear(translucent.rgb);
 
-        // 安全回退：部分玻璃实体（掉落物/展示实体）可能未把 albedo 打包进 materialPack.zw，
-        // zw 为 0 时 log2(0) 得到 -inf/NaN，会让玻璃乘出纯黑不可见。
-        // 此时回退使用 colortex6 中的真实 albedo，保证物体至少可见。
-        if (maxOf(translucent.rgb) < 0.001 || translucent.a < 0.001) {
-            vec4 fallbackAlbedo = texelFetch(colortex6, texelPos, 0);
-            translucent = vec4(sRGBToLinear(fallbackAlbedo.rgb), max(fallbackAlbedo.a, 0.75));
-            albedo = translucent.rgb;
-        }
-
-        if (materialID == 500u) {
-            vec3 diffuseLight = texelFetch(colortex3, texelPos, 0).rgb;
-            sceneColor = mix(sceneColor, albedo * diffuseLight, translucent.a);
-        }
-
-        if (glassMask || waterMask) {
-            if (glassMask) {
-                sceneColor *= exp2(log2(albedo) * approxSqrt(translucent.a));
-                sceneColor += (2.0 * EMISSIVE_BRIGHTNESS) * Unpack2x8UX(materialPack.x) * mean(albedo) * albedo;
+            // 安全回退：部分玻璃实体（掉落物/展示实体）可能未把 albedo 打包进 materialPack.zw，
+            // zw 为 0 时 log2(0) 得到 -inf/NaN，会让玻璃乘出纯黑不可见。
+            // 此时回退使用 colortex6 中的真实 albedo，保证物体至少可见。
+            if (maxOf(translucent.rgb) < 0.001 || translucent.a < 0.001) {
+                vec4 fallbackAlbedo = texelFetch(colortex6, texelPos, 0);
+                translucent = vec4(sRGBToLinear(fallbackAlbedo.rgb), max(fallbackAlbedo.a, 0.75));
+                albedo = translucent.rgb;
             }
-            vec4 specularLight = texelFetch(colortex3, texelPos, 0);
-            sceneColor = sceneColor * specularLight.a + specularLight.rgb;
+
+            if (materialID == 500u) {
+                vec3 diffuseLight = texelFetch(colortex3, texelPos, 0).rgb;
+                sceneColor = mix(sceneColor, albedo * diffuseLight, translucent.a);
+            }
+
+            if (glassMask || waterMask) {
+                if (glassMask) {
+                    sceneColor *= exp2(log2(albedo) * approxSqrt(translucent.a));
+                    sceneColor += (2.0 * EMISSIVE_BRIGHTNESS) * Unpack2x8UX(materialPack.x) * mean(albedo) * albedo;
+                }
+                vec4 specularLight = texelFetch(colortex3, texelPos, 0);
+                sceneColor = sceneColor * specularLight.a + specularLight.rgb;
+            }
         }
 
         #ifdef BORDER_FOG
             if (isEyeInWater == 0) {
                 float xzDistSq = sdot(worldPos.xz) * (1.0 / (2048.0 * 2048.0));
-                float xzDistPow4 = xzDistSq * xzDistSq;
-                float density = exp2(-0.1 * max0(worldPos.y - 63.0)) * (xzDistPow4 * xzDistPow4); 
-                float transmittance = exp2(-BORDER_FOG_FALLOFF * density);
+                // [2026-09-10 性能] 距离门控：density ∝ (d/2048)^8，在 d=355 格处权重仅 ~8.1e-7
+                //（transmittance = 1 - 2e-6 → mix 偏差 ~1e-6 相对量，远低于 1/255 量化步长）。
+                // 本机视距 12 区块 = 192 格（xzDistSq = 8.8e-3）→ 该分支恒不进入，等于整块被跳过；
+                // 大视距（DH/Voxy）下 xzDistSq 变大，边界雾照常生效，行为不变。
+                if (xzDistSq > 3e-2) {
+                    float xzDistPow4 = xzDistSq * xzDistSq;
+                    float density = exp2(-0.1 * max0(worldPos.y - 63.0)) * (xzDistPow4 * xzDistPow4);
+                    float transmittance = exp2(-BORDER_FOG_FALLOFF * density);
 
-                vec3 skyRadiance = AtmosphereSkyView(atmosphereViewPos, worldDir, worldSunDir);
-                sceneColor = mix(skyRadiance, sceneColor, transmittance);
+                    vec3 skyRadiance = AtmosphereSkyView(atmosphereViewPos, worldDir, worldSunDir);
+                    sceneColor = mix(skyRadiance, sceneColor, transmittance);
+                }
             }
         #endif
     }
