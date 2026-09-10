@@ -60,6 +60,14 @@ layout (location = 0) out vec4 sceneOut;
 #include "/lib/lighting/shadow/Common.glsl"
 #include "/lib/lighting/VoxelLighting.glsl"
 
+//======// SSS 屏幕空间扩散 ======================================================================//
+
+#ifdef SUBSURFACE_SCATTERING_DIFFUSION
+    // SSS 源项（半分辨率，未模糊）与纵向模糊结果，均由 DeferredLight/composite1/composite3 写入
+    uniform sampler2D colortex18;
+    uniform sampler2D colortex20;
+#endif
+
 // 体积光阴影采样（彩色阴影：实心挡=0，直射=1，穿玻璃=玻璃吸收色）
 uniform sampler2DShadow shadowtex1;
 uniform sampler2D shadowtex0;
@@ -324,6 +332,23 @@ void main() {
     // 体积雾 / 水下雾（统一处理，并修复天空所有方向的雾）
     // ====================================================================================
     mat2x3 fogData = mat2x3(vec3(0.0), vec3(1.0));
+
+    // ====================================================================================
+    // 次表面散射（屏幕空间扩散合成）
+    // ====================================================================================
+    // [2026-09 SSS 重构第 2 步] DeferredLight 把 SSS 源项写进半分辨率 colortex18，
+    // composite1/composite3 做横向+纵向可分离模糊（深度感知 + 抖动），结果在 colortex20。
+    // 源项未归一化（rgb 已乘 mask），非 SSS 邻域自然趋近 0。门控有两层：
+    //   ① 中心像素自身的 mask（直接读 colortex18.a）—— 防止渗色跑到天空/石头等非 SSS 材质上，
+    //      这是必须的：只靠邻域 mask 的话，SSS 物体在天空前的轮廓会带一圈光晕；
+    //   ② 邻域 mask（模糊后的 colortex20.a）—— 平滑边界过渡。
+    // 双线性上采样（半分辨率 -> 全分辨率）。
+    #ifdef SUBSURFACE_SCATTERING_DIFFUSION
+        vec4 sssSource = texture(colortex18, screenCoord);
+        vec4 sssDiffuse = texture(colortex20, screenCoord);
+        float sssGate = saturate(sssSource.a * 4.0) * saturate(sssDiffuse.a * 2.0);
+        sceneColor += sssDiffuse.rgb * (SUBSURFACE_SCATTERING_BRIGHTNESS * sssGate);
+    #endif
 
     if (isEyeInWater == 1) {
         float LdotV = dot(worldLightDir, worldDir);

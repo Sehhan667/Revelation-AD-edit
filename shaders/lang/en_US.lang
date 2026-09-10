@@ -379,6 +379,8 @@ option.SUBSURFACE_SCATTERING_TRANSMISSION=Backlight Translucency
 option.SUBSURFACE_SCATTERING_TRANSMISSION.comment=Transmission glow for thin surfaces (leaves, grass, vines) when back-lit. 0 disables it (front diffusion and sky term remain).
 option.SUBSURFACE_SCATTERING_AMBIENT=Ambient Subsurface
 option.SUBSURFACE_SCATTERING_AMBIENT.comment=Subsurface scattering from sky/ambient light in shade and indoors (attenuated by AO). 0 disables it, leaving SSS only on directly lit surfaces.
+option.SUBSURFACE_SCATTERING_DIFFUSION=Screen-Space Diffusion
+option.SUBSURFACE_SCATTERING_DIFFUSION.comment=Blur the SSS source with a depth-aware half-res separable filter before compositing: real bleeding across edges and softer transitions over large areas. Off falls back to per-pixel SSS and skips both blur passes (~0.2 ms).
 
 option.SSRT_MAX_SAMPLES=Raytrace Samples
 option.SSRT_REFINEMENT=Raytrace Refinement

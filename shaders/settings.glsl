@@ -296,6 +296,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define SUBSURFACE_SCATTERING_TRANSMISSION 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0 3.0]
 	// [2026-09] 天光/环境项强度：0 = 关闭（阴影里/室内完全没有 SSS）
 	#define SUBSURFACE_SCATTERING_AMBIENT 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0]
+	// [2026-09] 屏幕空间扩散：SSS 源项先做半分辨率两趟可分离模糊（深度感知 + 抖动）再合成，
+	// 边缘有真实渗色、大面材质过渡更柔和；关闭则退回逐像素 SSS（第 1 步行为），
+	// 同时省掉全分辨率源缓冲 colortex18 的写入与两趟模糊（约 0.4 ms）。
+	#define SUBSURFACE_SCATTERING_DIFFUSION // Enables screen-space diffusion (two-pass separable blur) of the SSS source
 
 	#ifndef RP_SUPPORT
 		#undef NORMAL_MAPPING

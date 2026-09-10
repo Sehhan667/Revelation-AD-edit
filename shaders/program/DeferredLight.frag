@@ -93,6 +93,14 @@ out vec3 sceneOut;
 //======// Uniform //=============================================================================//
 
 writeonly uniform uimage2D colorimg7;
+
+#ifdef SUBSURFACE_SCATTERING_DIFFUSION
+    // [2026-09] SSS 屏幕空间扩散的源项（半分辨率 RGBA16F，见 lib/lighting/Subsurface.glsl 与
+    // post/SubsurfaceBlur.comp）。用 imageStore 写半分辨率：同一 2x2 全分辨率块只让左上片元写，
+    // 这样既保证每帧完整覆盖、又避免 4 个片元写同一纹素的竞态（细节见 main() 末尾的注释）。
+    // 相比全分辨率源缓冲省掉 15.2 MB -> 3.8 MB 的写入带宽。
+    layout (rgba16f) writeonly uniform image2D colorimg18;
+#endif
 uniform sampler2D cloudOriginTex;
 
 #include "/lib/universal/Uniform.glsl"
@@ -204,6 +212,12 @@ void main() {
     float dither = BlueNoise(texelPos, frameCounter);
 
     sceneOut = vec3(0.0);
+    #ifdef SUBSURFACE_SCATTERING_DIFFUSION
+        // [2026-09] SSS 源项：由 main() 末尾（或天空分支）写进半分辨率 colortex18，
+        // 每个 2x2 全分辨率块只写一次（见末尾的守卫说明）。非 SSS 像素写全 0，
+        // 否则半分辨率纹素会保留上一帧的陈旧值，既被模糊卷进来，也污染中心 mask 门控。
+        vec4 sssSourceOut = vec4(0.0);
+    #endif
 
     // ========== Sky ==========
     if (materialID == 0u) {
@@ -233,6 +247,12 @@ void main() {
             sceneOut += celestial * transmittance;
         }
         imageStore(colorimg7, texelPos, uvec4(0));
+        #ifdef SUBSURFACE_SCATTERING_DIFFUSION
+            // 天空没有 SSS：必须写 0，不能留着陈旧值（同 main() 末尾的守卫：每 2x2 块只写一次）
+            if (((texelPos.x & 1) == 0) && ((texelPos.y & 1) == 0)) {
+                imageStore(colorimg18, texelPos >> 1, vec4(0.0));
+            }
+        #endif
         return;
     }
 
@@ -653,7 +673,13 @@ void main() {
                 materialID, sssAmount, albedo, worldNormal,
                 -worldDir, worldLightDir, sunlightBase,
                 sssFrontVisibility, sssBackVisibility, ambientAccum, finalAo);
-            sceneOut += sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
+            #ifdef SUBSURFACE_SCATTERING_DIFFUSION
+                // 交给 composite1/composite3 两趟可分离模糊，再由 IntegrateScene 软门控合成。
+                // rgb 已经乘过 sssAmount（= mask），a 单独存 mask 供合成端的中心门控使用。
+                sssSourceOut = vec4(sss, saturate(sssAmount));
+            #else
+                sceneOut += sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
+            #endif
         }
     #endif
 
@@ -853,6 +879,20 @@ void main() {
     // [调试 2026-09-03 探针格覆盖] 纯色覆盖图：绿=探针格内、红=格外。直接 YCoCgToRGB，
     // 不乘强度、不再做伽马(避免双重伽马把绿色压没)——保持覆盖色准。
     sceneOut = YCoCgToRGB(texelFetch(colortex3, texelPos >> 1, 0).rgb);
+#endif
+
+#ifdef SUBSURFACE_SCATTERING_DIFFUSION
+    // [2026-09] 半分辨率 SSS 源项：只让每个 2x2 全分辨率块的**左上片元**（x、y 均为偶数）写。
+    // 两个原因：
+    //   ① 覆盖性：colortex18 不清除，必须每帧被完整覆盖；每块恰好有一个偶数片元，且它总会写
+    //      （非 SSS / 天空写全 0），因此不留陈旧值。
+    //   ② 确定性：若不守卫，同一块的 4 个片元会写同一纹素，最终写进哪个由硬件/光栅顺序决定，
+    //      边界处（块内既有 SSS 又有非 SSS 像素）源项可能在帧间跳变。
+    // 代价是源项按点采样取块内左上像素（随后就要被模糊，且合成端的中心 mask 是双线性读取，
+    // 边界处会自动过渡），远小于竞态带来的闪烁风险。
+    if (((texelPos.x & 1) == 0) && ((texelPos.y & 1) == 0)) {
+        imageStore(colorimg18, texelPos >> 1, sssSourceOut);
+    }
 #endif
 
 }

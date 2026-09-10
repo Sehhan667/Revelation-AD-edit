@@ -33,6 +33,14 @@
 	const int 	colortex17Format 			= RGBA16_SNORM;
 #endif
 
+	// [2026-09 SSS 屏幕空间扩散] 三张缓冲：源项由 DeferredLight(deferred20) 写入，
+	// 两趟可分离模糊（composite1 横向 / composite3 纵向），IntegrateScene(composite4) 合成。
+	// Iris 的常量指令解析是逐行文本匹配（不识别注释），所以这块即使被注释也生效——
+	// 与上面的 colortex0-17 同一机制。
+	const int 	colortex18Format 			= RGBA16F;	// SSS 源项（半分辨率；rgb = 源项×mask，a = mask）
+	const int 	colortex19Format 			= RGBA16F;	// SSS 横向模糊结果（半分辨率）
+	const int 	colortex20Format 			= RGBA16F;	// SSS 纵向模糊结果（半分辨率）
+
 	// [2026-09-10] Iris 官方常量（location: composite/deferred/final/prepare）：
 	// shadow.culling = reversed 时，玩家周围这个半径内的几何在 shadow pass 里不剔除、
 	// 之外按正常视锥剔除；shadowDistance(64) 不能小于它。模式 0/1 下此常量不参与计算。
@@ -56,6 +64,10 @@
 	const bool 	colortex13Clear				= false;
 	const bool 	colortex14Clear				= false;
 	const bool 	colortex15Clear				= false;
+	// [2026-09 SSS] 三张缓冲每帧都会被 DeferredLight / 两趟模糊完全覆盖，无需清除
+	const bool	colortex18Clear				= false;
+	const bool	colortex19Clear				= false;
+	const bool	colortex20Clear				= false;
 
 	const vec4	colortex6ClearColor			= vec4(0.0, 0.0, 0.0, 1.0);
 
@@ -91,6 +103,9 @@
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)
 	|	colortex15	|   RGBA8		    |	Full res	|	Voxel GI propagation output
+	|	colortex18	|   rgba16f			|	Half res	|	SSS source (rgb = source x mask, a = mask), written by DeferredLight
+	|	colortex19	|   rgba16f			|	Half res	|	SSS horizontal blur result
+	|	colortex20	|   rgba16f			|	Half res	|	SSS vertical blur result (consumed by IntegrateScene)
 
 --------------------------------------------------------------------------------
 */

@@ -1,0 +1,131 @@
+/*
+--------------------------------------------------------------------------------
+    Revelation Shaders
+    Copyright (C) 2026 HaringPro
+    Apache License 2.0
+
+    Pass: 次表面散射（SSS）半分辨率可分离模糊
+
+    [2026-09] SSS 重构第 2 步：DeferredLight（deferred20）把「SSS 源项」用 imageStore
+    写进半分辨率 colortex18（2x2 全分辨率像素共享一个半分辨率纹素，取其中一个即可——
+    这个量马上要被模糊，点采样足够），这里做两趟可分离模糊，最后由 IntegrateScene
+    （composite4.fsh）软门控后叠加到场景。
+
+    做法参考 Separable Subsurface Scattering（Jimenez et al. 2015）：模糊作用在
+    「去 albedo 的光照」而不是最终颜色上——否则材质边界两侧的颜色会被错误混合。
+    这里更进一步：源项是「albedo 无关」的漫射源（只含 sqrt(albedo) 的散射系数与 mask），
+    所以不做归一化除法，非 SSS 邻域自然趋近 0。
+
+    两个 pass 共用本文件（wrapper 各定义一个宏）：
+      world*/composite1.csh  定义 SSS_BLUR_HORIZONTAL：colortex18 -> colortex19（横向）
+      world*/composite3.csh  未定义：                colortex19 -> colortex20（纵向）
+
+    逐样本权重（两趟一致）：
+      w = 归一化高斯(i) x 深度权重 exp2(-SSS_BLUR_DEPTH_FALLOFF x |dz|)
+    深度权重用于阻断跨深度边界的渗色（典型例子：叶片背后的远处地形被卷进来）。
+    逐像素抖动 tap 相位：5 个 tap 覆盖不了大半径，抖动后的噪声交给 TAA 收敛。
+
+    带宽：三张半分辨率 RGBA16F（各 3.8 MB @1080p），远小于全分辨率方案。
+--------------------------------------------------------------------------------
+*/
+
+//======// 参数 //==============================================================================//
+
+// 模糊半径（方块）= SUBSURFACE_SCATTERING_RADIUS x 该系数（与体积衰减用的 mfp 同源）
+#define SSS_BLUR_RADIUS_SCALE 4.0
+// 屏幕空间半径上限（半分辨率像素）：近处一格能占满整屏，必须夹住
+#define SSS_BLUR_MAX_PIXELS 20.0
+// 高斯核单侧 tap 数（总 tap = 2*TAPS-1）
+#define SSS_BLUR_TAPS 5
+// 高斯锐度：w(i) = exp(-sharpness x (i/(TAPS-1))^2)
+#define SSS_BLUR_SHARPNESS 2.2
+// 深度权重衰减（每方块）
+#define SSS_BLUR_DEPTH_FALLOFF 1.5
+
+//======// Input //=============================================================================//
+
+layout (local_size_x = 16, local_size_y = 16) in;
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+
+#ifdef SSS_BLUR_HORIZONTAL
+    layout (rgba16f) readonly  uniform image2D colorimg18; // SSS 源项（半分辨率；rgb 已乘 mask，a = mask）
+    layout (rgba16f) writeonly uniform image2D colorimg19; // 横向模糊结果
+    #define SSS_SRC_IMAGE colorimg18
+    #define SSS_OUT_IMAGE colorimg19
+    #define SSS_OFFSET(off) ivec2(off, 0)
+#else
+    layout (rgba16f) readonly  uniform image2D colorimg19; // 横向模糊结果
+    layout (rgba16f) writeonly uniform image2D colorimg20; // 纵向模糊结果
+    #define SSS_SRC_IMAGE colorimg19
+    #define SSS_OUT_IMAGE colorimg20
+    #define SSS_OFFSET(off) ivec2(0, off)
+#endif
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+//======// Uniform //=============================================================================//
+
+#include "/lib/universal/Uniform.glsl"
+
+//======// Function //============================================================================//
+
+#include "/lib/universal/Transform.glsl"
+#include "/lib/universal/Random.glsl"
+
+//======// Main //================================================================================//
+
+void main() {
+    ivec2 outPos = ivec2(gl_GlobalInvocationID.xy);
+
+    ivec2 srcSize = imageSize(SSS_SRC_IMAGE);
+    ivec2 outSize = imageSize(SSS_OUT_IMAGE);
+    if (any(greaterThanEqual(outPos, outSize))) return;
+
+    // 半分辨率像素 <-> 全分辨率 2x2 块（左上 texel），深度取块中心附近即可
+    ivec2 centerFullTexel = outPos * 2;
+    float centerDepth = ScreenToViewDepth(texelFetch(depthtex0, centerFullTexel, 0).x);
+
+    // 世界半径 -> 半分辨率像素
+    float tanHalfFovY = rcp(gbufferProjection[1][1]);
+    float worldPerHalfPixel = 2.0 * tanHalfFovY * centerDepth * rcp(max(viewSize.y * 0.5, 1.0));
+    float radiusPixels = clamp(SUBSURFACE_SCATTERING_RADIUS * SSS_BLUR_RADIUS_SCALE * rcp(max(worldPerHalfPixel, EPS)),
+                               0.0, SSS_BLUR_MAX_PIXELS);
+    float stepTexels = radiusPixels / float(SSS_BLUR_TAPS - 1);
+
+    // 逐像素抖动：相位偏移半个纹素以内
+    float jitter = BlueNoise(outPos, frameCounter) - 0.5;
+
+    // 归一化高斯权重（中心 + 两侧对称）
+    float gaussTotal = 1.0;
+    #pragma unroll
+    for (int i = 1; i < SSS_BLUR_TAPS; ++i) {
+        float t = float(i) / float(SSS_BLUR_TAPS - 1);
+        gaussTotal += 2.0 * exp2(-SSS_BLUR_SHARPNESS * t * t);
+    }
+    float invGaussTotal = rcp(gaussTotal);
+
+    vec4 acc = imageLoad(SSS_SRC_IMAGE, clamp(outPos, ivec2(0), srcSize - 1)) * invGaussTotal;
+
+    #pragma unroll
+    for (int i = 1; i < SSS_BLUR_TAPS; ++i) {
+        float t = float(i) / float(SSS_BLUR_TAPS - 1);
+        float gauss = exp2(-SSS_BLUR_SHARPNESS * t * t) * invGaussTotal;
+        int off = int(floor(float(i) * stepTexels + jitter + 0.5));
+
+        // 两侧共用同一权重；越界靠 clamp 到边缘（边缘处权重自然重复，等价于钳位延拓）
+        ivec2 posTexel = clamp(outPos + SSS_OFFSET(off), ivec2(0), srcSize - 1);
+        ivec2 negTexel = clamp(outPos - SSS_OFFSET(off), ivec2(0), srcSize - 1);
+
+        float posDepth = ScreenToViewDepth(texelFetch(depthtex0, posTexel * 2, 0).x);
+        float negDepth = ScreenToViewDepth(texelFetch(depthtex0, negTexel * 2, 0).x);
+        float wPos = gauss * exp2(-SSS_BLUR_DEPTH_FALLOFF * abs(posDepth - centerDepth));
+        float wNeg = gauss * exp2(-SSS_BLUR_DEPTH_FALLOFF * abs(negDepth - centerDepth));
+
+        acc += imageLoad(SSS_SRC_IMAGE, posTexel) * wPos + imageLoad(SSS_SRC_IMAGE, negTexel) * wNeg;
+    }
+
+    // 噪声/负值保护：SSS 源项应为非负
+    imageStore(SSS_OUT_IMAGE, outPos, max(acc, vec4(0.0)));
+}

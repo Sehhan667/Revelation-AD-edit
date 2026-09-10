@@ -403,6 +403,8 @@ option.SUBSURFACE_SCATTERING_TRANSMISSION=背光透光强度
 option.SUBSURFACE_SCATTERING_TRANSMISSION.comment=树叶/草/藤等薄片逆光时的透射辉光。0 = 关闭（只保留正面扩散与天光项）。
 option.SUBSURFACE_SCATTERING_AMBIENT=天光次表面强度
 option.SUBSURFACE_SCATTERING_AMBIENT.comment=阴影里/室内的次表面散射（环境项，按 AO 衰减）。0 = 关闭，此时只有被直射光照到的面才有 SSS。
+option.SUBSURFACE_SCATTERING_DIFFUSION=屏幕空间扩散
+option.SUBSURFACE_SCATTERING_DIFFUSION.comment=把 SSS 源项做半分辨率两趟可分离模糊（深度感知 + 抖动）再合成：边缘有真实渗色、大面积材质过渡更柔和。关闭则退回逐像素 SSS，并省掉两趟模糊（约 0.2 ms）。
 
 option.SSRT_MAX_SAMPLES=反射最大采样数
 option.SSRT_REFINEMENT=反射重采样
