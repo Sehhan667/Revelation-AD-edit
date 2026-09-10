@@ -73,19 +73,77 @@ vec2 CalculateFogDensity(in vec3 rayPos, in float uniformFog) {
     return max(density, vec2(0.0));
 }
 
-// [2026-09-10 性能] 把 CalculateFogDensity 拆成「壳层 exp2 包络」与「均匀雾项」两个无噪声部分，
-// 供 RaymarchAtmosphericFog 的包络梯形使用，使噪声可以独立低采样（见该函数的说明）。
-// 等价性依据：梯形积分是线性的，∫(A+B) = ∫A + ∫B；而旧实现里噪声只乘在壳层通道(y)上、
-// 均匀雾项是在噪声之后相加的，所以两部分必须分开累加才能保持语义。
-vec2 CalculateFogShellEnvelope(in vec3 rayPos) {
-    vec3 worldPos = rayPos + cameraPosition;
-    float heightDiff = abs(worldPos.y - VF_HEIGHT) * oms(step(worldPos.y, VF_HEIGHT) * 0.5);
-    return exp2(heightDiff * FOG_HEIGHT_FALLOFF);
-}
+// [2026-09-10] 沿视线的精确（闭式）密度积分，取代原来的 VF_FOG_PANELS 段梯形 + 相位抖动。
+//
+// 同心环的成因：壳层包络 exp2(FOG_HEIGHT_FALLOFF * h(y))，其中
+//     h(y) = |y - VF_HEIGHT| * (y <= VF_HEIGHT ? 0.5 : 1)
+// 在 y = VF_HEIGHT 处有一个折点（导数跳变）。梯形法对带折点的函数，误差取决于
+// 「折点落在两个采样点之间的哪个位置」→ 视线与壳层的交点随相机高度/俯仰连续移动，
+// 每当它扫过一个面板边界，积分值就发生一次确定性跳变 → 雾层上出现同心环。旧对策是
+// 加密段数 + 每像素抖动，把确定性误差摊成噪声再交给 TAA 平均（即"掩盖"，不是消除）。
+//
+// 这里改为精确积分：把射线在折点 t* = (VF_HEIGHT - y0) / dir.y 处切开，每段上指数都是
+//     exponent(t) = c + s·t   （段内 y 线性、且不跨折点 → 斜率 s 恒定）
+// 其积分有闭式   ∫exp2(c+st) dt = ( 2^(c+s·b) - 2^(c+s·a) ) / (s·ln2)，s→0 时退化为 2^c·(b-a)。
+// 于是结果与采样点位置**无关**：折点怎么移动都不会产生误差项（环不是被压住，而是没有来源）。
+//
+// 均匀雾项 uniformFog * linearstep(cumulusTopAltitude, cumulusBottomAltitude, y) 是分段线性
+// （折点在云顶/云底高度），同样按折点切分后逐段用端点梯形——对线性函数梯形是精确的。
+//
+// 返回 vec3(壳层.x 均值, 壳层.y 均值, 均匀雾均值)，与旧梯形的输出语义一致（都是"沿视线的平均值"）。
+vec3 IntegrateFogDensityAlongRay(in vec3 worldStart, in vec3 worldDir, in float rayLength, in float uniformFog) {
+    const float LN2 = 0.6931471805599453;
+    const float RAMP_RANGE = cumulusTopAltitude - cumulusBottomAltitude;
+    const float RAMP_TOP = cumulusTopAltitude;
 
-float CalculateFogUniformTerm(in vec3 rayPos, in float uniformFog) {
-    vec3 worldPos = rayPos + cameraPosition;
-    return uniformFog * linearstep(cumulusTopAltitude, cumulusBottomAltitude, worldPos.y);
+    float y0 = worldStart.y + cameraPosition.y;   // worldStart 是相机相对坐标，须转成世界绝对高度
+    float m = worldDir.y;
+    bool slanted = abs(m) > 1e-6;
+    float invM = slanted ? rcp(m) : 0.0;
+    float invLen = rcp(rayLength);
+
+    // ---- 壳层包络：在 y = VF_HEIGHT 处精确切分（≤2 段）----
+    float tKink = slanted ? clamp((VF_HEIGHT - y0) * invM, 0.0, rayLength) : 0.0;
+    float shellBounds[3] = float[3](0.0, tKink, rayLength);
+    vec2 envAcc = vec2(0.0);
+    for (int i = 0; i < 2; ++i) {
+        float a = shellBounds[i];
+        float b = shellBounds[i + 1];
+        if (b <= a) continue;                    // 空段（折点落在区间外时）
+        // 段中点判定这段在壳层上方还是下方（段内不跨折点，所以判定是确定的）
+        float rel = (y0 + m * (0.5 * (a + b))) - VF_HEIGHT;
+        float scale = rel > 0.0 ? 1.0 : 0.5;     // 下方衰减斜率是上方的一半
+        float sgn = rel > 0.0 ? 1.0 : -1.0;
+        // exponent(t) = FOG_HEIGHT_FALLOFF * sgn * scale * (y0 + m·t - VF_HEIGHT) = cEx + sEx·t
+        vec2 cEx = FOG_HEIGHT_FALLOFF * (sgn * scale * (y0 - VF_HEIGHT));
+        vec2 sEx = FOG_HEIGHT_FALLOFF * (sgn * scale * m);
+        vec2 e1 = exp2(cEx + sEx * a);
+        vec2 e2 = exp2(cEx + sEx * b);
+        vec2 den = sEx * LN2;
+        // 视线接近水平(m→0)时 den→0，(e2-e1) 会发生相减消位（相对误差 ~ulp(e1)/(e1·h)）。
+        // 此时改用 x→0 的级数：∫exp2 = e1·u·(1 + h/2 + h²/6)，h = sEx·u·ln2 为段内指数增量。
+        vec2 h = sEx * ((b - a) * LN2);
+        vec2 lin = e1 * ((b - a) * (1.0 + h * (0.5 + h * (1.0 / 6.0))));
+        envAcc += vec2(
+            abs(h.x) > 1e-3 ? (e2.x - e1.x) / den.x : lin.x,
+            abs(h.y) > 1e-3 ? (e2.y - e1.y) / den.y : lin.y);
+    }
+
+    // ---- 均匀雾：linearstep 的两个折点处切分（≤3 段），段内线性、端点梯形精确 ----
+    float tTop = slanted ? clamp((RAMP_TOP - y0) * invM, 0.0, rayLength) : 0.0;
+    float tBot = slanted ? clamp((cumulusBottomAltitude - y0) * invM, 0.0, rayLength) : 0.0;
+    float rampBounds[4] = float[4](0.0, min(tTop, tBot), max(tTop, tBot), rayLength);
+    float uniformAcc = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        float a = rampBounds[i];
+        float b = rampBounds[i + 1];
+        if (b <= a) continue;
+        float rA = clamp((RAMP_TOP - (y0 + m * a)) / RAMP_RANGE, 0.0, 1.0);
+        float rB = clamp((RAMP_TOP - (y0 + m * b)) / RAMP_RANGE, 0.0, 1.0);
+        uniformAcc += 0.5 * (rA + rB) * (b - a);
+    }
+
+    return vec3(envAcc * invLen, uniformFog * uniformAcc * invLen);
 }
 
 //================================================================================================//
@@ -152,38 +210,25 @@ mat2x3 RaymarchAtmosphericFog(in vec3 startPos, in vec3 endPos, in float dither,
 
     float uniformFog = (8.0 * rainFactor) / maxDist;
 
-    // [2026-09 雾环修复尝试] 原 3 点(2 段)梯形：采样点固定在 0/50%/100%，视线与
-    // y≈VF_HEIGHT 雾层壳的交点扫过采样点时，估算误差发生几何相关的确定性突变，
-    // 在雾层上表现为随相机高度变化的同心环（散射通道最明显）。
-    // 对策：加密到 VF_FOG_PANELS 段梯形 + 用每像素 dither 抖动整组采样相位，
-    // 把确定性环误差打成噪声交给 TAA 收敛。想回旧行为：VF_FOG_PANELS 改 2。
+    // [2026-09-10 雾环根治] 原 VF_FOG_PANELS 段梯形 + 相位抖动 → 换成闭式积分
+    // IntegrateFogDensityAlongRay（推导见文件上方）：在折点处精确切分，结果与采样点位置无关，
+    // 同心环的结构性来源被移除（不再是「抖成噪声交给 TAA 平均」）。
+    // VF_FOG_PANELS 现在只用于标定噪声/抖动的相位粒度（保持与旧实现的采样手感一致）。
     #ifndef VF_FOG_PANELS
         #define VF_FOG_PANELS 8
     #endif
-    // [2026-09-10 性能] 噪声采样与包络段数解耦。
-    // 环伪影来自 exp2 壳层折点相对采样点的几何误差 → 包络必须保持 VF_FOG_PANELS 段（环行为不变）。
-    // 但 FOG_NOISE 是乘性白噪声调制，对折点几何没有确定性依赖，且早已被 per-pixel dither + TAA 平均，
-    // 用 9 个包络节点去估计「噪声沿视线的平均值」属于过度采样：旧实现每像素付 9 点 × 2 次 noisetex
-    // = 18 次噪声采样，其中 2 次（噪声）与 9 次（包络）本可独立取值。
-    // 现改为：包络仍 9 点梯形（完全不变），噪声单独用 VF_FOG_NOISE_SAMPLES 个中点均值估计。
-    // 想回旧行为（噪声逐包络节点采样、最精细）：把 VF_FOG_NOISE_SAMPLES 设为 VF_FOG_PANELS。
+    // [2026-09-10 性能] 噪声采样与包络解耦：FOG_NOISE 是乘性白噪声调制，对折点几何没有确定性依赖，
+    // 且早已被 per-pixel dither + TAA 平均，用 9 个包络节点去估计「噪声沿视线的平均值」属于过度采样。
+    // 包络本身现已精确积分，噪声单独用 VF_FOG_NOISE_SAMPLES 个中点均值估计即可。
     // 语义一致性：旧式 y_i = env_i·noise_i²·storm + uni_i（噪声只乘壳层通道、均匀雾项在噪声之后相加），
-    // 因此这里把壳层包络与均匀雾项分开累加（梯形积分线性：∫(A+B)=∫A+∫B），噪声只作用在包络均值上。
+    // 因此这里壳层包络与均匀雾项仍分开累加，噪声只作用在包络均值上。
     #ifndef VF_FOG_NOISE_SAMPLES
         #define VF_FOG_NOISE_SAMPLES 3
     #endif
     float sampleJitter = (dither - 0.5) * (0.75 / float(VF_FOG_PANELS));
-    vec2 envSum = vec2(0.0);
-    float uniformSum = 0.0;
-    for (int i = 0; i <= VF_FOG_PANELS; ++i) {
-        float t = clamp(float(i) / float(VF_FOG_PANELS) + sampleJitter, 0.0, 1.0);
-        vec3 samplePos = startPos + worldDir * (rayLength * t);
-        float nodeWeight = (i == 0 || i == VF_FOG_PANELS) ? 0.5 : 1.0;
-        envSum += CalculateFogShellEnvelope(samplePos) * nodeWeight;
-        uniformSum += CalculateFogUniformTerm(samplePos, uniformFog) * nodeWeight;
-    }
-    vec2 envAvg = envSum / float(VF_FOG_PANELS);
-    float uniformAvg = uniformSum / float(VF_FOG_PANELS);
+    vec3 fogIntegral = IntegrateFogDensityAlongRay(startPos, worldDir, rayLength, uniformFog);
+    vec2 envAvg = fogIntegral.xy;
+    float uniformAvg = fogIntegral.z;
 
     #ifdef FOG_NOISE_ENABLED
         float noiseFactor = 0.0;
