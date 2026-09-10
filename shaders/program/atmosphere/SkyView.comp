@@ -370,7 +370,17 @@ writeonly restrict uniform image2D skyViewImg;
 //======// 主入口 ================================================================================//
 void main() {
     ivec2 tid = ivec2(gl_GlobalInvocationID.xy);
-    vec2 uv = (vec2(tid) + 0.5) * rcp(imageSize(skyViewImg));
+
+    // [2026-09-10 性能] dispatch 按屏幕尺寸发起（workGroupsRender=(1,1)，好处是对任意 LUT 尺寸
+    // 都稳健、uv 由 imageSize 归一化），但 skyViewTex 只有 192x192（properties:
+    // image.skyViewImg = skyViewTex ... 192 192）→ 每帧约 52 倍的线程把整个
+    // RenderSkyView_Physical()/Hosek() 射线步进跑完之后，imageStore 被硬件按越界丢弃。
+    // 越界线程直接退出：LUT 内容与之前完全一致（那些存储本来就不会生效），只是不再白算。
+    // 实测（抓帧 Frame #119243）该 dispatch = glDispatchCompute(240,124,1) = 1738 us。
+    ivec2 lutSize = imageSize(skyViewImg);
+    if (any(greaterThanEqual(tid, lutSize))) return;
+
+    vec2 uv = (vec2(tid) + 0.5) * rcp(vec2(lutSize));
 
     #if SKY_MODEL == 0
         imageStore(skyViewImg, tid, vec4(RenderSkyView_Physical(uv), 1.0));
