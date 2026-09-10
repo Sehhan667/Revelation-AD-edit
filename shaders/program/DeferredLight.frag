@@ -76,7 +76,8 @@
 // ====== Precomputed Constants ======
 #define INV_HAND_DEPTH (1.0 / MC_HAND_DEPTH)
 #define HAND_DEPTH_OFFSET (0.5 - 0.5 * INV_HAND_DEPTH)
-#define SSS_CONTRAST_POW (1.2 / SHADOW_CONTRAST_STRENGTH)
+// [2026-09 SSS 重构] 旧式 SSS 门控用的 #define SSS_CONTRAST_POW (1.2 / SHADOW_CONTRAST_STRENGTH)
+// 已随「SSS 与阴影门控解耦」一起删除：SSS 现在由厚度/背光可见性决定，不再乘 rawShadow 的幂。
 
 //======// Utility //=============================================================================//
 
@@ -119,6 +120,7 @@ uniform sampler2D cloudOriginTex;
 
 #include "/lib/lighting/Common.glsl"
 #include "/lib/lighting/shadow/Render.glsl"
+#include "/lib/lighting/Subsurface.glsl"
 
 // [P1 2026-09-02] 按 AO_ENABLED 值只 include 一种 AO 实现，避免 SSAO+GTAO 同时编译徒耗寄存器与编译时间
 #if AO_ENABLED == 1 && !defined GI_ACTIVE_SSILVB
@@ -325,8 +327,18 @@ void main() {
 
     float NdotL = saturate(dot(worldNormal, worldLightDir));
 
+    // [2026-09 SSS 重构] 次表面散射需要的可见性，在这里就地取出（见下方 SSS 段）：
+    //   sssFrontVisibility = 正面阴影可见性（不含接触阴影）
+    //   sssBackVisibility  = 沿光线方向跨过物体后的可见性（薄片背光透光用，单次采样）
+    // 旧实现把 rawShadow 的幂当 SSS 门控、并把 sssAmount 传进 ScreenSpaceShadow 当吸收系数，
+    // 二者互相污染；现在全部解耦。
+    float sssFrontVisibility = 0.0;
+    float sssBackVisibility = 0.0;
+
     if (sunlightFactor > EPS && (NdotL + sssAmount > EPS)) {
         vec3 shadow = vec3(NdotL);
+        // surfaceDepth 现在只作为 CalculatePCSS 的 blocker 深度输出（SHADOW_SOFT_TYPE==2 时
+        // 决定 PCSS 搜索半径）；它不再是 SSS 的厚度——那是旧实现里恒为 0 的 bug。
         float surfaceDepth = 0.0;
         float normalOffsetBase = (approxSqrt(worldDistSquared) * 2e-3 + 2e-2) * (2.0 - NdotL);
         
@@ -345,45 +357,41 @@ void main() {
 
         #ifdef SCREEN_SPACE_SHADOWS
             float contactShadow = 1.0;
-            // [优化 2026-09-05 深阴影早退] contactShadow 只被两处消费：
-            //   ① 直接光 shadow *= contactShadow —— 该块以 dot(shadow)>EPS 为门槛，深阴影内 shadow≈0；
-            //   ② SSS 辉光 sss *= mix(1.0, contactShadow, ...) —— 其内部再乘 sssMask =
-            //      saturate(rawShadow 均值)^SSS_CONTRAST_POW，rawShadow<0.01 时 sssMask<5e-5，辉光被压灭。
+            // [优化 2026-09-05 深阴影早退]（[2026-09 更新] SSS 已与接触阴影解耦，contactShadow
+            // 现在只剩一处消费者：直接光 shadow *= contactShadow）
+            //   直接光那条以 dot(shadow)>EPS 为门槛，深阴影内 shadow≈0 → contactShadow 乘不乘都一样。
             // 故阴影贴图平均亮度 < 0.01 的像素，contactShadow 对最终输出无可感知影响（最坏情形
             // PCF 平滑半影残留 ~3% 阳光的像素少乘一次 ≤1 的接触值，偏差 <1.5% 阳光），
             // 整段屏幕空间步进（约 SCREEN_SPACE_SHADOWS_SAMPLES 次深度采样/像素）可安全跳过。
             // 距离过渡区/阴影贴图外（distanceFade>0，rawShadow 恒 1）不受影响，保持原步进。
             if (dot(rawShadow, vec3(1.0)) >= 0.03) {   // 平均亮度 ≥ 0.01 才需要接触阴影
-                contactShadow = ScreenSpaceShadow(screenPos, viewPos + viewNormal * normalOffsetBase, dither, sssAmount);
+                // [2026-09 解耦] 旧实现把 sssAmount 当吸收系数传进来，导致「SSS 选项改变接触
+                // 阴影外观」的反向耦合。现在传 0.0：接触阴影只由它自己的采样决定，SSS 材质
+                // 与非 SSS 材质行为一致（不再被 SSS 强度软化），SSS 也不再消费 contactShadow。
+                contactShadow = ScreenSpaceShadow(screenPos, viewPos + viewNormal * normalOffsetBase, dither, 0.0);
             }
         #else
             const float contactShadow = 1.0;
         #endif
 
-        float LdotV = dot(worldLightDir, -worldDir);
+        // [2026-09 SSS 重构] 这里只取可见性，SSS 本体在环境光之后计算（需要 ambientAccum）。
+        // 旧的 LdotV（只被 SSS 相位项使用）随重构删除。
+        sssFrontVisibility = saturate(dot(rawShadow, vec3(0.3333)));
 
-        #ifdef SSS_DISABLE_BEYOND_SHADOW_DIST
-    bool sssAllowed = (distanceFade < EPS);
-#else
-    // 过渡区 (0 < distanceFade < 1) 禁用 SSS，因为 surfaceDepth 无效
-    bool sssAllowed = (distanceFade < EPS) || (distanceFade >= 1.0 - EPS);
-#endif
-
-        if (sssAllowed && sssAmount > EPS) {
-            vec3 beta = approxSqrt(normalize(albedo));
-            vec3 sigmaA = oms(beta) * 16.0 / (sssAmount * SUBSURFACE_SCATTERING_STRENGTH);
-            vec3 sigmaS = 4.0 * beta * sssAmount;
-            float phase = HenyeyGreensteinPhase(-LdotV, 0.7) * 0.25 + uniformPhase * 0.75;
-            vec3 sss = sigmaS * phase * exp2(-rLOG2 * surfaceDepth * (sigmaS + sigmaA));
-
-            #if SHADOW_SOFT_TYPE == 1
-                float sssMask = saturate(dot(rawShadow, vec3(0.3333)));
-                sss *= pow(sssMask, SSS_CONTRAST_POW);
-            #endif
-
-            float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
-            sss *= mix(1.0, contactShadow, saturate(distanceFade + cutout * 0.75));
-            sceneOut += sunlightBase * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
+        // 薄片（树叶/草/藤）的背光可见性：沿光线方向跨过物体本身再采一次阴影贴图。
+        // 用单次 texelFetch 而不是整套 PCF：这一项只是透光的软门控，且第 2 步会被屏幕
+        // 空间扩散抹平；在树叶密集的森林场景里保持 PCF 会成倍放大阴影开销。
+        float sssThickness = GetSubsurfaceThickness(materialID);
+        if (sssThickness > 0.0 && sssThickness < SSS_THIN_CUTOFF) {
+            vec3 backPos = worldPos + worldLightDir * GetSubsurfaceBackSampleOffset(materialID);
+            float backDistortion;
+            vec3 backScreenPos = WorldToShadowScreenSpace(backPos + geoNormal * normalOffsetBase, backDistortion);
+            backScreenPos.z -= 3e-8 * (1.0 + dither) * shadowProjInv1y * backDistortion * SHADOW_BIAS_STRENGTH;
+            sssBackVisibility = 1.0;
+            if (saturate(backScreenPos) == backScreenPos) {
+                ivec2 backTexel = clamp(ivec2(backScreenPos.xy * realShadowMapRes), ivec2(0), ivec2(realShadowMapRes) - 1);
+                sssBackVisibility = step(backScreenPos.z, texelFetch(shadowtex1, backTexel, 0).x);
+            }
         }
 
         if (dot(shadow, vec3(1.0)) > EPS) {
@@ -622,6 +630,32 @@ void main() {
     // 已接到夜晚环境光(下方)与月光直射(上面 sunlightBase)。想更亮/更暗直接调 NIGHT_BRIGHTNESS（GUI MiscLighting）。
     sceneOut += ambientAccum * finalAo * AMBIENT_BRIGHTNESS_MULTIPLIER * AMBIENT_COLOR_TINT
               * mix(1.0, NIGHT_BRIGHTNESS, nightAmt);
+
+    // ====== 次表面散射（SSS）======
+    // [2026-09 重构] 模型见 lib/lighting/Subsurface.glsl。相对旧实现的四点变化：
+    //   ① 与屏幕空间阴影彻底解耦：不再乘 contactShadow，也不再乘 rawShadow^SSS_CONTRAST_POW
+    //      （旧式门控让 SSS 只在受光面出现、且把低采样接触阴影的条带带到草/藤上）；
+    //   ② 真实厚度：材质分类厚度 + 斜射路径 + Beer-Lambert，取代恒为 0 的 PCSS blockerDepth；
+    //   ③ 新增天光/环境项（阴影里/室内不再完全没有 SSS，并按 AO 衰减）；
+    //   ④ 薄片（树叶/草/藤）走 Barré-Brisebois distortion 背光透光，并用一次背向阴影采样
+    //      保证「光确实能到达物体背面」。
+    // 旧的 sssAllowed 语义（超出阴影距离即关闭）保留。
+    #if SHADOW_SOFT_TYPE > 0
+        #ifdef SSS_DISABLE_BEYOND_SHADOW_DIST
+            bool sssAllowed = (distanceFade < EPS);
+        #else
+            // 过渡区 (0 < distanceFade < 1) 禁用 SSS：该区间阴影贴图不可靠
+            bool sssAllowed = (distanceFade < EPS) || (distanceFade >= 1.0 - EPS);
+        #endif
+
+        if (sssAllowed && sssAmount > EPS) {
+            vec3 sss = CalculateSubsurfaceScattering(
+                materialID, sssAmount, albedo, worldNormal,
+                -worldDir, worldLightDir, sunlightBase,
+                sssFrontVisibility, sssBackVisibility, ambientAccum, finalAo);
+            sceneOut += sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
+        }
+    #endif
 
     // ====== Emissive & Blocklight ======
     #if EMISSIVE_MODE > 0 && defined MC_SPECULAR_MAP

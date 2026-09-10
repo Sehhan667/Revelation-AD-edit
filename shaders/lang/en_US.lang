@@ -374,6 +374,11 @@ value.SUBSURFACE_SCATTERING_MODE.2=PBR Only
 option.SUBSURFACE_SCATTERING_STRENGTH=Subsurface Scattering Strength
 option.SUBSURFACE_SCATTERING_BRIGHTNESS=Subsurface Scattering Brightness
 option.SUBSURFACE_SCATTERING_RADIUS=Subsurface Scattering Radius
+option.SUBSURFACE_SCATTERING_RADIUS.comment=Diffusion mean free path (= value x 4 blocks). Higher = more translucent, weaker volumetric falloff. Also sets the blur radius of the screen-space diffusion step.
+option.SUBSURFACE_SCATTERING_TRANSMISSION=Backlight Translucency
+option.SUBSURFACE_SCATTERING_TRANSMISSION.comment=Transmission glow for thin surfaces (leaves, grass, vines) when back-lit. 0 disables it (front diffusion and sky term remain).
+option.SUBSURFACE_SCATTERING_AMBIENT=Ambient Subsurface
+option.SUBSURFACE_SCATTERING_AMBIENT.comment=Subsurface scattering from sky/ambient light in shade and indoors (attenuated by AO). 0 disables it, leaving SSS only on directly lit surfaces.
 
 option.SSRT_MAX_SAMPLES=Raytrace Samples
 option.SSRT_REFINEMENT=Raytrace Refinement

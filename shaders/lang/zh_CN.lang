@@ -398,6 +398,11 @@ value.SUBSURFACE_SCATTERING_MODE.2=仅PBR
 option.SUBSURFACE_SCATTERING_STRENGTH=次表面散射强度
 option.SUBSURFACE_SCATTERING_BRIGHTNESS=次表面散射亮度
 option.SUBSURFACE_SCATTERING_RADIUS=次表面散射半径
+option.SUBSURFACE_SCATTERING_RADIUS.comment=扩散平均自由程（= 该值 × 4 方块）。越大越"透"，体积衰减越弱；第 2 步的屏幕空间扩散也用它决定模糊半径。
+option.SUBSURFACE_SCATTERING_TRANSMISSION=背光透光强度
+option.SUBSURFACE_SCATTERING_TRANSMISSION.comment=树叶/草/藤等薄片逆光时的透射辉光。0 = 关闭（只保留正面扩散与天光项）。
+option.SUBSURFACE_SCATTERING_AMBIENT=天光次表面强度
+option.SUBSURFACE_SCATTERING_AMBIENT.comment=阴影里/室内的次表面散射（环境项，按 AO 衰减）。0 = 关闭，此时只有被直射光照到的面才有 SSS。
 
 option.SSRT_MAX_SAMPLES=反射最大采样数
 option.SSRT_REFINEMENT=反射重采样
