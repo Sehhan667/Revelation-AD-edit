@@ -58,6 +58,18 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define BORDER_FOG // Enables border fog
 	#define BORDER_FOG_FALLOFF 2.5 // Falloff of the border fog. [0.0 0.5 1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0 17.0 18.0 19.0 20.0 25.0 30.0 35.0 40.0]
 
+	// [2026-09 新增] 地面大气散射（空气透视）：远景地形向大气散射色衰减的独立一层。
+	// 与体积雾解耦——不含噪声、不随 VF_TIME_FADE 在正午消隐，负责中远场的色彩与对比度衰减；
+	// 只作用于主世界的地面/水面像素（天空走天空模型，下界/末地走各自维度雾）。
+	// 洞穴/室内沿用体积雾同款门控 clamp(skylight*0.8+0.2)，保留 20% 底雾。
+	// 实现与标定说明见 lib/atmosphere/GroundScattering.glsl。
+	#define GROUND_SCATTERING // Ground atmospheric scattering (aerial perspective)
+	#define GS_DENSITY 1.0 // 大气散射浓度（整体浓度旋钮）。 [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0 4.0]
+	#define GS_SUN_BRIGHTNESS 1.0 // 太阳散射亮度（米氏前向：朝太阳方向的远景发暖）。 [0.0 0.1 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0 4.0]
+	#define GS_SKY_BRIGHTNESS 1.0 // 天空散射亮度（各向同性底噪：远景整体偏蓝）。 [0.0 0.1 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0 4.0]
+	#define GS_MIE_G 0.4 // 前向散射各向异性 g（越大越集中在太阳方向）。 [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8]
+	#define GS_RAIN_BOOST 1.0 // 雨天增浓倍率（跟随 wetness）。 [0.0 0.5 1.0 1.5 2.0 3.0 4.0]
+
 	#define PER_BIOME_FOG // Enables per-biome fog
 
 	#define LAVA_FOG // Enables lava fog

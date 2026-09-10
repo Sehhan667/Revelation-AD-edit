@@ -48,6 +48,7 @@ layout (location = 0) out vec4 sceneOut;
 #include "/lib/atmosphere/Common.glsl"
 
 #include "/lib/atmosphere/AtmosphericFog.glsl" 
+#include "/lib/atmosphere/GroundScattering.glsl"
 #include "/lib/atmosphere/CommonFog.glsl"
 #include "/lib/SpatialUpscale.glsl"
 
@@ -333,6 +334,10 @@ void main() {
     // ====================================================================================
     mat2x3 fogData = mat2x3(vec3(0.0), vec3(1.0));
 
+    // 地面大气散射的透射率（1 = 未参与）。仅主世界几何体像素会被赋值，最后并入 fogMask：
+    // 泛光雾与 colortex0.a 的"雾量"通道因此也认这层空气透视（远景同样起泛光雾）。
+    float groundScatteringTransmittance = 1.0;
+
     // ====================================================================================
     // 次表面散射（屏幕空间扩散合成）
     // ====================================================================================
@@ -354,6 +359,11 @@ void main() {
         float LdotV = dot(worldLightDir, worldDir);
         fogData = AnalyticWaterFog(eyeSkylightSmooth, viewDistance, LdotV, CalcSunScreenVisibility());
     } else {
+        // 太阳屏幕可见度：体积雾的太阳光晕与地面大气散射的太阳项共用，每像素只求一次。
+        #if defined VOLUMETRIC_FOG || (defined GROUND_SCATTERING && !defined DIMENSION_NETHER && !defined DIMENSION_THE_END)
+            float sunVis = CalcSunScreenVisibility();
+        #endif
+
         #ifdef VOLUMETRIC_FOG
             float dither = BlueNoise(texelPos, frameCounter);
             
@@ -378,12 +388,30 @@ void main() {
                 }
             }
             
-            fogData = RaymarchAtmosphericFog(vec3(0.0), fogEndPos, dither, skyMask, 1u, CalcSunScreenVisibility());
+            fogData = RaymarchAtmosphericFog(vec3(0.0), fogEndPos, dither, skyMask, 1u, sunVis);
+        #endif
+
+        // [2026-09 新增] 地面大气散射（空气透视）：与体积雾相互独立的一层，只作用于主世界
+        // 的地面/水面像素。depth < 1 表示该像素最终落在几何体上 —— 纯天空像素交给天空模型
+        // （天空 LUT 已含大气散射），不下沉这层空气透视，否则天空会被叠第二遍散射而变灰。
+        // 水下/lava/细雪走各自的水雾分支，不叠加。放在 ApplyFog 之前 → 体积雾仍在其之上。
+        #if defined GROUND_SCATTERING && !defined DIMENSION_NETHER && !defined DIMENSION_THE_END
+            if (isEyeInWater == 0 && depth < 1.0 - EPS) {
+                mat2x3 groundScattering = AnalyticGroundScattering(worldDir, viewDistance, eyeSkylightSmooth, sunVis);
+                sceneColor = ApplyFog(sceneColor, groundScattering);
+                groundScatteringTransmittance = mean(groundScattering[1]);
+            }
         #endif
     }
 
     sceneColor = ApplyFog(sceneColor, fogData);
-    fogMask = mix(1.0, mean(fogData[1]), eyeSkylightSmooth);
+    // [2026-09] 地面大气散射的透射率并入 fogMask：远景的空气透视同样计入"雾量"（泛光雾 /
+    // colortex0.a）。未启用该功能时保持原式不变（关闭即与旧版逐位相同）。
+    #ifdef GROUND_SCATTERING
+        fogMask = mix(1.0, mean(fogData[1]) * groundScatteringTransmittance, eyeSkylightSmooth);
+    #else
+        fogMask = mix(1.0, mean(fogData[1]), eyeSkylightSmooth);
+    #endif
 
     if (viewDistance == 0.0) viewDistance = length(viewPos);
     RenderVanillaFog(sceneColor, fogMask, viewDistance);

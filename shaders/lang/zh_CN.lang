@@ -24,6 +24,7 @@ screen.HighLevelClouds=高云族
 
 screen.Fog=雾
 screen.Volumetric=体积雾
+screen.GroundScatter=地面大气散射
 screen.Rainbows=彩虹
 
 screen.GlobalIllumination=全局光照
@@ -242,6 +243,19 @@ option.UW_SUN_OCCLUSION.comment=水雾正对太阳方向的模糊光晕是否随
 
 option.BORDER_FOG=边界雾
 option.BORDER_FOG_FALLOFF=边界雾衰减
+
+option.GROUND_SCATTERING=地面大气散射（空气透视）
+option.GROUND_SCATTERING.comment=远景地形向大气散射色衰减的独立一层。与体积雾解耦：不含噪声、不随"时段过渡"在正午消隐。白天远景偏蓝、朝太阳方向发暖。只作用于主世界的地面与水面，天空走天空模型，下界/末地走各自维度雾；洞穴与室内保留 20% 底雾（与体积雾的地面门控一致）
+option.GS_DENSITY=大气散射浓度
+option.GS_DENSITY.comment=整体浓度旋钮（等价于把地面视线的空气路径整体放大）。0=关闭，越大远景越糊
+option.GS_SUN_BRIGHTNESS=太阳散射亮度
+option.GS_SUN_BRIGHTNESS.comment=米氏前向散射亮度：朝太阳方向的远景雾霭。0=没有太阳方向的暖色雾
+option.GS_SKY_BRIGHTNESS=天空散射亮度
+option.GS_SKY_BRIGHTNESS.comment=各向同性天空散射亮度：远景整体的偏蓝底噪（昼夜色温由天光本身决定）
+option.GS_MIE_G=前向散射各向异性
+option.GS_MIE_G.comment=气溶胶相函数 g：越大散射越集中在太阳方向（小=均匀铺开，大=朝阳方向一团亮）
+option.GS_RAIN_BOOST=雨天增浓
+option.GS_RAIN_BOOST.comment=雨天（wetness）额外加浓的倍率，模拟雨幕下能见度下降。0=雨天不加浓
 
 option.PER_BIOME_FOG=群系雾
 option.LAVA_FOG=岩浆雾

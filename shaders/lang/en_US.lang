@@ -24,6 +24,7 @@ screen.HighLevelClouds=High-level Clouds
 
 screen.Fog=Fog
 screen.Volumetric=Volumetric Fog
+screen.GroundScatter=Ground Atmospheric Scattering
 screen.Rainbows=Rainbows
 
 screen.GlobalIllumination=Global Illumination
@@ -230,6 +231,19 @@ option.UW_SUN_OCCLUSION.comment=Whether the blurry halo toward the sun in underw
 
 option.BORDER_FOG=Border Fog
 option.BORDER_FOG_FALLOFF=Border Fog Falloff
+
+option.GROUND_SCATTERING=Ground Atmospheric Scattering (Aerial Perspective)
+option.GROUND_SCATTERING.comment=Separate layer that fades distant terrain toward the atmospheric scattering colour. Decoupled from volumetric fog: no noise, and it does not vanish at noon from "Time Fade". Distant terrain turns blue by day and warm toward the sun. Overworld ground/water only: the sky uses the sky model, the Nether/End keep their own dimension fog; caves and interiors keep a 20% floor (same gate as volumetric fog)
+option.GS_DENSITY=Scattering Density
+option.GS_DENSITY.comment=Overall density knob (equivalent to scaling the whole ground air path). 0 disables it; higher = hazier distance
+option.GS_SUN_BRIGHTNESS=Sun Scattering Brightness
+option.GS_SUN_BRIGHTNESS.comment=Mie forward scattering brightness: the warm haze toward the sun. 0 removes the sun-side glow
+option.GS_SKY_BRIGHTNESS=Sky Scattering Brightness
+option.GS_SKY_BRIGHTNESS.comment=Isotropic sky scattering brightness: the bluish base haze over the distance (day/night tint comes from the sky light itself)
+option.GS_MIE_G=Forward Scattering Anisotropy
+option.GS_MIE_G.comment=Aerosol phase g: higher concentrates scattering toward the sun (low = spread evenly, high = a bright blob toward the sun)
+option.GS_RAIN_BOOST=Rain Density Boost
+option.GS_RAIN_BOOST.comment=Extra density multiplier while raining (follows wetness), for the visibility drop in rain. 0 = no rain boost
 
 option.PER_BIOME_FOG=Per-Biome Fog
 option.LAVA_FOG=Lava Fog
