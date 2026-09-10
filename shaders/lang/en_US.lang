@@ -367,6 +367,10 @@ value.EMISSIVE_MODE.2=PBR Only
 option.EMISSIVE_BRIGHTNESS=Emissive Brightness
 option.EMISSIVE_CURVE=Emissive Curve
 
+option.SUBSURFACE_SCATTERING_MODEL=Subsurface Scattering Model
+value.SUBSURFACE_SCATTERING_MODEL.0=Legacy
+value.SUBSURFACE_SCATTERING_MODEL.1=Rewrite
+option.SUBSURFACE_SCATTERING_MODEL.comment=Legacy restores the pre-rewrite implementation (only the sun-driven brightening beyond the shadow distance is removed). Rewrite uses per-material thickness, an ambient term, and is decoupled from screen-space shadows and the camera direction. The Front Diffusion / Backlight Translucency / Ambient / Radius options below only apply to the rewrite model.
 option.SUBSURFACE_SCATTERING_MODE=Subsurface Scattering Mode
 value.SUBSURFACE_SCATTERING_MODE.0=Hardcoded Only
 value.SUBSURFACE_SCATTERING_MODE.1=Hardcoded + PBR

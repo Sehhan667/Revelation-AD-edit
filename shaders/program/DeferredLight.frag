@@ -81,8 +81,9 @@
 // ====== Precomputed Constants ======
 #define INV_HAND_DEPTH (1.0 / MC_HAND_DEPTH)
 #define HAND_DEPTH_OFFSET (0.5 - 0.5 * INV_HAND_DEPTH)
-// [2026-09 SSS 重构] 旧式 SSS 门控用的 #define SSS_CONTRAST_POW (1.2 / SHADOW_CONTRAST_STRENGTH)
-// 已随「SSS 与阴影门控解耦」一起删除：SSS 现在由厚度/背光可见性决定，不再乘 rawShadow 的幂。
+// [2026-09] 旧版 SSS 模型的阴影幂门控指数（重写版模型不使用它）。
+// 之前随「SSS 与阴影门控解耦」被删过；现在旧版模型回归，这里一并恢复。
+#define SSS_CONTRAST_POW (1.2 / SHADOW_CONTRAST_STRENGTH)
 
 //======// Utility //=============================================================================//
 
@@ -352,13 +353,15 @@ void main() {
 
     float NdotL = saturate(dot(worldNormal, worldLightDir));
 
-    // [2026-09 SSS 重构] 次表面散射需要的可见性，在这里就地取出（见下方 SSS 段）：
-    //   sssFrontVisibility = 正面阴影可见性（不含接触阴影）
-    //   sssBackVisibility  = 沿光线方向跨过物体后的可见性（薄片背光透光用，单次采样）
-    // 旧实现把 rawShadow 的幂当 SSS 门控、并把 sssAmount 传进 ScreenSpaceShadow 当吸收系数，
-    // 二者互相污染；现在全部解耦。
+    // [2026-09 SSS] 两套模型共用的输入，在这里就地取出（见下方 SSS 段）：
+    //   sssFrontVisibility = 正面阴影可见性（= 旧版的 sssMask）
+    //   sssBackVisibility  = 沿光线方向跨过物体后的可见性（新版薄片背光透光用）
+    //   sssContactShadow   = 屏幕空间接触阴影（只给旧版模型用；新版已与它解耦）
+    //   sssBlockerDepth    = PCSS 的 blocker 深度（只给旧版模型的厚度项用；PCF 模式下恒为 0）
     float sssFrontVisibility = 0.0;
     float sssBackVisibility = 0.0;
+    float sssContactShadow = 1.0;
+    float sssBlockerDepth = 0.0;
 
     if (sunlightFactor > EPS && (NdotL + sssAmount > EPS)) {
         vec3 shadow = vec3(NdotL);
@@ -371,6 +374,7 @@ void main() {
 
         if (distanceFade < EPS) {
             rawShadow = CalculatePCSS(worldPos, geoNormal * normalOffsetBase, dither, surfaceDepth);
+            sssBlockerDepth = surfaceDepth;   // 旧版 SSS 的厚度项（PCF 模式下为 0）
             
             #if SHADOW_SOFT_TYPE == 1
                 shadow *= pow(rawShadow, vec3(SHADOW_CONTRAST_STRENGTH));
@@ -382,8 +386,9 @@ void main() {
 
         #ifdef SCREEN_SPACE_SHADOWS
             float contactShadow = 1.0;
-            // [优化 2026-09-05 深阴影早退]（[2026-09 更新] SSS 已与接触阴影解耦，contactShadow
-            // 现在只剩一处消费者：直接光 shadow *= contactShadow）
+            // [优化 2026-09-05 深阴影早退]（[2026-09 更新] contactShadow 的消费者有两处：
+            //   ① 直接光 shadow *= contactShadow；② 旧版 SSS 模型 sss *= mix(1, contactShadow, ...)。
+            //   两者都以「该像素不是深阴影」为前提，所以这个早退依旧成立。）
             //   直接光那条以 dot(shadow)>EPS 为门槛，深阴影内 shadow≈0 → contactShadow 乘不乘都一样。
             // 故阴影贴图平均亮度 < 0.01 的像素，contactShadow 对最终输出无可感知影响（最坏情形
             // PCF 平滑半影残留 ~3% 阳光的像素少乘一次 ≤1 的接触值，偏差 <1.5% 阳光），
@@ -392,9 +397,10 @@ void main() {
             if (dot(rawShadow, vec3(1.0)) >= 0.03) {   // 平均亮度 ≥ 0.01 才需要接触阴影
                 // [2026-09 解耦] 旧实现把 sssAmount 当吸收系数传进来，导致「SSS 选项改变接触
                 // 阴影外观」的反向耦合。现在传 0.0：接触阴影只由它自己的采样决定，SSS 材质
-                // 与非 SSS 材质行为一致（不再被 SSS 强度软化），SSS 也不再消费 contactShadow。
+                // 与非 SSS 材质行为一致（不再被 SSS 强度软化）。
                 contactShadow = ScreenSpaceShadow(screenPos, viewPos + viewNormal * normalOffsetBase, dither, 0.0);
             }
+            sssContactShadow = contactShadow;   // 旧版 SSS 模型仍会用它（见下方 SSS 段）
         #else
             const float contactShadow = 1.0;
         #endif
@@ -661,39 +667,59 @@ void main() {
               * mix(1.0, NIGHT_BRIGHTNESS, nightAmt);
 
     // ====== 次表面散射（SSS）======
-    // [2026-09 重构] 模型见 lib/lighting/Subsurface.glsl。相对旧实现的四点变化：
-    //   ① 与屏幕空间阴影彻底解耦：不再乘 contactShadow，也不再乘 rawShadow^SSS_CONTRAST_POW
-    //      （旧式门控让 SSS 只在受光面出现、且把低采样接触阴影的条带带到草/藤上）；
-    //   ② 真实厚度：材质分类厚度 + 斜射路径 + Beer-Lambert，取代恒为 0 的 PCSS blockerDepth；
-    //   ③ 新增天光/环境项（阴影里/室内不再完全没有 SSS，并按 AO 衰减）；
-    //   ④ 薄片（树叶/草/藤）走 Barré-Brisebois distortion 背光透光，并用一次背向阴影采样
-    //      保证「光确实能到达物体背面」。
-    // [2026-09 距离行为] 阴影距离外的太阳项按用户要求忽略：
-    //   距离外阴影贴图采不到（rawShadow 恒 1、背向采样越界），太阳项（正面扩散 + 背光透光）
-    //   会给远处的半透明方块凭空补亮度——现在用 sssSunGate = 1 - distanceFade 把它平滑淡出，
-    //   只保留天光/环境项；由于 distanceFade 本身在最后 8 格是线性斜坡，这里不会出现硬跳变。
-    //   SSS_DISABLE_BEYOND_SHADOW_DIST（GUI，默认关）打开时退回旧行为：距离外整块关闭 SSS。
+    // [2026-09] 两套模型，由 GUI 选项 SUBSURFACE_SCATTERING_MODEL 选择：
+    //   0 = 旧版（默认，还原 2026-09 之前的实现）：sigmaS × phase（相位 75% 各向同性）×
+    //       阴影幂门控 × 接触阴影；厚度项用 PCSS 的 blockerDepth（PCF 模式下恒为 0）。
+    //   1 = 重写版（备选）：见 lib/lighting/Subsurface.glsl —— 材质分类的真实厚度、
+    //       天光/环境项、背光透光（默认关，视角相关）、与屏幕空间阴影解耦、不含相机方向。
+    // 两版共有的一条改动：**阴影距离外不再有"朝太阳额外提亮"**。
+    //   距离外阴影贴图采不到（rawShadow 恒 1、背向采样越界），太阳项会给远处的半透明方块
+    //   凭空补亮度。现在统一用 sssSunGate = 1 - distanceFade 平滑淡出（distanceFade 本身在
+    //   最后 8 格就是线性斜坡，所以不会出现硬跳变）。旧版没有天光项，因此距离外等于关闭。
     #if SHADOW_SOFT_TYPE > 0
         #ifdef SSS_DISABLE_BEYOND_SHADOW_DIST
             bool sssAllowed = (distanceFade < EPS);
-            float sssSunGate = 1.0;
         #else
             bool sssAllowed = true;
-            float sssSunGate = 1.0 - distanceFade;
         #endif
+        float sssSunGate = 1.0 - distanceFade;
 
         if (sssAllowed && sssAmount > EPS) {
-            vec3 sss = CalculateSubsurfaceScattering(
-                materialID, sssAmount, albedo, worldNormal,
-                -worldDir, worldLightDir, sunlightBase * sssSunGate,
-                sssFrontVisibility, sssBackVisibility, ambientAccum, finalAo);
-            #ifdef SUBSURFACE_SCATTERING_DIFFUSION
-                // 交给 composite1/composite3 两趟可分离模糊，再由 IntegrateScene 软门控合成。
-                // rgb 已经乘过 sssAmount（= mask），a 单独存 mask 供合成端的中心门控使用。
-                sssSourceOut = vec4(sss, saturate(sssAmount));
+            #if SUBSURFACE_SCATTERING_MODEL == 0
+                // ---------- 旧版模型 ----------
+                // sunlightFactor 是原实现的外层门槛（夜晚/未受天光的像素本来就整段跳过），
+                // 这里保留它，只额外乘上 sssSunGate。
+                if (sunlightFactor > EPS && sssSunGate > EPS) {
+                    vec3 beta = approxSqrt(normalize(albedo));
+                    vec3 sigmaA = oms(beta) * 16.0 / (sssAmount * SUBSURFACE_SCATTERING_STRENGTH);
+                    vec3 sigmaS = 4.0 * beta * sssAmount;
+                    float LdotV = dot(worldLightDir, -worldDir);
+                    float phase = HenyeyGreensteinPhase(-LdotV, 0.7) * 0.25 + uniformPhase * 0.75;
+                    vec3 sss = sigmaS * phase * exp2(-rLOG2 * sssBlockerDepth * (sigmaS + sigmaA));
+
+                    #if SHADOW_SOFT_TYPE == 1
+                        sss *= pow(sssFrontVisibility, SSS_CONTRAST_POW);
+                    #endif
+
+                    float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
+                    sss *= mix(1.0, sssContactShadow, saturate(distanceFade + cutout * 0.75));
+                    sceneOut += sunlightBase * sss * (SUBSURFACE_SCATTERING_BRIGHTNESS * sssSunGate);
+                }
             #else
-                sceneOut += sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
-            #endif
+                // ---------- 重写版模型 ----------
+                // 天光项不受 sssSunGate 影响（距离外只保留它）
+                vec3 sss = CalculateSubsurfaceScattering(
+                    materialID, sssAmount, albedo, worldNormal,
+                    -worldDir, worldLightDir, sunlightBase * sssSunGate,
+                    sssFrontVisibility, sssBackVisibility, ambientAccum, finalAo);
+                #ifdef SUBSURFACE_SCATTERING_DIFFUSION
+                    // 交给 composite1/composite3 两趟可分离模糊，再由 IntegrateScene 软门控合成。
+                    // rgb 已经乘过 sssAmount（= mask），a 单独存 mask 供合成端的中心门控使用。
+                    sssSourceOut = vec4(sss, saturate(sssAmount));
+                #else
+                    sceneOut += sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
+                #endif
+            #endif // SUBSURFACE_SCATTERING_MODEL
         }
     #endif
 

@@ -391,6 +391,10 @@ value.EMISSIVE_MODE.2=仅PBR
 option.EMISSIVE_BRIGHTNESS=自发光亮度
 option.EMISSIVE_CURVE=自发光曲线
 
+option.SUBSURFACE_SCATTERING_MODEL=次表面散射模型
+value.SUBSURFACE_SCATTERING_MODEL.0=旧版
+value.SUBSURFACE_SCATTERING_MODEL.1=重写版
+option.SUBSURFACE_SCATTERING_MODEL.comment=旧版＝还原重构前的实现，只额外去掉「阴影距离外朝太阳提亮」；重写版＝材质分类真实厚度 + 天光项 + 与屏幕空间阴影解耦、不含相机方向。下方的正面扩散/背光透光/天光/半径四项只对重写版生效。
 option.SUBSURFACE_SCATTERING_MODE=次表面散射模式
 value.SUBSURFACE_SCATTERING_MODE.0=仅硬编码
 value.SUBSURFACE_SCATTERING_MODE.1=硬编码+PBR
