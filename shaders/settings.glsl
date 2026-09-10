@@ -397,6 +397,25 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//   缺任一 → GUI 只占位不显示（"空格子"）。注意不能用 `#if defined A && defined B` 复合条件。
 	#define ENABLE_VOXELIZATION  // 体素化：shadow pass 直写 voxelData（3D 纹理）；关闭则无 GI
 
+	// [2026-09-06 性能] GI 关闭(GI_MODE==0) 或屏幕空间 GI(SSILVB, GI_MODE==1) 时，体素数据
+	// 没有任何消费者：VoxelTracePixel 的调用点只在 GI_ACTIVE_VXGI / PROBE_GI_ENABLED 分支内，
+	// VoxelGI.frag(IRC 探针) 也只在 GI_MODE==3 编译；VoxelClear/VoxelGI 两个 compute 本身
+	// 已按 GI_ACTIVE_* 早退。此时自动取消 ENABLE_VOXELIZATION = 等价于在 GUI 里手动关掉
+	// "体素化"（作者已维护该分支），收益是 shadow pass 不再付出体素化代价：
+	//   - Shadow.geom 走 #else「原样转发（全幅真阴影，无 Shift）」→ 不再用 GS 把整份投影
+	//     地形重新展开、平铺进阴影贴图左侧 VOXEL_TILE_WIDTH(256px) 条带并光栅化；
+	//   - Shadow.frag 的 imageStore(voxelData) / imageAtomicMax / imageAtomicOr 全部编译掉
+	//     （阴影 pass 是帧内最大开销之一，这些是逐片元原子操作）；
+	//   - Shadow.vert 的体素坐标打包（+cameraPositionFract 等）一并消失；
+	//   - 阴影贴图恢复全幅（1280x1536 → 1536x1536 有效阴影区）。
+	// 读取端 ShiftShadowScreenPos 全部由同一个宏守卫（Render/RSM/VolumetricFog/
+	// IntegrateScene/AtmosphericFog/VoxelSunShadow），随写入端一起关 → 布局保持自洽。
+	// 注意：若开着 DEBUG_VOXEL_GI / VISUALIZE_VOXELS 看体素格，需要 GI_MODE>=2 才会有数据。
+	// GI_MODE>=2（VXGI 追踪 / IRC 探针）仍保留体素化：它们依赖 voxelData。
+	#if GI_MODE < 2
+		#undef ENABLE_VOXELIZATION
+	#endif
+
 	// ===== IRC DDGI backend（4m 方向性探针 + 距离可见性）=====
 	// GI_MODE=3 内部启用，不作为独立 GUI 模式暴露。
 	#undef PROBE_GI_ENABLED
