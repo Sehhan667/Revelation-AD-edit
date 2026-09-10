@@ -289,10 +289,10 @@ option.SHADOW_DISTORTION_STRENGTH=Shadow Distortion Strength
 
 option.SCREEN_SPACE_SHADOWS=Screen-Space Shadows
 option.SHADOW_CULLING_MODE=Shadow Frustum Culling
-option.SHADOW_CULLING_MODE.comment=0=off (pack default; everything inside the shadow distance is rendered, slowest); 1=on (cull geometry that cannot cast a shadow into the view frustum, fastest, tall off-screen casters may stop casting); 2=reversed (no culling within voxelDistance of the player, culling outside)
-value.SHADOW_CULLING_MODE.0=Off
-value.SHADOW_CULLING_MODE.1=On
-value.SHADOW_CULLING_MODE.2=Reversed
+option.SHADOW_CULLING_MODE.comment=0=distance box only (fastest, recommended); 1=frustum culling without a distance cap (this pack sets shadowDistanceRenderMul=1.0, which makes Iris drop the cap so the shadow pass covers the whole render distance: 2.4x the geometry, frame time nearly doubles - not recommended); 2=unculled safe zone within voxelDistance plus frustum culling (about equal to 0)
+value.SHADOW_CULLING_MODE.0=Distance box (recommended)
+value.SHADOW_CULLING_MODE.1=Frustum (slower here)
+value.SHADOW_CULLING_MODE.2=Safe zone
 option.SCREEN_SPACE_SHADOWS_SAMPLES=Screen-Space Shadows Samples
 
 option.BLOCKLIGHT_BRIGHTNESS=Blocklight Brightness

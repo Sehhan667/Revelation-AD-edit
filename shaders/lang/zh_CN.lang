@@ -303,10 +303,10 @@ option.PCF_SOFT_RADIUS=PCF模糊半径
 option.SHADOW_BIAS_STRENGTH=阴影偏移
 option.SHADOW_BIAS_STRENGTH.comment=如果表面出现阴影错误请提高此数值
 option.SHADOW_CULLING_MODE=阴影视锥剔除
-option.SHADOW_CULLING_MODE.comment=0=关闭剔除（作者默认，阴影视距内几何全部渲染，最慢）；1=开启剔除（剔除投影不进视锥的几何，最快，代价是视锥外高物体可能不再投影）；2=反向（玩家周围 voxelDistance 内不剔除、之外剔除）
-value.SHADOW_CULLING_MODE.0=关闭
-value.SHADOW_CULLING_MODE.1=开启
-value.SHADOW_CULLING_MODE.2=反向（安全区）
+option.SHADOW_CULLING_MODE.comment=0=仅按 shadowDistance 距离盒剔除（实测最快，推荐）；1=视锥剔除但无距离上限（本包 shadowDistanceRenderMul=1.0 会让 Iris 丢掉距离上限 → 阴影 pass 覆盖整个渲染距离，实测几何量 2.4 倍、帧时近乎翻倍，不推荐）；2=voxelDistance 内不剔除+视锥剔除（实测与 0 相当）
+value.SHADOW_CULLING_MODE.0=距离盒（推荐）
+value.SHADOW_CULLING_MODE.1=视锥（本包更慢）
+value.SHADOW_CULLING_MODE.2=安全区
 option.SHADOW_CONTRAST_STRENGTH=PCF的次表面散射补偿
 
 

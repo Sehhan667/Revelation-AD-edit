@@ -223,9 +223,12 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define SHADOW_BACKFACE_CULLING // Enables backface culling for shadows
 
 	// 阴影视锥剔除（Iris 官方指令 shadow.culling，实际发射在 shaders.properties 的 #if 块里）：
-	//   0 = 关闭剔除（原作者默认值；阴影视距内的几何一律进 shadow pass，最慢）
-	//   1 = 开启剔除（剔除「投影不进视锥」的几何；最快，代价是视锥外的高物体可能不再投影）
-	//   2 = reversed（voxelDistance 半径内不剔除、之外剔除，需要 Iris 1.8+；本机 1.10.7 支持）
+	//   0 = DISTANCE   ：只做「shadowDistance(64) 格盒」剔除。实测最快（本包推荐）。
+	//   1 = ADVANCED   ：视锥剔除，但**没有距离上限**——因为本包 shadowDistanceRenderMul=1.0 使
+	//                    Iris 走 distance >= renderDistance*16 分支把 boxCuller 置空，阴影 pass
+	//                    会覆盖到渲染距离(12 区块)扫过的整个体积：实测几何量 2.4 倍、帧时 15.9→28.3ms。
+	//   2 = SAFE_ZONE  ：voxelDistance(48) 格内不剔除、之外视锥剔除 + 64 格上限。实测与 0 相当。
+	// 另注：剔除掉的投影者变少会让更多像素走屏幕空间阴影/SSR（`shadow > 0.03` 早退），deferred 反而更贵。
 	// 见 https://shaders.properties/current/reference/shadersproperties/rendering/#shadowculling
 	#define SHADOW_CULLING_MODE 0 // [0 1 2]
 
