@@ -13,9 +13,16 @@
       3) 只有直射太阳，没有天光/环境项 → 阴影里/室内完全没有 SSS。
 
     本模型给出「沿视线看到的次表面散射辐射亮度」，由三项组成：
-      ① 正面扩散：包裹漫反射 × 体积衰减（厚材质：羊毛/冰/雪/水晶/史莱姆）
+      ① 正面扩散：包裹漫反射 × 体积衰减 × 过渡带加权（厚材质：羊毛/冰/雪/水晶/史莱姆）
       ② 背光透光：Barré-Brisebois GDC 2011 的 distortion 近似（薄片：树叶/草/藤）
       ③ 天光/环境：环境辐照 × 体积衰减（阴影里也有，但更弱）
+
+    标定（2026-09 修复「受光面比普通方块更亮」）：正面项不再与其它两项共用一个大增益。
+    正面项的相位用的是 wrap 漫反射（正对阳光时 = 1.0），而旧代码的相位项正对阳光时只有
+    约 0.2；共用增益会把它放大约 4 倍，导致受光面明显更亮。现在正面项走独立的小增益
+    （SUBSURFACE_SCATTERING_DIFFUSE，默认 0.25）并叠加 SSS_TERMINATOR_BIAS 的过渡带加权：
+    正对阳光时权重减半、明暗交界/掠射处满权重——次表面散射真正该改变的是明暗交界，
+    而不是把整片受光面整体提亮。透光项与环境项各自保留独立增益。
 
     体积衰减用 Beer-Lambert：T = exp(-σt · L)，σt = (σa·(1-β) + σs·β) / mfp，
     β = sqrt(albedo) 沿用原实现的「albedo → 散射系数」映射；路径长度 L 由材质厚度
@@ -48,8 +55,23 @@ const float SSS_MFP_SCALE = 4.0;
 // 消光系数系数项：σt = (SSS_ABSORPTION·(1-β) + SSS_SCATTERING·β) / mfp
 const float SSS_ABSORPTION = 2.0;
 const float SSS_SCATTERING = 1.0;
-// 出射增益：把散射系数折算成辐射亮度的量级系数（与旧实现亮度对齐）
-const float SSS_EMISSION = 4.0;
+
+// 三项各自独立的出射增益。2026-09 修复「受光面比普通方块更亮」：
+// 旧实现（以及本重构的第一版）把三项共用一个增益 4.0，量级是按旧代码的相位项
+// （HG 相位 × 0.25 + 均匀相位 × 0.75，正对阳光时只有 ~0.2）对齐的；而这里正面项用的是
+// wrap 漫反射，正对阳光时是 1.0，于是正面项被放大约 4 倍 → 受光面明显更亮。
+// 现在正面项走独立的、小得多的增益，并额外做「过渡带加权」：正对阳光时权重低、
+// 掠射/背光过渡带权重高——这才是次表面散射真正应该改变的地方（软化明暗交界），
+// 而不是把整片受光面整体提亮。透光项（薄片背光）与环境项保持各自的量级。
+const float SSS_DIFFUSE_GAIN = 1.0;
+const float SSS_TRANSMISSION_GAIN = 2.5;
+const float SSS_AMBIENT_GAIN = 1.0;
+
+// 正面项的过渡带加权：把 1.0 推向 (1 - saturate(N·L))。
+//   0.0 = 不加权（受光面也有完整的正面项，即旧行为）
+//   1.0 = 只在明暗交界处出现
+// 0.5 表示受光面保留一半权重、交界处满权重。
+const float SSS_TERMINATOR_BIAS = 0.5;
 
 // 包裹漫反射（0 = 纯 Lambert，0.5 = 明显包裹）
 const float SSS_DIFFUSE_WRAP = 0.5;
@@ -118,8 +140,15 @@ vec3 CalculateSubsurfaceScattering(
     vec3 ambientTransmittance = exp2(-rLOG2 * sigmaT * (thickness * SSS_AMBIENT_PATH));
 
     // ① 正面扩散
-    float wrapDiffuse = saturate((dot(worldNormal, lightDir) + SSS_DIFFUSE_WRAP) * rcp(1.0 + SSS_DIFFUSE_WRAP));
-    vec3 diffusion = lightRadiance * (wrapDiffuse * frontVisibility) * sunTransmittance;
+    //    wrapDiffuse：包裹漫反射（软化明暗交界）
+    //    terminatorWeight：把贡献从「整片受光面」推向「明暗交界/掠射区」。
+    //      正对阳光（N·L=1）时权重 = 1 - SSS_TERMINATOR_BIAS = 0.5，
+    //      掠射（N·L=0）时权重 = 1 —— 受光面不会比普通方块亮一大截。
+    float NdotL = dot(worldNormal, lightDir);
+    float wrapDiffuse = saturate((NdotL + SSS_DIFFUSE_WRAP) * rcp(1.0 + SSS_DIFFUSE_WRAP));
+    float terminatorWeight = mix(1.0, 1.0 - saturate(NdotL), SSS_TERMINATOR_BIAS);
+    vec3 diffusion = lightRadiance * (wrapDiffuse * terminatorWeight * frontVisibility * SSS_DIFFUSE_GAIN
+                                     * SUBSURFACE_SCATTERING_DIFFUSE) * sunTransmittance;
 
     // ② 背光透光（只对薄片）
     vec3 transmission = vec3(0.0);
@@ -128,15 +157,16 @@ vec3 CalculateSubsurfaceScattering(
         float backLight = pow(saturate(dot(viewDir, transDir)), SSS_TRANSMISSION_POWER) * SSS_TRANSMISSION_SCALE
                         + SSS_TRANSMISSION_AMBIENT;
         float thinness = 1.0 - thickness * rcp(SSS_THIN_CUTOFF);
-        transmission = lightRadiance * (backLight * backVisibility * thinness * SUBSURFACE_SCATTERING_TRANSMISSION)
-                     * sunTransmittance;
+        transmission = lightRadiance * (backLight * backVisibility * thinness * SSS_TRANSMISSION_GAIN
+                                      * SUBSURFACE_SCATTERING_TRANSMISSION) * sunTransmittance;
     }
 
     // ③ 天光/环境（按 AO 衰减——环境光来自各个方向，遮蔽对它是成立的）
-    vec3 ambient = ambientIrradiance * (SSS_AMBIENT_WRAP * SUBSURFACE_SCATTERING_AMBIENT)
+    vec3 ambient = ambientIrradiance * (SSS_AMBIENT_WRAP * SSS_AMBIENT_GAIN * SUBSURFACE_SCATTERING_AMBIENT)
                  * ambientOcclusion * ambientTransmittance;
 
-    return (SSS_EMISSION * beta * sssAmount) * (diffusion + transmission + ambient);
+    // β 与 mask 是三项共有的入口/出口因子；各自的增益已经在上面的三项里乘好了
+    return (beta * sssAmount) * (diffusion + transmission + ambient);
 }
 
 #endif

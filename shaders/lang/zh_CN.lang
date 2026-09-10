@@ -401,6 +401,8 @@ option.SUBSURFACE_SCATTERING_RADIUS=次表面散射半径
 option.SUBSURFACE_SCATTERING_RADIUS.comment=扩散平均自由程（= 该值 × 4 方块）。越大越"透"，体积衰减越弱；第 2 步的屏幕空间扩散也用它决定模糊半径。
 option.SUBSURFACE_SCATTERING_TRANSMISSION=背光透光强度
 option.SUBSURFACE_SCATTERING_TRANSMISSION.comment=树叶/草/藤等薄片逆光时的透射辉光。0 = 关闭（只保留正面扩散与天光项）。
+option.SUBSURFACE_SCATTERING_DIFFUSE=正面扩散强度
+option.SUBSURFACE_SCATTERING_DIFFUSE.comment=受光面的次表面亮度补充。默认 0.25 时受光面只比普通方块亮约 10%（贡献集中在明暗交界/掠射处）；0 = 完全关闭正面项（受光面与普通方块一致，交界软化也一并消失）。
 option.SUBSURFACE_SCATTERING_AMBIENT=天光次表面强度
 option.SUBSURFACE_SCATTERING_AMBIENT.comment=阴影里/室内的次表面散射（环境项，按 AO 衰减）。0 = 关闭，此时只有被直射光照到的面才有 SSS。
 option.SUBSURFACE_SCATTERING_DIFFUSION=屏幕空间扩散
