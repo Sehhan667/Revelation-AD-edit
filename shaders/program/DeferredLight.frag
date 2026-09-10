@@ -715,18 +715,20 @@ void main() {
 
                     float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
 
-                    // [2026-09] 与直接光严格同步换挡：
-                    // CalculatePCSS 只在 distanceFade < EPS 时执行，直接光就是在跨过这一刻失去贴图阴影的；
-                    // SSS 的"暗部来源"必须在同一位置交给屏幕空间接触阴影，否则两者之间会露出一段
-                    // "贴图没了、接触阴影还没接上"的区间（用户看到的"失去阴影的间距"）。
-                    // 之前写成 distanceFade * 4.0（约 2 格渐变）仍会残留 2 格，这里改成同一时刻切换。
-                    // 连续性由接触阴影本身保证（它是屏幕空间步进的结果，随距离连续变化），不需要渐变。
-                    float sssContactMix = saturate(float(distanceFade >= EPS) + cutout * 0.75);
-                    sss *= mix(1.0, sssContactShadow, sssContactMix);
+                    // "全亮"假设下的贡献（未乘接触阴影）
+                    vec3 sssLit = sunlightBase * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
 
-                    vec3 sssRadiance = mix(sunlightBase * SUBSURFACE_SCATTERING_FAR_SCALE + ambientAccum,
-                                           sunlightBase, sssSunGate);
-                    sceneOut += sssRadiance * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
+                    // 阴影距离内：原实现（接触阴影按 cutout 权重混入，distanceFade = 0）
+                    vec3 sssNear = sssLit * mix(1.0, sssContactShadow, cutout * 0.75);
+
+                    // [2026-09] 阴影距离外：不再乘倍率，而是把亮度**夹在上限**（绝对值，便于控制），
+                    // 并且必须在乘接触阴影之前夹 —— 否则远场靠屏幕空间阴影提供的暗部会被上限抹平
+                    // （min 之后所有受光像素都等于上限，接触阴影就再也压不下去）。
+                    // 白天 sunlightBase 足够大 → 通常就是上限值本身（远处 SSS 稳定在一个固定亮度）；
+                    // 夜晚/阴天 sunlightBase 小 → 自然低于上限，跟着月光一起变暗。
+                    vec3 sssFar = min(sssLit, vec3(SUBSURFACE_SCATTERING_FAR_LIMIT)) * sssContactShadow;
+
+                    sceneOut += mix(sssFar, sssNear, sssSunGate);
                 }
             #else
                 // ---------- 重写版模型 ----------

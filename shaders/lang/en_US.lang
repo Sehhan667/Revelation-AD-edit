@@ -371,8 +371,8 @@ option.SUBSURFACE_SCATTERING_MODEL=Subsurface Scattering Model
 value.SUBSURFACE_SCATTERING_MODEL.0=Legacy
 value.SUBSURFACE_SCATTERING_MODEL.1=Rewrite
 option.SUBSURFACE_SCATTERING_MODEL.comment=Legacy restores the pre-rewrite implementation; the only extra change is that the sun term is scaled down beyond the shadow distance (see the multiplier option below). Rewrite uses per-material thickness, an ambient term, and is decoupled from screen-space shadows and the camera direction. The Front Diffusion / Backlight Translucency / Ambient / Radius options below only apply to the rewrite model.
-option.SUBSURFACE_SCATTERING_FAR_SCALE=Sun Term Beyond Shadow Distance (Legacy)
-option.SUBSURFACE_SCATTERING_FAR_SCALE.comment=The legacy SSS term is entirely sun driven, and there is no shadow data beyond the shadow distance, so a conservative partly-lit value is used: 0 = no SSS at all out there, 0.35 (default) keeps roughly a third, 1.0 keeps the original brightness (i.e. no change). Inside the shadow distance this option does nothing.
+option.SUBSURFACE_SCATTERING_FAR_LIMIT=SSS Brightness Limit Beyond Shadow Distance (Legacy)
+option.SUBSURFACE_SCATTERING_FAR_LIMIT.comment=Beyond the shadow distance there is no shadow data, so instead of scaling the SSS brightness it is clamped to this absolute value. In daylight distant SSS usually sits right at this value; at night or under heavy cloud it follows the moon/sky level and ends up lower. The clamp is applied before the screen-space contact shadow, so the darkening that contact shadows provide out there is preserved. 0 = no SSS beyond the shadow distance at all.
 option.SUBSURFACE_SCATTERING_MODE=Subsurface Scattering Mode
 value.SUBSURFACE_SCATTERING_MODE.0=Hardcoded Only
 value.SUBSURFACE_SCATTERING_MODE.1=Hardcoded + PBR
