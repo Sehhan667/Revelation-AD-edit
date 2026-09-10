@@ -395,12 +395,20 @@ void main() {
             // 整段屏幕空间步进（约 SCREEN_SPACE_SHADOWS_SAMPLES 次深度采样/像素）可安全跳过。
             // 距离过渡区/阴影贴图外（distanceFade>0，rawShadow 恒 1）不受影响，保持原步进。
             if (dot(rawShadow, vec3(1.0)) >= 0.03) {   // 平均亮度 ≥ 0.01 才需要接触阴影
-                // [2026-09 解耦] 旧实现把 sssAmount 当吸收系数传进来，导致「SSS 选项改变接触
-                // 阴影外观」的反向耦合。现在传 0.0：接触阴影只由它自己的采样决定，SSS 材质
-                // 与非 SSS 材质行为一致（不再被 SSS 强度软化）。
-                contactShadow = ScreenSpaceShadow(screenPos, viewPos + viewNormal * normalOffsetBase, dither, 0.0);
+                #if SUBSURFACE_SCATTERING_MODEL == 0
+                    // [2026-09] 旧版模型：还原原有耦合 —— 把 sssAmount 作为步进吸收系数
+                    // （Render.glsl 的 absorption = exp2(-0.125 / (viewDistInv * sssAmount))），
+                    // 于是 SSS 材质的接触阴影更软、非 SSS 材质（sssAmount=0）仍是硬遮挡。
+                    // 副作用同样还原：SSS 强度选项会改变接触阴影外观，且低采样时的条带会
+                    // 通过 sss *= mix(1, contactShadow, ...) 传到草/藤的 SSS 上。
+                    contactShadow = ScreenSpaceShadow(screenPos, viewPos + viewNormal * normalOffsetBase, dither, sssAmount);
+                #else
+                    // 重写版模型：保持解耦（传 0.0）——接触阴影只由它自己的采样决定，
+                    // SSS 选项不再影响它，SSS 也不再消费它。
+                    contactShadow = ScreenSpaceShadow(screenPos, viewPos + viewNormal * normalOffsetBase, dither, 0.0);
+                #endif
             }
-            sssContactShadow = contactShadow;   // 旧版 SSS 模型仍会用它（见下方 SSS 段）
+            sssContactShadow = contactShadow;   // 旧版 SSS 模型会用它（见下方 SSS 段）
         #else
             const float contactShadow = 1.0;
         #endif
