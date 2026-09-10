@@ -715,23 +715,23 @@ void main() {
 
                     float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
 
-                    // "全亮"假设下的贡献（未乘接触阴影）
-                    vec3 sssLit = sunlightBase * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
+                    // ---- 源项：近场沿用原实现，远场改用"这一像素实际收到的光" ----
+                    // 近场（有阴影贴图）：sunlightBase × 形状 —— 与原实现逐位一致。
+                    vec3 sssNear = sunlightBase * sss;
 
-                    // [2026-09] 入射因子 —— 修正"阴影距离外靠近太阳时异常发亮、失去阴影"：
-                    // 旧版 SSS 公式里没有 N·L（平加性项），阴影距离内是靠 pow(rawShadow, ...) 的
-                    // 贴图门控替它遮挡自阴影的。但两件事叠加后它就露出来了：
-                    //   ① 阴影距离外不再有贴图（rawShadow 恒 1，门控恒为 1）；
-                    //   ② "视角朝太阳"这个几何会让屏幕空间阴影退化 —— ScreenSpaceShadow 里
-                    //      rayDir = ViewToScreenPos(viewLightDir * |viewPos.z| + viewPos) - rayPos，
-                    //      太阳方向接近视线方向时该点几乎与像素重合 → rayDir → 0，随后的
-                    //      除法/逆平方根发散，接触阴影返回 1（当作无遮挡）。
-                    // 结果：朝太阳看时可见面多为背光面（N·L < 0，直接光本就是黑的），
-                    // 贴图没了、接触阴影又失效，平加性 SSS 于是拿到满强度 → 异常发亮。
-                    // 这里只补"背光抑制"：N·L ≥ 0 时恒为 1，因此受光面/掠射面与原实现逐位一致；
-                    // N·L 从 0 降到 -0.4 期间平滑压到 0，正好盖住上面那个失效区间。
-                    float sssEntry = saturate(dot(worldNormal, worldLightDir) * 2.5 + 1.0);
-                    sssLit *= sssEntry;
+                    // 远场（贴图没了）：原来的"满阳光"假设在两种情况下会翻车 ——
+                    //   ① 视角朝太阳：可见面多为背光面（N·L < 0），直接光本就是黑的；
+                    //   ② 飞高俯视：脚底地面超出阴影距离，同时指向太阳的方向与视线几乎平行，
+                    //      屏幕空间阴影的 rayDir → 0 退化失效。
+                    // 两种情况下都没有任何阴影信息可用，所以这里换成"实际收到的光"：
+                    //   太阳 × saturate(N·L)  +  环境辐照
+                    // 再乘一个保守系数（默认 0.5），让远场 SSS 跟着当地光照与 N·L 走、
+                    // 比近场更收敛；夜晚/阴天 sunlightBase 小则自然更暗，不需要额外逻辑。
+                    vec3 sssFarLight = sunlightBase * NdotL + ambientAccum;
+                    vec3 sssFar = sssFarLight * sss * SUBSURFACE_SCATTERING_FAR_FACTOR;
+
+                    // 亮度按 sssSunGate（8 格斜坡）融合；暗部换挡不参与这个斜坡（见下）。
+                    vec3 sssOut = mix(sssFar, sssNear, sssSunGate) * SUBSURFACE_SCATTERING_BRIGHTNESS;
 
                     // ---- 暗部来源：与直接光**同刻**换挡 ----
                     // CalculatePCSS 只在 distanceFade < EPS 时执行，直接光就是在那一刻失去贴图阴影的；
@@ -741,10 +741,7 @@ void main() {
                     // 注意这里是"同刻切换"而不是渐变 —— 渐变会留下"直接光已切换、SSS 还没切换"的空白带。
                     float sssContactMix = max(float(distanceFade >= EPS), cutout * 0.75);
 
-                    // [2026-09 已移除] 阴影距离外的亮度限制（曾用 SUBSURFACE_SCATTERING_FAR_LIMIT 夹上限，
-                    // 更早还用过 FAR_SCALE 乘倍率）。上限会让远处 SSS 变成一个与当地光照无关的固定亮度，
-                    // 看起来假；去掉后远处亮度与距离无关，明暗完全由屏幕空间阴影提供（见上面的换挡）。
-                    sceneOut += sssLit * mix(1.0, sssContactShadow, sssContactMix);
+                    sceneOut += sssOut * mix(1.0, sssContactShadow, sssContactMix);
                 }
             #else
                 // ---------- 重写版模型 ----------
