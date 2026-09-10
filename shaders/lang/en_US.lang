@@ -375,10 +375,10 @@ option.SUBSURFACE_SCATTERING_STRENGTH=Subsurface Scattering Strength
 option.SUBSURFACE_SCATTERING_BRIGHTNESS=Subsurface Scattering Brightness
 option.SUBSURFACE_SCATTERING_RADIUS=Subsurface Scattering Radius
 option.SUBSURFACE_SCATTERING_RADIUS.comment=Diffusion mean free path (= value x 4 blocks). Higher = more translucent, weaker volumetric falloff. Also sets the blur radius of the screen-space diffusion step.
-option.SUBSURFACE_SCATTERING_TRANSMISSION=Backlight Translucency
-option.SUBSURFACE_SCATTERING_TRANSMISSION.comment=Transmission glow for thin surfaces (leaves, grass, vines) when back-lit. 0 disables it (front diffusion and sky term remain).
+option.SUBSURFACE_SCATTERING_TRANSMISSION=Backlight Translucency (view dependent)
+option.SUBSURFACE_SCATTERING_TRANSMISSION.comment=Transmission glow for thin surfaces (leaves, grass, vines) when back-lit. This term contains the camera direction, so it only shows when looking towards the sun and pops as the camera turns - hence the default of 0 (off). Raise it if you want the backlit glow.
 option.SUBSURFACE_SCATTERING_DIFFUSE=Front Diffusion
-option.SUBSURFACE_SCATTERING_DIFFUSE.comment=Brightness added on lit faces. At the default 0.25 a lit face is only ~10% brighter than a normal block (most of the contribution sits near the terminator/grazing angles). 0 removes the front term entirely.
+option.SUBSURFACE_SCATTERING_DIFFUSE.comment=Brightness added on lit faces. Camera independent: it only follows N.L and shadow visibility, exactly like the old implementation (steady while turning the camera, responsive to lighting). At the default 0.35 a lit face is about 20% brighter than a normal block.
 option.SUBSURFACE_SCATTERING_AMBIENT=Ambient Subsurface
 option.SUBSURFACE_SCATTERING_AMBIENT.comment=The only term that does not depend on the sun direction or the surface orientation, so it is what keeps SSS visible in shade, on back-facing surfaces and indoors (attenuated by AO and the indoor gate). 0 leaves only the two sun-driven terms.
 option.SUBSURFACE_SCATTERING_DIFFUSION=Screen-Space Diffusion (currently disabled)

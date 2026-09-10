@@ -71,10 +71,12 @@ const float SSS_TRANSMISSION_GAIN = 2.5;
 const float SSS_AMBIENT_GAIN = 2.5;
 
 // 正面项的过渡带加权：把 1.0 推向 (1 - saturate(N·L))。
-//   0.0 = 不加权（受光面也有完整的正面项，即旧行为）
+//   0.0 = 不加权（纯「软漫反射出射」，强度只跟 N·L 与阴影走）
 //   1.0 = 只在明暗交界处出现
-// 0.5 表示受光面保留一半权重、交界处满权重。
-const float SSS_TERMINATOR_BIAS = 0.5;
+// [2026-09] 注意：正面项本身**不依赖相机**（不含 V），只依赖 N·L 与阴影可见性——
+// 这正是旧实现（平加性项 + 各向同性相位）的优点：转视角时强度不变，只随光照/阴影变化。
+// 0.25 表示受光面保留 75% 权重、明暗交界处满权重。
+const float SSS_TERMINATOR_BIAS = 0.25;
 
 // 包裹漫反射（0 = 纯 Lambert，0.5 = 明显包裹）
 const float SSS_DIFFUSE_WRAP = 0.5;
@@ -84,7 +86,10 @@ const float SSS_MIN_COS = 0.25;
 const float SSS_AMBIENT_PATH = 1.0;
 const float SSS_AMBIENT_WRAP = 0.8;
 
-// 背光透光（distortion 近似）参数
+// 背光透光（distortion 近似）参数。
+// [2026-09] 这一项含相机方向 V（pow(saturate(dot(V, -L + N·distortion)), power)），
+// 因此是**视角相关**的：只有逆光看薄片时才亮。物理上没错，但会让树叶/草随相机转动明暗跳动，
+// 所以默认关闭（SUBSURFACE_SCATTERING_TRANSMISSION = 0），需要逆光辉光时再往上调。
 const float SSS_TRANSMISSION_DISTORTION = 0.25;
 const float SSS_TRANSMISSION_POWER = 4.0;
 const float SSS_TRANSMISSION_SCALE = 1.0;

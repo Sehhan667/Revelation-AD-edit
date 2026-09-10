@@ -404,10 +404,12 @@ void main() {
         sssFrontVisibility = saturate(dot(rawShadow, vec3(0.3333)));
 
         // 薄片（树叶/草/藤）的背光可见性：沿光线方向跨过物体本身再采一次阴影贴图。
-        // 用单次 texelFetch 而不是整套 PCF：这一项只是透光的软门控，且第 2 步会被屏幕
-        // 空间扩散抹平；在树叶密集的森林场景里保持 PCF 会成倍放大阴影开销。
+        // 用单次纹理查找而不是整套 PCF：这一项只是透光的软门控；在树叶密集的森林场景里
+        // 保持 PCF 会成倍放大阴影开销。
+        // [2026-09] 只有背光透光项打开时才需要它（该项默认 0 = 关），所以用宏条件直接编译掉，
+        // 关掉时这里零开销。
         float sssThickness = GetSubsurfaceThickness(materialID);
-        if (sssThickness > 0.0 && sssThickness < SSS_THIN_CUTOFF) {
+        if (SUBSURFACE_SCATTERING_TRANSMISSION > EPS && sssThickness > 0.0 && sssThickness < SSS_THIN_CUTOFF) {
             vec3 backPos = worldPos + worldLightDir * GetSubsurfaceBackSampleOffset(materialID);
             float backDistortion;
             vec3 backScreenPos = WorldToShadowScreenSpace(backPos + geoNormal * normalOffsetBase, backDistortion);
