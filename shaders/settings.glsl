@@ -157,6 +157,13 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define NIGHT_BRIGHTNESS 1.0 // Brightness of the night. [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.7 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
 	// [2026-09-04 加到 GUI] 月光亮度（月盘/月光强度）。原只定义在 DeferredLight.frag（非 GUI 选项）。
 	#define MOON_BRIGHTNESS_MULTIPLIER 1.0 // Brightness of the moon. [0.0 0.5 1.0 1.5 2.0 3.0 5.0]
+	// [2026-09 夜空修复] 月光大气散射（Hillaire 天空 LUT 的月光项）标定系数：
+	// 1.0 = 严格按全家 dev 的 moonIrradiance 物理量级（实测夜空仍≈纯黑，贡献 1e-5 量级）；
+	// 500 = 等效把月亮立体角放大（dev 的 MOON_RADIUS_MULT 方向），用于对齐 dev 夜空亮度。
+	#define MOON_SKY_BRIGHTNESS 500.0
+	// [2026-09] 夜空色偏修正：本包 Rayleigh 配比偏蓝（实测 B/R≈3.4，dev≈2.2），
+	// 用偏暖的中性 tint 压蓝、略提红，把夜空蓝度对齐 dev。
+	#define MOON_SKY_TINT vec3(1.25, 0.90, 0.62)
 
 /* Global Illumination */
 	#define SVGF_ENABLED // Enables spatiotemporal variance-guided filtering（SSILVB 降噪）

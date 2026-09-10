@@ -144,9 +144,18 @@ writeonly restrict uniform image2D skyViewImg;
         vec3 sunDir = normalize(vec3(sqrt(1.0 - sqr(sunZenithCos)), sunZenithCos, 0.0));
 
         vec3 lum = RaymarchScattering(atmosphereViewPos, rayDir, sunDir);
-        if (moonlightMult > 0.01) {
-            lum += RaymarchScattering(atmosphereViewPos, rayDir, -sunDir) * moonlightMult;
-        }
+
+        // [2026-09 夜空修复] 原实现：月光散射项被 moonlightMult(≈1e-3) 门控(>0.01 恒假)
+        // 并乘以该极小数 → 夜里 LUT 没有月光散射，天空只剩星星/月面 = 纯黑。
+        // 改为对齐全家 dev（SkyView.comp:64 + Common.glsl:84-94）：
+        //   moonAlbedo = 0.136 * NIGHT_BRIGHTNESS
+        //   moonIrradiance = moonAlbedo * sunIrradiance * moonSolidAngle
+        // 我们的 RaymarchScattering 内部已乘 sunIrradiance，故此处等价系数
+        // = moonAlbedo * moonSolidAngle * MOON_SKY_BRIGHTNESS（后者为观感标定旋钮）。
+        const float moonAngularRadius = atan(1.7374e6 / 3.8440e8);
+        const float moonSolidAngle = 6.283185307179586 * (1.0 - cos(moonAngularRadius));
+        float moonSkyFactor = 0.136 * NIGHT_BRIGHTNESS * moonSolidAngle * MOON_SKY_BRIGHTNESS;
+        lum += RaymarchScattering(atmosphereViewPos, rayDir, -sunDir) * moonSkyFactor * MOON_SKY_TINT;
 
         lum = desaturate(lum, wetness * 0.5);
         return lum * 128.0;
