@@ -370,9 +370,7 @@ option.EMISSIVE_CURVE=Emissive Curve
 option.SUBSURFACE_SCATTERING_MODEL=Subsurface Scattering Model
 value.SUBSURFACE_SCATTERING_MODEL.0=Legacy
 value.SUBSURFACE_SCATTERING_MODEL.1=Rewrite
-option.SUBSURFACE_SCATTERING_MODEL.comment=Legacy restores the pre-rewrite implementation (bit-identical inside the shadow distance; beyond it the source becomes the light actually received, scaled by the conservative factor below). Rewrite uses per-material thickness, an ambient term, and is decoupled from screen-space shadows and the camera direction. The Front Diffusion / Backlight Translucency / Ambient / Radius options below only apply to the rewrite model.
-option.SUBSURFACE_SCATTERING_FAR_FACTOR=Beyond Shadow Distance Factor (Legacy)
-option.SUBSURFACE_SCATTERING_FAR_FACTOR.comment=Beyond the shadow distance no shadow information is available (the shadow map is out of range, and screen-space shadows degenerate when the view approaches the sun direction), so the far source becomes sun x saturate(N.L) + ambient, scaled by this factor: 0 = no SSS out there at all, 0.5 (default) is about half the near-field level and follows the local light and N.L, 1.0 = no extra convergence. Inside the shadow distance this option does nothing.
+option.SUBSURFACE_SCATTERING_MODEL.comment=Legacy restores the pre-rewrite implementation (no brightness restriction beyond the shadow distance - screen-space shadows provide the darkening there). Rewrite uses per-material thickness, an ambient term, and is decoupled from screen-space shadows and the camera direction. The Front Diffusion / Backlight Translucency / Ambient / Radius options below only apply to the rewrite model.
 option.SUBSURFACE_SCATTERING_MODE=Subsurface Scattering Mode
 value.SUBSURFACE_SCATTERING_MODE.0=Hardcoded Only
 value.SUBSURFACE_SCATTERING_MODE.1=Hardcoded + PBR
