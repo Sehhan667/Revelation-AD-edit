@@ -76,12 +76,22 @@ void main() {
     texCoord = mat2(gl_TextureMatrix[0]) * gl_MultiTexCoord0.xy + gl_TextureMatrix[0][3].xy;
 
     // 玩家相对世界坐标（shadowModelViewInverse 不含相机平移，与 gbuffers 的 worldPos 同一约定）
-    vec3 scenePos = transMAD(shadowModelViewInverse, viewPos);
+    // [2026-09-10 优化] 原实现无条件做一次 mat4×vec4（约 20 条 ALU/顶点），但 scenePos 只有两个
+    // 消费者：水面分支的 vectorData，以及体素化分支（ENABLE_VOXELIZATION；GI_MODE<2 时整块编译掉）。
+    // 阴影 pass 已确认是顶点/图元吞吐受限（背面剔除无效、去掉 GS 无效，而缩短 shadowDistance
+    // 直接 +4fps），所以把这次乘法挪进真正需要它的分支：非水顶点在体素化关闭时不再付这 20 条 ALU。
+    #ifdef ENABLE_VOXELIZATION
+        vec3 scenePos = transMAD(shadowModelViewInverse, viewPos);
+    #endif
 
     // [优化] 4. 避免强制类型转换开销
     if (abs(mc_Entity.x - 10003.0) < 0.1) {
         isWater = 1u;
-        vectorData = scenePos + cameraPosition;
+        #ifdef ENABLE_VOXELIZATION
+            vectorData = scenePos + cameraPosition;
+        #else
+            vectorData = transMAD(shadowModelViewInverse, viewPos) + cameraPosition;
+        #endif
     } else {
         isWater = 0u;
         vectorData = gl_Color.rgb;
