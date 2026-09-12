@@ -905,3 +905,37 @@ option.VOXEL_EDGE_BLEND_DISTANCE.comment=网格外环境光过渡进网格内的
 
 screen.help= Help (hover_mouse)
 screen.help.comment = There is a READ ME file in the shader.zip that explains things. Or visit patreon.com/timetravelbeard and watch the free video series there or on Youtube. ask questions on my discord linked in both. Have Fun!
+# ===== 2026-09-12 补齐：此前有 GUI 但缺文案 =====
+option.NOISE_SIZE=雾噪声尺寸
+option.NOISE_SIZE.comment=体积雾 3D 噪声的空间尺度。值越小噪声越细密、越吃性能；越大越成大块絮状。配合「雾噪声」开关使用
+option.SUN_BRIGHTNESS_MULTIPLIER=太阳亮度倍率
+option.SUN_BRIGHTNESS_MULTIPLIER.comment=整体缩放太阳直射光的强度。想让画面更明媚就调高，觉得过曝就调低
+option.BLOOM_NO_DOWNSAMPLE=泛光降采样
+option.BLOOM_NO_DOWNSAMPLE.comment=泛光是否在低分辨率下计算。开启更快但光晕略糊，关闭更清晰也更吃性能
+option.SSPT_BLENDED_LIGHTMAP=SSPT 融合光照贴图
+option.SSPT_BLENDED_LIGHTMAP.comment=屏幕空间路径追踪结果与 Minecraft 原版光照贴图的混合比例。0 = 完全用原版光照，1 = 完全用 SSPT 结果
+option.SSPT_MAX_ACCUM_FRAMES=SSPT 最大累积帧数
+option.SSPT_MAX_ACCUM_FRAMES.comment=SSPT 时域累积的帧数上限。越高噪点越少、画面越稳，但快速移动时拖影越明显
+option.DEBUG_SHADOW_WARP=调试：阴影 warp 场
+option.DEBUG_SHADOW_WARP.comment=把阴影 warp 形变场直接显示出来，用于检查 warp 是否连续、有无条带。仅调试用，平时请关闭
+option.DEBUG_SHADOW_WARP_DIFF=调试：warp 表 vs 解析曲线
+option.DEBUG_SHADOW_WARP_DIFF.comment=显示「表驱动 warp」与「解析径向 warp」两者的差异，用于对拍两套实现是否一致。仅调试用
+option.DEBUG_CLOUD_NOISE=调试：云噪声
+option.DEBUG_CLOUD_NOISE.comment=把云层使用的噪声纹理直接输出，用于排查云形异常。仅调试用
+option.DEBUG_ATMOSPHERE_LUTS=调试：大气查找表
+option.DEBUG_ATMOSPHERE_LUTS.comment=把大气散射的查找表（透射率/多次散射等）显示出来，用于排查天空颜色异常。仅调试用
+option.DEBUG_TONE_MAPPING_PLOT=调试：色调映射曲线
+option.DEBUG_TONE_MAPPING_PLOT.comment=绘制当前色调映射的响应曲线，用于对比不同映射模式的亮度走向。仅调试用
+# ===== 未接线功能：实现文件已删除，选项暂时无效 =====
+option.FXAA_ENABLED=FXAA（未接线）
+option.FXAA_ENABLED.comment=注意：FXAA 的实现文件已随死代码清理移除，此开关当前无效。如需启用请从 git history 取回 shaders/program/post/FXAA.glsl 并接线
+option.RSM_ENABLED=启用 RSM（未接线）
+option.RSM_ENABLED.comment=反射阴影贴图（Reflective Shadow Maps）是一次反弹的间接光方案。注意：实现文件 RSM.glsl 从未被接线且已随死代码清理移除，此开关当前无效；若要启用需取回该文件，并先解决它与 settings.glsl 重复定义 realShadowMapRes 的问题
+option.RSM_SAMPLES=RSM 采样数（未接线）
+option.RSM_SAMPLES.comment=注：RSM 未接线（实现文件已移除），此选项当前无效
+option.RSM_RADIUS=RSM 采样半径（未接线）
+option.RSM_RADIUS.comment=注：RSM 未接线（实现文件已移除），此选项当前无效
+option.RSM_BRIGHTNESS=RSM 亮度（未接线）
+option.RSM_BRIGHTNESS.comment=注：RSM 未接线（实现文件已移除），此选项当前无效
+option.RSM_MAX_ACCUM_FRAMES=RSM 最大累积帧数（未接线）
+option.RSM_MAX_ACCUM_FRAMES.comment=注：RSM 未接线（实现文件已移除），此选项当前无效

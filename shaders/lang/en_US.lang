@@ -725,3 +725,37 @@ option.VOXEL_GI_EMISSIVE_THRESHOLD=Emissive Threshold
 option.VOXEL_GI_EMISSIVE_THRESHOLD.comment=Blocks whose PBR emissive is below this value are not treated as light sources
 option.VOXEL_GI_BOOST=Emissive Boost
 option.VOXEL_GI_BOOST.comment=Light energy multiplier for emissive voxels
+# ===== 2026-09-12: options that had GUI entries but no text =====
+option.NOISE_SIZE=Fog Noise Size
+option.NOISE_SIZE.comment=Spatial scale of the volumetric fog 3D noise. Smaller = finer detail and more expensive; larger = big soft clumps. Used together with the fog noise toggle
+option.SUN_BRIGHTNESS_MULTIPLIER=Sun Brightness Multiplier
+option.SUN_BRIGHTNESS_MULTIPLIER.comment=Scales the intensity of direct sunlight overall. Raise for a brighter look, lower if the image blows out
+option.BLOOM_NO_DOWNSAMPLE=Bloom Downsample
+option.BLOOM_NO_DOWNSAMPLE.comment=Whether bloom is computed at reduced resolution. On is faster but softer, off is sharper and more expensive
+option.SSPT_BLENDED_LIGHTMAP=SSPT Blended Lightmap
+option.SSPT_BLENDED_LIGHTMAP.comment=Blend factor between the screen-space path tracing result and Minecraft vanilla lightmap. 0 = vanilla lighting only, 1 = SSPT result only
+option.SSPT_MAX_ACCUM_FRAMES=SSPT Max Accumulation Frames
+option.SSPT_MAX_ACCUM_FRAMES.comment=Upper bound on SSPT temporal accumulation. Higher = cleaner and more stable, but more ghosting during fast motion
+option.DEBUG_SHADOW_WARP=Debug: Shadow Warp Field
+option.DEBUG_SHADOW_WARP.comment=Visualises the shadow warp field directly, to check continuity and banding. Debug only, keep off
+option.DEBUG_SHADOW_WARP_DIFF=Debug: Warp Table vs Analytic
+option.DEBUG_SHADOW_WARP_DIFF.comment=Shows the difference between the table-driven warp and the analytic radial warp, to verify the two implementations agree. Debug only
+option.DEBUG_CLOUD_NOISE=Debug: Cloud Noise
+option.DEBUG_CLOUD_NOISE.comment=Outputs the raw cloud noise texture, for diagnosing malformed clouds. Debug only
+option.DEBUG_ATMOSPHERE_LUTS=Debug: Atmosphere LUTs
+option.DEBUG_ATMOSPHERE_LUTS.comment=Displays the atmosphere scattering lookup tables (transmittance, multiple scattering, etc.), for diagnosing wrong sky colours. Debug only
+option.DEBUG_TONE_MAPPING_PLOT=Debug: Tone Mapping Curve
+option.DEBUG_TONE_MAPPING_PLOT.comment=Plots the current tone mapping response curve, for comparing how different mappers roll off highlights. Debug only
+# ===== Not wired up: implementation removed, these currently do nothing =====
+option.FXAA_ENABLED=FXAA (not wired)
+option.FXAA_ENABLED.comment=Note: the FXAA implementation was removed with the dead-code cleanup, so this toggle currently does nothing. To enable it, restore shaders/program/post/FXAA.glsl from git history and wire it up
+option.RSM_ENABLED=Enable RSM (not wired)
+option.RSM_ENABLED.comment=Reflective Shadow Maps gives one-bounce indirect light. Note: RSM.glsl was never included anywhere and has been removed with the dead-code cleanup, so this toggle currently does nothing. To enable it, restore shaders/lib/lighting/RSM.glsl from git history and first fix its duplicate definition of realShadowMapRes (already defined in settings.glsl)
+option.RSM_SAMPLES=RSM Samples (not wired)
+option.RSM_SAMPLES.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
+option.RSM_RADIUS=RSM Radius (not wired)
+option.RSM_RADIUS.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
+option.RSM_BRIGHTNESS=RSM Brightness (not wired)
+option.RSM_BRIGHTNESS.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
+option.RSM_MAX_ACCUM_FRAMES=RSM Max Accumulation Frames (not wired)
+option.RSM_MAX_ACCUM_FRAMES.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
