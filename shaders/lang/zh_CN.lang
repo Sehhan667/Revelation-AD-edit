@@ -208,6 +208,8 @@ option.VOLUMETRIC_FOG=体积雾
 option.VF_CLOUD_SHADOWS=考虑云影
 option.VF_HEIGHT=体积雾高度
 suffix.VF_HEIGHT=m
+option.VF_SHAFT_RANGE=光柱作用距离
+option.VF_SHAFT_RANGE.comment=光柱沿视线多远淡出（格）。值小 → 光束只在近处可见；值大 → 延伸得更远；256 ≈ 不衰减（等于关闭淡出，想对比改动前后时用）。只减弱光柱的明暗对比，远处会淡成普通雾而不是变黑
 option.VF_NIGHT_FOG_SATURATION=夜晚雾色饱和度
 option.VF_NIGHT_FOG_SATURATION.comment=夜里雾的蓝来自两处：月光项本身是蓝的，以及雾的 Rayleigh 散射系数本身偏蓝（白天被暖白的太阳项压着看不出来）。0 = 完全中性（只留亮度，夜里就是灰雾），1 = 保持原来的蓝。只作用于夜晚，白天不受影响
 option.VF_RAIN_SUN_FLOOR=雨天太阳项保留

@@ -34,6 +34,12 @@
     #define VF_SHAFT_BRIGHTNESS 2.0
 #endif
 
+// =================【 光柱作用距离（沿视线多远淡出，格） 】=================
+// 正式定义在 settings.glsl；这里兜底。
+#ifndef VF_SHAFT_RANGE
+    #define VF_SHAFT_RANGE 48.0
+#endif
+
 // =================【 夜晚雾色饱和度（1 = 原来的蓝，0 = 完全中性） 】=================
 #ifndef VF_NIGHT_FOG_SATURATION
     #define VF_NIGHT_FOG_SATURATION 0.5
@@ -337,8 +343,16 @@ mat2x3 RaymarchAtmosphericFog(in vec3 startPos, in vec3 endPos, in float dither,
     // 注意：系数必须夹在 [0,1]。mix(1, vis, k) 在 k>1 时是外插 —— 全遮挡处会算出负值，
     // 那等于让雾比「完全没有太阳项」还暗（暗部出现反常的黑块）。>1 现在等价于 1（满对比度）。
     float beamContrast = clamp(VF_VOLUME_INTENSITY, 0.0, 1.0);
+    // [2026-09-12 光柱无限延长] 光柱此前会一路延伸到 maxDist（256 格）不衰减，三处叠加所致：
+    // ① sunShadowVis 是沿射线均匀采样的平均值（无距离权重），近处远处话语权相同；
+    // ② integralFactor = (1-T)/σ 在远距离饱和于 1/σ —— 有上限，但**不是衰减**；
+    // ③ 光柱对比度 mix(1, vis, beamContrast) 本身是常数，远处的雾照样带满强度条纹。
+    // 这里只让「对比度」随距离淡出，不动雾的基础亮度：远处光柱淡成普通雾，而不是变黑
+    // （若改成整体压暗，远处会变成一片死黑，比原来更糟）。
+    // VOLUMETRIC_LIGHT 关闭时 sunShadowVis ≡ 1 ⇒ mix(1,1,x) ≡ 1，本项自动失效。
+    float beamFade = exp2(-min(rayLength, maxDist) * rcp(max(VF_SHAFT_RANGE, 1.0)) * 1.442695);
     vec3 scatteringSun = fogScatteringCoeff * (avgDensity * msEnergy) * integralFactor
-                       * cloudShadow * mix(vec3(1.0), sunShadowVis, beamContrast);
+                       * cloudShadow * mix(vec3(1.0), sunShadowVis, beamContrast * beamFade);
     // 光束亮度：只放大太阳 in-scatter，不动环境项（scatteringSky）—— 因此它是「让光束更明显」
     // 的正解。抬雾浓度或米氏系数会把环境雾一起提亮，对比度反而不变；这一项只提亮被太阳照到的
     // 那一部分。注意它也会放大暗处与亮处的差值，配合「阴影对比度」一起用。

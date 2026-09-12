@@ -196,6 +196,8 @@ option.VOLUMETRIC_FOG=Volumetric Fog
 option.VF_CLOUD_SHADOWS=Volumetric Fog Cloud Shadows
 option.VF_HEIGHT=Volumetric Fog Height
 suffix.VF_HEIGHT=m
+option.VF_SHAFT_RANGE=Light Shaft Range
+option.VF_SHAFT_RANGE.comment=How far light shafts stay visible along the view ray, in blocks. Small = shafts only near the camera; large = they reach further; 256 = no falloff (effectively disables it, useful to compare before/after). Only the shaft contrast fades with distance - distant fog becomes plain fog rather than going black
 option.VF_NIGHT_FOG_SATURATION=Night Fog Saturation
 option.VF_NIGHT_FOG_SATURATION.comment=The blue of the night fog comes from two sources: the moonlight term is blue itself, and the fog's Rayleigh scattering coefficient is strongly blue (hidden during the day by the warm-white sun term). 0 = fully neutral (brightness only, i.e. grey fog at night), 1 = keep the original blue. Night only; daytime is unaffected
 option.VF_RAIN_SUN_FLOOR=Rain Sun Term Floor
