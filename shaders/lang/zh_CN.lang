@@ -329,6 +329,12 @@ option.SHADOW_CONTRAST_STRENGTH=PCF的次表面散射补偿
 
 option.SHADOW_BACKFACE_CULLING=阴影背面剔除
 option.SHADOW_DISTORTION_STRENGTH=阴影形变强度
+option.SHADOW_WARP_RTWSM=表驱动阴影形变（RTWSM）
+option.SHADOW_WARP_RTWSM.comment=用一张每帧由 setup12 填写的 256×2 表来控制阴影形变（写入端 Shadow.vert 与所有查询端共用同一个函数），而不是原来的固定解析径向曲线。表内容由下两项控制。若担心画面，关掉它即可逐位回到原实现。
+option.RTWSM_CONTENT_STRENGTH=内容驱动强度（RTWSM）
+option.RTWSM_CONTENT_STRENGTH.comment=把阴影图分辨率往"深度边缘密的地方"挪：密度 = 解析密度 × (1 + k × 相对边缘密度)，再积分成 CDF 当作 warp。解析曲线的中心加权始终保留（玩家在中心，这个偏向不能丢）。0 = 与第一阶段逐点一致（默认）；越大越偏向内容，但也越容易看到边缘/跳变。配合下面的时域平滑一起用。
+option.RTWSM_TEMPORAL_SPEED=表的时域平滑（RTWSM）
+option.RTWSM_TEMPORAL_SPEED.comment=表每帧向新目标靠近的比例。边缘密度是逐帧测量的，不平滑（=1）会看到阴影边缘"呼吸"；默认 0.2 大约 5 帧收敛。
 option.SHADOW_DISTORTION=阴影扭曲开关
 option.SCREEN_SPACE_SHADOWS=屏幕空间阴影
 option.SCREEN_SPACE_SHADOWS_SAMPLES=屏幕空间阴影采样数

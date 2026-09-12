@@ -100,6 +100,12 @@ out vec3 sceneOut;
 
 writeonly uniform uimage2D colorimg7;
 
+// [2026-09 RTWSM] 逐 bin 重要性（256 x 2，R32UI；row0 = x 轴、row1 = y 轴）。
+// 本 pass 用 imageAtomicMax 聚合（**不是累加**，理由见 main() 里的"修正 B"），
+// 下一帧的 setup12 读走并清零。
+// 非 writeonly（atomic 需要读写权限）⇒ 必须带格式限定符（见包内 Terrain.frag 的同类注释）。
+layout (r32ui) uniform uimage2D shadowWarpHistImg;
+
 #ifdef SUBSURFACE_SCATTERING_DIFFUSION
     // [2026-09] SSS 屏幕空间扩散的源项（半分辨率 RGBA16F，见 lib/lighting/Subsurface.glsl 与
     // post/SubsurfaceBlur.comp）。用 imageStore 写半分辨率：同一 2x2 全分辨率块只让左上片元写，
@@ -166,11 +172,54 @@ uniform sampler2D atlas2D;
 // 阶段④）；此处只读回信号，不再 include VoxelTracing.glsl。
 
 
+//======// 阴影 warp 表的重要性测量 //=============================================================//
+
+// RTWSM 的重要性（见 lib/lighting/shadow/Warp.glsl 与 program/setup/ShadowWarp.comp）：
+// 把"相机看得见的地形"投影到**未平移、未形变**的 shadow clip 空间，落在哪个 bin 就给哪个 bin
+// 一份重要性。三个因子：
+//   距离项 1/(dist^RTWSM_DIST_FACTOR · 0.1 + 1)   —— 玩家中心加权（近处地形要更多阴影分辨率）
+//   朝向项 1 + RTWSM_FACING_FACTOR·saturate(N·(-V)) —— 正对相机的面才重要（背面/掠射面看不见）
+//   体素条带权重 见下
+// 不需要读阴影图、不需要新 pass：本 pass 现成的世界坐标/法线/视距就够了。放在本文件（而不是
+// Warp.glsl）是因为下面这条权重要用 VOXEL_SHADOW_RATIO / ENABLE_VOXELIZATION，那两个宏由
+// VoxelLighting.glsl 提供，而本文件的 include 顺序里它晚于 shadow/Common.glsl。
+float ShadowWarpImportanceAt(in vec3 worldPos, in vec3 worldNormal, in vec3 viewPos) {
+    vec3 shadowClipPos = projMAD(shadowProjection, transMAD(shadowModelView, worldPos));
+    if (!all(lessThan(abs(shadowClipPos.xy), vec2(1.0)))) return 0.0;
+
+    float viewDist = length(viewPos);
+    float distWeight = 1.0 / (pow(max(viewDist, 1.0), RTWSM_DIST_FACTOR) * 0.1 + 1.0);
+    float facing = 1.0 + RTWSM_FACING_FACTOR * saturate(dot(worldNormal, -normalize(viewPos)));
+
+    // [2026-09] 体素平铺条带的横向权重下限。
+    // 开着体素化时阴影图**左侧一条 256 纹素宽的竖条**被体素立方体平铺占用（见
+    // lib/lighting/VoxelLighting.glsl 的 VOXEL_TILE_* 与 ShiftShadowScreenPos），而 warp 是
+    // 逐轴 CDF —— x 轴分不清"左边这条是体素条带、右边才是真阴影"，内容驱动的重分配会把它当成
+    // 一块低重要性区域一路压缩，把体素几何挤成几个纹素宽（体素 GI 的太阳阴影会花掉）。
+    // 所以对落在条带内的 x 给一个**下限比例**（0.6 = 明显低于该轴平均，但仍分得到分辨率），
+    // 并且用渐变而不是阶跃：阶跃会在 bin 级产生一道密度跳变，正是 warp 条纹的来源。
+    // 判据与 ShiftShadowScreenPos 同一套式子：screenX = (u·0.5 + 0.5)·RATIO + 1 − RATIO，
+    // 体素条带 = screenX < RATIO，反解出 u < 2·(2·RATIO − 1)/RATIO = voxelTileEdgeClip。
+    // y 轴不受影响（体素条带是竖向的，只占 x 的一小段）。
+    float voxelTileWeight = 1.0;
+    #ifdef ENABLE_VOXELIZATION
+        // 分母 max(…, 1e-6)：分辨率被调到体素条带几乎吃满整幅阴影图时，这个边界会跑到 0 附近
+        // （极端情况下 RATIO ≤ 0.5 时更会变负，该档位按 VoxelLighting 的注释本就不该用），
+        // 夹一下保证权重是 [0.6, 1] 的单调渐变而不是乱掉。
+        float voxelTileEdgeClip = 2.0 * (2.0 * VOXEL_SHADOW_RATIO - 1.0) / VOXEL_SHADOW_RATIO;
+        voxelTileWeight = max(SHADOW_WARP_VOXEL_WEIGHT, clamp(shadowClipPos.x / max(voxelTileEdgeClip, 1e-6), 0.0, 1.0));
+    #endif
+
+    return distWeight * facing * voxelTileWeight;
+}
+
 //======// Main //================================================================================//
 void main() {
     
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
+
+    // [2026-09] RTWSM 重要性测量已移到下面（法线取到之后、天空分支之后），见那里的说明。
 
     vec3 screenPos = vec3(screenCoord, loadDepth0(texelPos));
 
@@ -286,6 +335,35 @@ void main() {
     #endif
 
     Material material = GetMaterialData(specularTex);
+
+    #ifdef SHADOW_WARP_RTWSM
+        // ===== RTWSM 重要性测量 =====
+        // 式子见上面的 ShadowWarpImportanceAt；这里只负责量化 + 逐 bin 取最大值。
+        // 具体取哪个 bin：未平移、未形变的 shadow clip 空间（表就是按这个空间定义的）。
+        if (materialID != 0u) {
+            float importance = ShadowWarpImportanceAt(worldPos, worldNormal, viewPos);
+
+            if (importance > 0.0) {
+                vec3 shadowClipPos = projMAD(shadowProjection, transMAD(shadowModelView, worldPos));
+                vec2 binF = clamp(shadowClipPos.xy * 0.5 + 0.5, 0.0, 1.0) * float(RTWSM_HIST_SIZE);
+                ivec2 binXY = clamp(ivec2(binF), ivec2(0), ivec2(int(RTWSM_HIST_SIZE) - 1));
+                uint quant = uint(importance * RTWSM_IMPORTANCE_SCALE);
+                // [2026-09 修正 B] **取最大值，不是累加**：
+                //   累加 = "落在该 bin 的屏幕像素数 × 平均权重"。而屏幕像素密度 ∝ 1/视距²、
+                //   权重本身又 ∝ 1/视距^1.3 ⇒ bin 计数 ∝ 1/视距^3.3。实测（rdc_analysis/
+                //   rtwsm_measure.py，1920x1080 平地对 128 宽的阴影 frustum）：近处 bin 收到
+                //   约 22 万权重、远处 bin 约 0.03，跨度 1e4 以上。归一化再 clamp 到 [0.25,4]
+                //   之后，**除了中心几个 bin 全是下限平台** ⇒ 内容信号被夹成平的 ⇒ 调高
+                //   RTWSM_CONTENT_STRENGTH 看不出任何区别（用户实测"和 0 没区别"）。
+                //   取 max 后 bin 值 = "这条切片上最需要分辨率的地方有多需要"，与采样密度无关，
+                //   跨度只有几倍到几十倍（这才是可直接当密度比用的量）。
+                //   量化成整数后用整数 imageAtomicMax（importance 恒 ≥ 0，正整数保序）。
+                imageAtomicMax(shadowWarpHistImg, ivec2(binXY.x, 0), quant);
+                imageAtomicMax(shadowWarpHistImg, ivec2(binXY.y, 1), quant);
+            }
+        }
+    #endif
+
     float sssAmount = 0.0;
     
     // --- SSS ---
@@ -966,6 +1044,40 @@ void main() {
         vec3 warpedClip = DistortShadowSpace(shadowClip);
         sceneOut = vec3(warpedClip.xy * 0.5 + 0.5,
                         saturate(CalcDistortionFactor(shadowClip.xy) * 0.25));
+    }
+#endif
+
+#ifdef DEBUG_SHADOW_WARP_DIFF
+    // [2026-09] 骨架验证用：**表驱动 warp vs 解析径向 warp 的实际差异**。
+    // 这个视图不依赖 SHADOW_WARP_RTWSM 开关（表由 setup12 每帧无条件填写、
+    // ApplyShadowWarpTable / CalcAnalyticDistortionFactor 两者都始终可用），
+    // 所以可以先把开关**关着**看它，确认表本身是对的，再去开 warp。
+    //   R = |Δxy| / 0.02 clip   （0.02 clip ≈ 10 纹素 @1024；10 纹素 ≈ 0.4 满量程）
+    //   G = 0.5 × 表侧局部缩放 / 解析侧因子   （0.5 灰 = 两者相等；越亮 = 表侧局部更"放大"）
+    //   B = **表项无效标记**（NaN / 全 0 / 越界）：整屏发蓝 = 表没被写进来（setup12 没跑
+    //       或没绑上），此时 ApplyShadowWarpTable 会走解析兜底，画面看不出异常。
+    //       [2026-09] 判废区间已与填表端的夹紧区间对齐（见 Warp.glsl 的 WarpEntryInvalid）：
+    //       此前校验比写入更严，k 一大就有大片**合法**表项被判废、整屏发蓝，而那正是当时
+    //       阴影边缘错位的原因；所以"整屏蓝"现在是真的没写表，不再有假阳性。
+    //   A = 逐 bin 表项里的**局部缩放**（×0.05：0.05→1.0 全亮 = 该 bin 分到最多分辨率）。
+    //       与上面的 R/G 一起看，可以直接读出"分辨率被挪到哪里去了"。
+    // 判据：R 沿两条坐标轴应接近 0（表就是在轴上取的解析曲线，只剩 float16 量化），
+    //       越靠角点越亮 —— 可分离 warp 无法复现径向 warp 的角点压缩，这是该近似的固有下限。
+    // 这里用**原始表项**（不经过兜底）来判断，才能看出表本身的状态。
+    {
+        vec3 shadowClip = projMAD(shadowProjection, transMAD(shadowModelView, worldPos));
+        vec2 rawX = SampleShadowWarpTable(shadowClip.x, 0.25);
+        vec2 rawY = SampleShadowWarpTable(shadowClip.y, 0.75);
+        float tableBad = (WarpEntryInvalid(rawX) || WarpEntryInvalid(rawY)) ? 1.0 : 0.0;
+
+        vec3 warp = ApplyShadowWarpTable(shadowClip.xy);
+        float analyticFactor = CalcAnalyticDistortionFactor(shadowClip.xy);
+        vec2 analyticWarp = shadowClip.xy * analyticFactor;
+
+        float dispDiff = saturate(length(warp.xy - analyticWarp) / 0.02);
+        float scaleRatio = saturate(0.5 * warp.z / max(analyticFactor, 1e-3));
+        float tableScale = saturate(0.05 * max(rawX.y, rawY.y));
+        sceneOut = vec4(vec3(dispDiff, scaleRatio, tableBad), tableScale);
     }
 #endif
 

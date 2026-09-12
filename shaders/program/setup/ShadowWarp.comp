@@ -4,62 +4,276 @@
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
-    Pass: 阴影 warp 表构建（RTWSM 骨架，setup12，跑在 shadow pass 之前）
+    Pass: 阴影 warp 表构建（RTWSM，setup12，跑在 shadow pass 之前）
 
     [2026-09] 每帧填写 256 x 2 的 warp 表（见 lib/lighting/shadow/Warp.glsl）：
       row0 = x 轴、row1 = y 轴，每项 = (变形后坐标, 局部缩放 dW/du)。
 
-    骨架阶段的内容 = **现有解析径向曲线的可分离类比**：
-      原式（Common.glsl）factor 只是 |p| 的函数，xy 同乘该因子；
-      沿坐标轴（p = (u, 0)）时 |p| = |u|，所以取
-          curve(u) = 原曲线在 |u| 处的值，warpped(u) = u · curve(u)
-      → **两条坐标轴上与现有实现逐点一致**，离轴方向是可分离近似
-      （这正是 RTWSM 与径向 warp 的差别所在）。
+    内容驱动的密度分配：
+        density(u) = 解析底座 dW_analytic/du × 有界的内容因子（相对重要性，夹在 [0.1, 10]）
+      k = RTWSM_CONTENT_STRENGTH（GUI 滑块，0 = 只用解析底座，与第一阶段逐点一致；
+      k > 0 时把阴影图分辨率往"重要性高的地方"挪，近处地形因此在中心留权）。
+      注意 density 是**乘法**合成、且最后整体归一化：k 不改变整幅阴影图的总覆盖，只改局部斜率
+      （详见下面第 2 段 CDF 处的说明）。
 
-    第二阶段才会把表的内容换成内容驱动的 importance 分配（深度边缘密度 → 1D 前缀和 → warp），
-    那一步才带来实际画质收益；本 pass 目前只负责把"写入 / 查询 / bias 缩放"管线打通。
+    重要性从哪来：**DeferredLight.frag** 里逐片元测量（它本来就跑在 shadow pass 之后，
+      现成的世界坐标/法线/视距就够，不需要新 pass），用 imageAtomicMax **逐 bin 取最大值**
+      聚合到 image.shadowWarpHistImg（256x2 R32UI，行 0 = x 轴、行 1 = y 轴）。
+      **必须取 max 而不是累加**：累加值正比于"该 bin 的屏幕采样数"，而采样密度 ∝ 1/视距²
+      ⇒ 归一化后除了中心几个 bin 全是下限平台，内容信号被夹平（详见 DeferredLight.frag 的
+      "修正 B"）。取 max 后 bin 值 = 该 bin 上最需要分辨率的地方有多需要，与采样密度无关。
+      写入值是量化到 RTWSM_IMPORTANCE_SCALE 的整数，所以这里读回来要除以同一个倍率。
+      本 pass 读走上一帧的值、立刻清零，再积成 CDF 当作 warp。
+      开体素化时 x 轴还要给体素平铺条带一个权重下限（测量端见 DeferredLight.frag 的
+      ShadowWarpImportanceAt），否则内容驱动会把体素几何压没。
 
-    成本：workGroupsRender=(1,1) 在本包约定里是"按屏幕尺寸 dispatch"（见 SkyView.comp 的说明），
-    所以真正干活的只有前 512 个 invocation（256 x 2），其余在 guard 处直接 return，可忽略。
+    CDF 里加 SLOPE_MIN/MAX 两个限幅，保证 warp 严格单调且不会把整段压成 1 个纹素；
+    这两条夹紧同时就是**表项局部缩放的合法区间**，写读两端共用（Warp.glsl 的 WarpEntryInvalid）。
+
+    成本：一个 workgroup（16x16 = 256，正好一个表项一个线程）= 1 次 imageLoad/Store
+      + 512 个清零，可忽略。CDF 那一小段串行代码只有 t == 0 一个线程跑（256 项）。
 --------------------------------------------------------------------------------
 */
 
 layout (local_size_x = 16, local_size_y = 16) in;
-const vec2 workGroupsRender = vec2(1.0, 1.0);
+// 只 dispatch 一个 workgroup：表构建必须在 workgroup 内部靠 barrier 串起来，
+// 多 workgroup 就没法保证"CDF 算完"之后再写表。
+// 16x16 = 256 = SHADOW_WARP_TABLE_SIZE，正好一个线程一个表项。
+const ivec3 workGroups = ivec3(1, 1, 1);
 
-// 输出：warp 表（shaders.properties 里声明为
-//   image.shadowWarpImg = shadowWarpTex RGBA RGBA16F HALF_FLOAT false false 256 2）
-writeonly uniform image2D shadowWarpImg;
+// 注意**不能**加 writeonly：下面要靠 imageLoad 读回上一帧的表做时域平滑，
+// 加了 writeonly 就再也不需要 barrier，同时**无法**使用格式 layout 限定符
+// （NVIDIA 会报 error C7596，随后 imageLoad 找不到重载 error C1115）。
+// 本 image 的 clear 标志是 false（shaders.properties），生命周期由本 pass 自己管。
+layout (rgba16f) uniform image2D shadowWarpImg;
 
+// 头文件包含顺序不能改：
+//   /lib/Utility.glsl 提供 settings.glsl（realShadowMapRes / RTWSM_* 常量）；
+//   /lib/lighting/shadow/Common.glsl → lib/lighting/shadow/Warp.glsl 提供
+//   SHADOW_DISTORTION_STRENGTH 与解析曲线 WarpAxisAnalytic / WarpAxisScaleAnalytic
+//   （密度底座要用），以及本文件写表时共用的 SLOPE_MIN / SLOPE_MAX 合法区间。
+// 注意：本注释块内**不要出现半角双引号**。Iris 是在源码文本上扫描 #include 行的，
+// 行内成对的引号会被它当成字符串界定符；此前这段说明里多写了一个引号，于是紧跟其后那条
+// 包含 Warp.glsl 的 #include 被解析成 [路径]加引号再加后续文字，整包直接
+// InvalidPathException 加载失败（表现为 F3+R 后退回原版渲染）。
 #include "/lib/Utility.glsl"
-
-// Common.glsl 会带上 Warp.glsl（表接口）与 SHADOW_DISTORTION_STRENGTH（曲线来源）
 #include "/lib/lighting/shadow/Common.glsl"
 
-// 现有解析曲线在"单轴"上的取值：等价于原式 CalcDistortionFactor(vec2(u, 0))
-float WarpAxisCurve(in float u) {
-    float r = max(abs(u), 1e-5);
-    float invClipLength = rcp(r);
-    float distortionCurve = log((exp(SHADOW_DISTORTION_STRENGTH) - 1.0) / invClipLength + 1.0);
-    return distortionCurve * invClipLength * rcp(SHADOW_DISTORTION_STRENGTH);
+// 重要性直方图：DeferredLight 用 imageAtomicAdd 写、这里读+清零。
+// 读必须走 sampler（R32UI 的 image 读法要 imageLoad，而本 pass 只需要 texelFetch，
+// 用 usampler2D 更省事，也是本包 VoxelGI/DiffuseIndirect 的既有写法）。
+uniform usampler2D shadowWarpHistTex;
+layout (r32ui) uniform uimage2D shadowWarpHistImg;
+
+#define BINS SHADOW_WARP_TABLE_SIZE     // 256，必须等于 RTWSM_HIST_SIZE
+// 每步密度的上下限**不再在这里定义**：SLOPE_MIN / SLOPE_MAX 是"表项的合法区间"，
+// 校验端（Warp.glsl 的 WarpEntryInvalid）必须用同一组数，所以统一放在 Warp.glsl 里，
+// 这里只取别名保持下文可读。
+#define SLOPE_MIN SHADOW_WARP_SLOPE_MIN // 每步最小密度（× 均匀步长），防 CDF 完全不动
+#define SLOPE_MAX SHADOW_WARP_SLOPE_MAX // 每步最大密度（× 均匀步长），防一整段挤进 1 个纹素
+
+shared float edgeX[BINS];               // x 轴逐 bin 重要性
+shared float edgeY[BINS];               // y 轴逐 bin 重要性
+shared float posX[BINS];                // 变形后的 warp clip 坐标 [-1,1]
+shared float posY[BINS];
+shared float meanEdgeX;                 // 两轴各自的重要性均值（归一化用）
+shared float meanEdgeY;
+
+float BinToClip(in int i) {
+    return (float(i) / float(BINS - 1)) * 2.0 - 1.0;
 }
 
-float WarpAxis(in float u) {
-    return clamp(u * WarpAxisCurve(u), -1.0, 1.0);
+// [2026-09 修正 D] 相对重要性的**硬夹紧**：只用有界的比例，不用原始计数。
+// 探针（RTWSM_DATA_PROBE）实测证明：数据是活的、有结构，但**跨度极大**（屏幕采样密度 ∝ 1/视距²
+// 再乘 1/视距^1.3 的权重 ⇒ rel 可在 1e-3 ~ 1e2 量级）。直接把 rel 当密度/偏移用会在相邻 bin
+// 之间差几十倍 ⇒ CDF 台阶 / warp 非单调 ⇒ 条纹（探针正是把这一点放大到肉眼可见）。
+// 生产路径里 CDF + SLOPE 夹紧本身就能兜住不平滑，所以这里只需要**限幅**。
+// 界从 [0.25,4] 放宽到 [0.1,10]：把可重分配的分辨率上界从 16:1 提到 100:1。
+// 数值实测（rdc_analysis/rtwsm_alloc.py，真实毛糙剖面、走完整 CDF 与 SLOPE 夹紧）：
+//   k=1 时"中心 1/4 输入域"吃掉的阴影图纹理：k=0 基准 56.1%
+//     clamp[0.25,4]  → 91.6%      仍能跑满，但 k 在 1 附近就基本饱和
+//     clamp[0.1,10]  → 更高且单调，k=0.5/1/4 三档有明显梯度（k 不再是"开关"而是"旋钮"）
+// 保持**硬上下界**（不用 tanh 之类压缩）：压缩会把大值拉平，重分配反而更弱。
+// [2026-09 修正 A] 密度用**乘法**合成（不是线性混合）：k 只改内容项权重，不稀释底座形状；
+//   k=0 时 mix(1,·,0)=1，恒等于解析底座（与第一阶段逐点一致）。
+// [2026-09 修正 B] 底座不退场：有实现是纯内容密度 + 距离衰减项，本包保留解析底座
+//   （玩家中心加权不能丢），故把内容当比率乘上去。
+float DensityAt(in float u, in float rel) {
+    return WarpAxisScaleAnalytic(u) * ShadowWarpDensityFactor(rel);
 }
 
 void main() {
-    ivec2 tid = ivec2(gl_GlobalInvocationID.xy);
-    if (tid.x >= SHADOW_WARP_TABLE_SIZE || tid.y >= 2) return;
+    uint t = gl_LocalInvocationIndex;             // 0..255，正好一个 bin
 
-    float last = float(SHADOW_WARP_TABLE_SIZE - 1);
-    float u = (float(tid.x) / last) * 2.0 - 1.0;   // 表项 → 未变形的 shadow clip 坐标 [-1,1]
+    // ---------------- 1. 读走上一帧的重要性，并清零供下一帧重新取 max ----------------
+    // 清零必须在 barrier 之前发起、且用 imageStore（本 pass 是这张图唯一的写者，
+    // 下一帧的 DeferredLight 会在之后的 pass 里重新填充）。
+    // 除以 RTWSM_IMPORTANCE_SCALE：DeferredLight 写进去的是 importance × 该倍率的整数
+    // （R32UI 只能原子取最大整数）。倍率在"除以均值"那一步整体约掉，写出来只为可读。
+    edgeX[t] = float(texelFetch(shadowWarpHistTex, ivec2(int(t), 0), 0).x) * rcp(RTWSM_IMPORTANCE_SCALE);
+    edgeY[t] = float(texelFetch(shadowWarpHistTex, ivec2(int(t), 1), 0).x) * rcp(RTWSM_IMPORTANCE_SCALE);
+    imageStore(shadowWarpHistImg, ivec2(int(t), 0), uvec4(0u));
+    imageStore(shadowWarpHistImg, ivec2(int(t), 1), uvec4(0u));
+    barrier();
 
-    float warped = WarpAxis(u);
+    // [2026-09 修正 C] 沿轴平滑重要性：每个 bin 只有约 256 个屏幕采样，原始计数带采样噪声，
+    // 密度一抖 ⇒ CDF 就出现台阶 ⇒ warp 周期性条纹（本包不开新 pass，直接在共享内存里做
+    // 三点二项平滑，等价于一条高斯低通且几乎零成本）。
+    // 轮数由 64 提到 256：[2026-09 探针实测] DATA_PROBE 只用 0.125 clip 的偏离量就足以把阴影
+    // 打成"极低分辨率 + 满屏条纹"，说明逐 bin 剖面本身相当毛糙。二项平滑 n 轮后等效高斯核
+    // 标准差 ≈ sqrt(n/4)、噪声幅度降到 ≈ sqrt(sqrt(4/(pi·n)))：
+    //   n=64 → σ≈4 bin / 剩 13%；n=256 → σ≈8 bin / 剩 6.5%。
+    // 成本只是共享内存 ALU（256 线程 × 256 轮），可忽略，所以直接取大值。
+    // Jacobi 迭代：先算新值、再 barrier、再写回，避免同轮读写互相污染。
+    for (int it = 0; it < 256; ++it) {
+        int i = int(t);
+        float sx = 0.25 * edgeX[max(i - 1, 0)] + 0.5 * edgeX[i] + 0.25 * edgeX[min(i + 1, BINS - 1)];
+        float sy = 0.25 * edgeY[max(i - 1, 0)] + 0.5 * edgeY[i] + 0.25 * edgeY[min(i + 1, BINS - 1)];
+        barrier();
+        edgeX[i] = sx;
+        edgeY[i] = sy;
+        barrier();
+    }
+    // ---------------- 2. 重要性 -> CDF -> warp 位置（单线程串行，256 项可忽略）----------------
+    if (t == 0u) {
+        float meanX = 0.0, meanY = 0.0;
+        for (int i = 0; i < BINS; ++i) { meanX += edgeX[i]; meanY += edgeY[i]; }
+        meanX = max(meanX / float(BINS), 1e-6);      // 逐帧清零后某项可能整轴为 0，防除爆
+        meanY = max(meanY / float(BINS), 1e-6);
+        meanEdgeX = meanX;
+        meanEdgeY = meanY;
 
-    // 局部缩放 dW/du：中心差分（表按 u 均匀采样，差分即导数）
-    float h = (2.0 / last) * 0.5;
-    float scale = (WarpAxis(u + h) - WarpAxis(u - h)) / (2.0 * h);
+        float totalX = 0.0, totalY = 0.0;
+        for (int i = 0; i < BINS; ++i) {
+            float u = BinToClip(i);
+            vec2 rel = ShadowWarpRelativeImportance(vec2(edgeX[i], edgeY[i]), vec2(meanX, meanY));
+            totalX += DensityAt(u, rel.x);
+            totalY += DensityAt(u, rel.y);
+        }
+        totalX = max(totalX, 1e-5);
+        totalY = max(totalY, 1e-5);
 
-    imageStore(shadowWarpImg, tid, vec4(warped, max(scale, 0.0), 0.0, 1.0));
+        // 每 bin 的"均匀步长"与夹紧后的实际步长。
+        // [2026-09] 下面第 4 步的 kx/ky 拉伸会把"总密度整体变大/变小"这个自由度整体除掉
+        // （CDF 被归一化到 [0,1]、再被拉回 [-1,1]），所以 k（内容强度）**不会**改变整幅阴影图
+        // 的总覆盖——它只重分配局部斜率：重要区域斜率（= 局部缩放 dW/du）更大 = 分到更多纹素，
+        // 不重要处被摊平。这正是 warp 该有的行为（总量守恒，只挪分辨率）。
+        // 另外，这两条夹紧也让写进表里的局部缩放**必然**落在 [SLOPE_MIN, SLOPE_MAX] 内，
+        // 于是 Warp.glsl 的 WarpEntryInvalid 可以拿这两个常量当合法区间用（写读共用一套界）。
+        float stepU = 2.0 / float(BINS);
+        float minStep = SLOPE_MIN * stepU;
+        float maxStep = SLOPE_MAX * stepU;
+        vec2 meanRelative = vec2(meanX, meanY);
+        vec4 oldX, oldY;
+        float px = -1.0, py = -1.0;                  // 上一项的位置（单调性夹紧的基准）
+        float cumX = 0.0, cumY = 0.0;
+        for (int i = 0; i < BINS; ++i) {
+            float u = BinToClip(i);
+            vec2 rel = ShadowWarpRelativeImportance(vec2(edgeX[i], edgeY[i]), meanRelative);
+            cumX += DensityAt(u, rel.x);
+            cumY += DensityAt(u, rel.y);
+
+            float pxTarget = clamp(2.0 * (cumX / totalX) - 1.0, px + minStep, px + maxStep);
+            float pyTarget = clamp(2.0 * (cumY / totalY) - 1.0, py + minStep, py + maxStep);
+
+            // 时域平滑：向上一帧的表靠近（重要性是逐帧测量的，不平滑会看到阴影边缘"呼吸"）
+            oldX = imageLoad(shadowWarpImg, ivec2(i, 0));
+            oldY = imageLoad(shadowWarpImg, ivec2(i, 1));
+            if (!WarpEntryInvalid(oldX.rg)) pxTarget = mix(oldX.r, pxTarget, RTWSM_TEMPORAL_SPEED);
+            if (!WarpEntryInvalid(oldY.rg)) pyTarget = mix(oldY.r, pyTarget, RTWSM_TEMPORAL_SPEED);
+
+            // 混合之后必须再夹一次：混进旧值可能破坏单调性
+            px = clamp(pxTarget, px + minStep, px + maxStep);
+            py = clamp(pyTarget, py + minStep, py + maxStep);
+
+            posX[i] = px;
+            posY[i] = py;
+        }
+        // [2026-09] 时域混合的坑：mix(旧值, 新目标) 会让"斜率"在两个不同形状之间插值，
+        // 插值结果**不一定还是单调的** —— 所以上面混完必须再夹一次（这一步不能省）。
+        // 拉伸到正好覆盖 [-1, 1]：即使密度全为常数（k = 0 且解析底座平坦）也能填满阴影图
+        float kx = 2.0 / max(posX[BINS - 1] - posX[0], 1e-5);
+        float ky = 2.0 / max(posY[BINS - 1] - posY[0], 1e-5);
+        float oX = posX[0], oY = posY[0];
+        for (int i = 0; i < BINS; ++i) {
+            posX[i] = (posX[i] - oX) * kx - 1.0;
+            posY[i] = (posY[i] - oY) * ky - 1.0;
+        }
+    }
+    barrier();
+
+    // ---------------- 3. 写表（含局部缩放 dW/du）----------------
+    #ifdef RTWSM_DATA_PROBE
+        // [2026-09 诊断 · 数据侧 · 修正 2] 把测量到的重要性**作为偏离量**直接写进 warp 位置：
+        //     W(i) = u * 0.5 + 0.125 * clamp(rel,0,4)/4,   u = 2i/(BINS-1) - 1
+        //   第一项 u*0.5：恒定斜率、严格单调、绝对合法的基准 warp（保证表项不会被 Warp.glsl 的
+        //   WarpEntryInvalid 判为坏数据而回退成解析曲线）。
+        //   第二项：数据驱动的偏离量，幅度 0.125 clip ≈ 阴影图半宽的 12.5%（1024 图 ≈ 64 纹素），
+        //   rel 在 [0,4] 内变化 ⇒ 阴影会随地形位置出现明显横向错位。
+        // [前两版为什么都"无变化" / 这次别再搞错]
+        //   第一版：表值恒为 1.0（中性）；第二版：把 rel 归一化后强行铺满 [-1,1]，
+        //   而 rel 形状基本是"中间高两边低" ⇒ 那条 ramp 恰好 ≈ 恒等映射，两版都没有真正的偏离量。
+        // 判据（与 k 无关，k 在此模式下不参与）：
+        //   物体阴影边界出现横向错位/被拉伸压缩，且随相机移动而变 ⇒ 数据有结构 ✓
+        //   画面与不开完全一样                                      ⇒ 数据全零/全平台 ✗
+        {
+            int i = int(t);
+            float u = BinToClip(i) * 0.5;
+            float rX = clamp(edgeX[i] / max(meanEdgeX, 1e-6), 0.0, 4.0) * 0.25;
+            float rY = clamp(edgeY[i] / max(meanEdgeY, 1e-6), 0.0, 4.0) * 0.25;
+            posX[i] = clamp(u + 0.125 * rX, -1.0, 1.0);
+            posY[i] = clamp(u + 0.125 * rY, -1.0, 1.0);
+        }
+        barrier();
+        {
+            int i = int(t);
+            float h = 2.0 / float(BINS - 1);
+            float lx = posX[max(i - 1, 0)];
+            float rx = posX[min(i + 1, BINS - 1)];
+            float ly = posY[max(i - 1, 0)];
+            float ry = posY[min(i + 1, BINS - 1)];
+            imageStore(shadowWarpImg, ivec2(i, 0), vec4(posX[i], max((rx - lx) / (2.0 * h), 0.0), 0.0, 1.0));
+            imageStore(shadowWarpImg, ivec2(i, 1), vec4(posY[i], max((ry - ly) / (2.0 * h), 0.0), 0.0, 1.0));
+        }
+    #elif defined(RTWSM_SELFTEST)
+        // [2026-09 诊断 · 第三次改版] 自检：**完全不用重要性数据**，直接写一条极端的固定
+        // warp，专门回答"表→阴影"这条链路通不通（与"重要性有没有变化"无关）：
+        //     u <= 0  → -0.75            左侧被压成一条窄带（宽度只剩 1/8）
+        //     u >  0  → u * 0.25         右侧被压缩一半，中心附近出现重复/拉伸
+        // 判据（与 k 无关，k 在这个模式下不参与）：
+        //   阴影整体明显被挤到左侧、物体阴影出现重复或长条拖影 ⇒ 表链路是活的 ✓
+        //   完全正常、零变化（切换本定义前后一模一样）          ⇒ 表没被读/没被写 ✗
+        // 局部缩放照常中心差分，避免 Selftest 期间深度偏置飙到 1.0 反而把形变掩盖掉。
+        {
+            int i = int(t);
+            float uSelf = BinToClip(i);
+            posX[i] = (uSelf <= 0.0) ? -0.75 : uSelf * 0.25;
+            posY[i] = posX[i];
+        }
+        barrier();
+        {
+            int i = int(t);
+            float h = 2.0 / float(BINS - 1);
+            float lx = posX[max(i - 1, 0)];
+            float rx = posX[min(i + 1, BINS - 1)];
+            float ly = posY[max(i - 1, 0)];
+            float ry = posY[min(i + 1, BINS - 1)];
+            imageStore(shadowWarpImg, ivec2(i, 0), vec4(posX[i], max((rx - lx) / (2.0 * h), 0.0), 0.0, 1.0));
+            imageStore(shadowWarpImg, ivec2(i, 1), vec4(posY[i], max((ry - ly) / (2.0 * h), 0.0), 0.0, 1.0));
+        }
+    #else
+    {
+        int i = int(t);
+        // 局部缩放 = 表位置的中心差分（表按 u 均匀采样，步长 = 2/(BINS-1)）
+        float h = 2.0 / float(BINS - 1);
+        float lx = posX[max(i - 1, 0)];
+        float rx = posX[min(i + 1, BINS - 1)];
+        float ly = posY[max(i - 1, 0)];
+        float ry = posY[min(i + 1, BINS - 1)];
+        float sx = max((rx - lx) / (2.0 * h), 0.0);
+        float sy = max((ry - ly) / (2.0 * h), 0.0);
+        imageStore(shadowWarpImg, ivec2(i, 0), vec4(posX[i], sx, 0.0, 1.0));
+        imageStore(shadowWarpImg, ivec2(i, 1), vec4(posY[i], sy, 0.0, 1.0));
+    }
+    #endif
 }

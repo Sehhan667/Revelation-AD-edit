@@ -300,6 +300,12 @@ option.COLORED_SHADOWS=Colored Shadows
 
 option.SHADOW_BACKFACE_CULLING=Shadow Backface Culling
 option.SHADOW_DISTORTION_STRENGTH=Shadow Distortion Strength
+option.SHADOW_WARP_RTWSM=Table-Driven Shadow Warp (RTWSM)
+option.SHADOW_WARP_RTWSM.comment=Drives the shadow warp from a 256x2 table rebuilt every frame by setup12 (the write side in Shadow.vert and every lookup share the same function) instead of the fixed analytic radial curve. The table content is controlled by the two options below. Turn this off to go back to the original implementation bit for bit.
+option.RTWSM_CONTENT_STRENGTH=Content-Driven Strength (RTWSM)
+option.RTWSM_CONTENT_STRENGTH.comment=Moves shadow map resolution towards where depth edges are dense: density = analytic density x (1 + k x relative edge density), integrated into a CDF used as the warp. The centre weighting of the analytic curve is always kept (the player sits at the centre, that bias must not be lost). 0 = identical to the first phase (default); higher favours content but shows more edge popping. Use together with the temporal smoothing below.
+option.RTWSM_TEMPORAL_SPEED=Table Temporal Smoothing (RTWSM)
+option.RTWSM_TEMPORAL_SPEED.comment=How far the table moves towards the new target each frame. Edge density is measured per frame, so no smoothing (=1) makes shadow edges breathe; the default 0.2 converges in roughly 5 frames.
 
 option.SCREEN_SPACE_SHADOWS=Screen-Space Shadows
 option.SHADOW_CULLING_MODE=Shadow Frustum Culling
