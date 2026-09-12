@@ -418,3 +418,15 @@ node rdc_analysis/preproc_check.js --all                        # 全部 350 个
     image/screen 条目、settings/lang 定义与 DiffuseIndirect 接入。逐像素追踪本身的**无损**加速
     已有：VOXEL_COARSE_ACCEL/FINE_ACCEL（空洞跳跃，已 GUI 化）；另可恢复 ReSTIR（VOXEL_REUSE，
     需补 4 张 reservoir image + 去 VoxelLighting 强制 undef）。
+
+## [待办 / 暂缓] 阴影空间链路重复（代码审查 H3）
+
+- [2026-09-12 记] 用户决定：**暂时不做**，先记档。
+- 问题：「世界坐标 → 阴影图坐标 → 体素平铺偏移」这条链在 **6 处**各写了一遍
+  （DistortShadowSpace / ShiftShadowScreenPos 等），阴影比较采样另有 7 处。
+  改一处约定（RTWSM warp、体素平铺布局）要同时改六处，漏一处就是
+  「阴影错位」这类极难定位的现象 —— 本轮 RTWSM 与体素条带的修复正是这个形状。
+- 建议做法（将来做时）：先抽一个公共查询函数（如 ShadowSpaceQuery(worldPos)）
+  统一返回「阴影图 uv + 体素平铺偏移」，再**分批**替换旧调用点，
+  每批单独进游戏验证阴影对齐，不要一次性全换。
+- 前提：动手前先出一份「改哪些文件 / 每步怎么验证」的计划给用户确认。
