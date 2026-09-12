@@ -1,9 +1,19 @@
-*.glsl text linguist-language=glsl
-*.vsh text linguist-language=glsl
-*.fsh text linguist-language=glsl
-*.gsh text linguist-language=glsl
-*.csh text linguist-language=glsl
-*.vert text linguist-language=glsl
-*.frag text linguist-language=glsl
-*.geom text linguist-language=glsl
-*.comp text linguist-language=glsl
+# 统一用 LF：仓库存 LF、检出也是 LF。
+# 此前只写了 text 没写 eol=，叠加 core.autocrlf=true 导致每次提交都刷
+# 「LF will be replaced by CRLF」警告，真实警告容易被淹没。
+*.glsl text eol=lf linguist-language=glsl
+*.vsh text eol=lf linguist-language=glsl
+*.fsh text eol=lf linguist-language=glsl
+*.gsh text eol=lf linguist-language=glsl
+*.csh text eol=lf linguist-language=glsl
+*.vert text eol=lf linguist-language=glsl
+*.frag text eol=lf linguist-language=glsl
+*.geom text eol=lf linguist-language=glsl
+*.comp text eol=lf linguist-language=glsl
+*.md         text eol=lf
+*.properties text eol=lf
+*.lang       text eol=lf
+*.json       text eol=lf
+*.js         text eol=lf
+*.py         text eol=lf
+*.txt        text eol=lf
