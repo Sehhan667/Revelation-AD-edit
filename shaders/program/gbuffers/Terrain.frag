@@ -8,6 +8,10 @@
     Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Modified by AnotherCream, 2026.
 
+
+
+
+
     Performance Optimized: reduced redundant computations, early exits,
                            combined conditionals, minor math simplifications.
     Fix: Clear low 2 bits of materialOut.w to avoid entity flag conflicts.

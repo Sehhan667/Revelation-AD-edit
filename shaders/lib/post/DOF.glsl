@@ -10,6 +10,10 @@
 	Copyright 2026 AnotherCream.
 
 
+
+
+
+
 	Ported from vanilla Revelation (Revelation-dev) 2026-09-11.
 	适配说明：本包没有 RENDER_SCALE 渲染缩放体系（见 MEMO SVGF 分辨率缩放一节），
 	原版 scaledViewSize 在此替换为全分辨率 viewSize；其余逻辑与原版一致。

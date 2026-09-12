@@ -1,6 +1,10 @@
 // Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
 // Modified by AnotherCream, 2026.
 
+
+
+
+
 #ifndef SSBO_DECLARED_TPYE
 #define SSBO_DECLARED_TPYE readonly
 #endif

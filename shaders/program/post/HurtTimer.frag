@@ -7,6 +7,10 @@
     Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Copyright 2026 AnotherCream.
 
+
+
+
+
     Pass: 实体受伤时长累积（击杀特效计时器，挂 composite5）
     colortex10.R = 每个像素处受伤实体的"持续变红时长"（秒），未受伤立即归零
     colortex10.G = 全局击杀脉冲剩余时间（秒），仅 (0,0) 处有效

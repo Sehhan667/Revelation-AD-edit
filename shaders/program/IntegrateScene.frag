@@ -9,6 +9,10 @@
     Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Modified by AnotherCream, 2026.
 
+
+
+
+
     Pass: Compute refraction, combine translucent and fog
     Optimizations: 
       - Sky-bypass early Z culling.

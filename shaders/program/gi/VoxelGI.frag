@@ -6,6 +6,10 @@
     Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Copyright 2026 AnotherCream.
 
+
+
+
+
     IRC 注入语义：
 
     - 表面判定（sampleHemisphere）：恰好 1 空邻居 + 非普通方块（abs(ID)>1，

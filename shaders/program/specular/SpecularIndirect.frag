@@ -7,6 +7,10 @@
     Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Modified by AnotherCream, 2026.
 
+
+
+
+
     Pass: Compute specular reflections
     Optimizations:
       - Fixed LOD depth culling logic conflict.

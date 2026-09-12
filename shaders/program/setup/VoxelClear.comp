@@ -9,6 +9,10 @@
 	Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
 	Copyright 2026 AnotherCream.
 
+
+
+
+
 	Pass: Clear voxelization buffers (albedo + light) before gbuffers.
 
 	原因：gbuffers 使用 imageAtomicMax 累加体素化结果，若不在每帧开始前清空，

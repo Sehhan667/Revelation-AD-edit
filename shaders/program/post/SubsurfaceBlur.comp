@@ -7,6 +7,10 @@
     Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Copyright 2026 AnotherCream.
 
+
+
+
+
     Pass: 次表面散射（SSS）半分辨率可分离模糊
 
     [2026-09] SSS 重构第 2 步：DeferredLight（deferred20）把「SSS 源项」用 imageStore

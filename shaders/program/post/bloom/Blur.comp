@@ -7,6 +7,10 @@
     Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Modified by AnotherCream, 2026.
 
+
+
+
+
     Pass: Cached Gaussian blur for bloom tiles (L0 canvas only)
 
     [AD-edit] 单级泛光的半径控制从 Downsample 移到这里：

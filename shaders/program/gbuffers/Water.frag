@@ -9,6 +9,10 @@
     Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Modified by AnotherCream, 2026.
 
+
+
+
+
     Optimized: reduced redundant screen coordinate computation.
                Added WATER_WAVE_SAMPLES macro for wave detail control.
 --------------------------------------------------------------------------------

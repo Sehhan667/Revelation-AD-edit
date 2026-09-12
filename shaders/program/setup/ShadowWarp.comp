@@ -7,6 +7,10 @@
     Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Copyright 2026 AnotherCream.
 
+
+
+
+
     Pass: 阴影 warp 表构建（RTWSM，setup12，跑在 shadow pass 之前）
 
     [2026-09] 每帧填写 256 x 2 的 warp 表（见 lib/lighting/shadow/Warp.glsl）：

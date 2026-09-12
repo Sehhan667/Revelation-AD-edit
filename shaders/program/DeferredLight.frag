@@ -7,6 +7,10 @@
     Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Modified by AnotherCream, 2026.
 
+
+
+
+
     Pass: Deferred lighting and sky combination
     Optimized: Early sun-light culling, deferred bicubic sampling, constant folding.
     Added: SSS_DISABLE_BEYOND_SHADOW_DIST macro to skip SSS outside shadow distance.

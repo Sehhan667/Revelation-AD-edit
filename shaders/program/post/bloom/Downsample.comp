@@ -7,6 +7,10 @@
     Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
     Modified by AnotherCream, 2026.
 
+
+
+
+
     Pass: Downsample bloom tiles (Single-Level Only)
     Generates a single half-resolution bloom tile (L0) by 2x2 box filtering.
     All higher levels are skipped.

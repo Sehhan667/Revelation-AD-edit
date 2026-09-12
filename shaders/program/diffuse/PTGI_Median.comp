@@ -9,6 +9,10 @@
 	Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
 	Copyright 2026 AnotherCream.
 
+
+
+
+
     Pass: PTGI-style median denoise (VXGI alternad denoise, mode=1)
 	单次中值滤波（去 firefly/孤亮点噪）+ 深度/法线边缘混合保边。
 	只替代 SVGF 链的 EAWF(a-trous ×4) 空间滤波，时域累积(Accumulate)与方差

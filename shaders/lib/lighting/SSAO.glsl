@@ -1,7 +1,7 @@
 /* Screen-Space Ambient Occlusion */
+// Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+// Modified by AnotherCream, 2026.
 
-    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
-    Modified by AnotherCream, 2026.
 
 
 #define SSAO_SAMPLES 2 // [1 2 3 4 5 6 7 8 9 10 12 16 18 20 22 24 26 28 30 32 48 64]
