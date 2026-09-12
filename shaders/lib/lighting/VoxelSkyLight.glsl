@@ -18,7 +18,7 @@
 // 用暖阳色 sunIrradiance 的色度（归一化，只染色调不动亮度）；正午最强、日落/夜晚关闭。
 // 同一滑条（屏幕 Compensation 菜单「漫反射阳光染色强度」）控制，两处观感一致。
 #ifndef AMBIENT_SUNLIGHT_TINT_RATIO
-    #define AMBIENT_SUNLIGHT_TINT_RATIO 1.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0]
+    #define AMBIENT_SUNLIGHT_TINT_RATIO 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0]
 #endif
 
 // [2026-08-19 恢复] 解析天光下限（SimpleSkyLighting，对齐参考实现）：阴影/闭塞体素的 IRC 底光，

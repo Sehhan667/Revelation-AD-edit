@@ -37,7 +37,7 @@ uniform vec2 taaJitter;
 
 //======// Function //============================================================================//
 
-#define PHYSICS_OCEAN_SUPPORT
+//#define PHYSICS_OCEAN_SUPPORT
 #ifdef PHYSICS_OCEAN
     #define PHYSICS_VERTEX
     #include "/lib/water/PhysicsOceans.glsl"

@@ -1,0 +1,121 @@
+/*
+--------------------------------------------------------------------------------
+
+	Revelation Shaders
+
+	Copyright (C) 2026 HaringPro
+	Apache License 2.0
+
+	Pass: Depth of field spatial postfilter
+    Reference: Guillaume Abadie, 2018, A Life of a bokeh, https://epicgames.ent.box.com/s/s86j70iamxvsuu6j35pilypficznec04
+
+	Ported from vanilla Revelation (Revelation-dev) 2026-09-11.
+	适配说明：无 RENDER_SCALE 体系，scaledViewSize 替换为全分辨率 viewSize。
+
+--------------------------------------------------------------------------------
+*/
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+//======// Input //===============================================================================//
+
+layout(local_size_x = 16, local_size_y = 16) in;
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+
+//======// Output //==============================================================================//
+
+writeonly restrict uniform image2D colorimg0;
+
+//======// Uniform //==============================================================================//
+
+#include "/lib/universal/Uniform.glsl"
+
+//======// Shared Memory //=======================================================================//
+
+const uint padRadius = 1u;
+const uvec2 sharedSize = gl_WorkGroupSize.xy + (padRadius << 1u);
+
+shared vec4 sharedTile[sharedSize.y][sharedSize.x];
+shared float sharedCoc[sharedSize.y][sharedSize.x];
+
+//======// Function //============================================================================//
+
+void SharedPreload() {
+	ivec2 imageEnd = ivec2(viewSize) - 1;
+	ivec2 groupBase = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy) - ivec2(padRadius);
+
+	const uint sharedArea = sharedSize.x * sharedSize.y;
+	const uint groupArea = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
+	const uint stageCount = (sharedArea + groupArea - 1u) / groupArea;
+
+	for (uint stage = 0u; stage < stageCount; ++stage) {
+		uint loadIndex = gl_LocalInvocationIndex + stage * groupArea;
+		if (loadIndex < sharedArea) {
+			uvec2 localTexel = uvec2(loadIndex % sharedSize.x, loadIndex / sharedSize.x);
+			ivec2 sourceTexel = clamp(groupBase + ivec2(localTexel), ivec2(0), imageEnd);
+			sharedTile[localTexel.y][localTexel.x] = texelFetch(colortex15, sourceTexel, 0);
+			sharedCoc[localTexel.y][localTexel.x] = texelFetch(colortex3, sourceTexel, 0).a;
+		}
+	}
+
+	memoryBarrierShared();
+	barrier();
+}
+
+vec4 DofPostfilterLoad(uvec2 localTexel) {
+	return sharedTile[localTexel.y][localTexel.x];
+}
+
+float DofPostfilterLoadCoc(uvec2 localTexel) {
+	return sharedCoc[localTexel.y][localTexel.x];
+}
+
+void DofSort3(vec3 a, vec3 b, vec3 c, out vec3 low, out vec3 median, out vec3 high) {
+	vec3 minBC = min(b, c);
+	vec3 maxBC = max(b, c);
+	low = min(a, minBC);
+	median = min(max(a, minBC), maxBC);
+	high = max(a, maxBC);
+}
+
+vec3 DofMedian3x3(uvec2 localCenter, float centerCoc) {
+	bool centerForeground = centerCoc < 0.0;
+	vec3 samples[9];
+	samples[4] = DofPostfilterLoad(localCenter).rgb;
+
+	for (uint i = 0u; i < 8u; ++i) {
+		uvec2 sampleTexel = uvec2(ivec2(localCenter) + offset3x3N[i]);
+		vec4 sampleData = DofPostfilterLoad(sampleTexel);
+		float sampleCoc = DofPostfilterLoadCoc(sampleTexel);
+		float sameLayer = float((sampleCoc < 0.0) == centerForeground);
+		samples[i < 4u ? i : i + 1u] = mix(samples[4], sampleData.rgb, sameLayer);
+	}
+
+	vec3 low[3], median[3], high[3];
+	for (uint row = 0u; row < 3u; ++row) {
+		uint base = row * 3u;
+		DofSort3(samples[base], samples[base + 1u], samples[base + 2u], low[row], median[row], high[row]);
+	}
+
+	vec3 lowMax = max(max(low[0], low[1]), low[2]);
+	vec3 medianMid = min(max(median[0], min(median[1], median[2])), max(median[1], median[2]));
+	vec3 highMin = min(min(high[0], high[1]), high[2]);
+	vec3 resultLow, resultMedian, resultHigh;
+	DofSort3(lowMax, medianMid, highMin, resultLow, resultMedian, resultHigh);
+	return resultMedian;
+}
+
+//======// Main //================================================================================//
+void main() {
+	SharedPreload();
+
+	ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+
+	uvec2 localCenter = gl_LocalInvocationID.xy + padRadius;
+	vec4 centerData = DofPostfilterLoad(localCenter);
+	vec3 medianColor = DofMedian3x3(localCenter, DofPostfilterLoadCoc(localCenter));
+	imageStore(colorimg0, texelPos, vec4(medianColor, centerData.a));
+}

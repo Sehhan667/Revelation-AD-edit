@@ -1,0 +1,136 @@
+/*
+--------------------------------------------------------------------------------
+
+	Revelation Shaders
+
+	Copyright (C) 2026 HaringPro
+	Apache License 2.0
+
+	Pass: Prepare scene color and propagate CoC
+    Reference: Guillaume Abadie, 2018, A Life of a bokeh, https://epicgames.ent.box.com/s/s86j70iamxvsuu6j35pilypficznec04
+
+	Ported from vanilla Revelation (Revelation-dev) 2026-09-11.
+	适配说明：无 RENDER_SCALE 体系，scaled* 坐标全部替换为全分辨率
+	（viewSize / viewPixelSize / texelToUv / uvToTexel），workGroupsRender 恒为 1.0。
+
+--------------------------------------------------------------------------------
+*/
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+//======// Input //===============================================================================//
+
+layout(local_size_x = 16, local_size_y = 16) in;
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+
+//======// Output //==============================================================================//
+
+writeonly restrict uniform image2D colorimg3;
+writeonly restrict uniform image2D colorimg15;
+
+//======// Uniform //==============================================================================//
+
+#include "/lib/universal/Uniform.glsl"
+
+//======// SSBO //================================================================================//
+
+#include "/lib/universal/SSBO.glsl"
+
+//======// Function //============================================================================//
+
+#include "/lib/universal/Transform.glsl"
+#include "/lib/universal/Random.glsl"
+#include "/lib/post/DOF.glsl"
+
+float DofResolveViewDepth(ivec2 texelPos, float screenDepth) {
+	#if defined LOD_MOD
+		if (screenDepth > 1.0 - EPS) {
+			return -ScreenToViewDepthLod(loadDepth1Lod(texelPos));
+		}
+	#endif
+
+	return -ScreenToViewDepth(screenDepth);
+}
+
+float DofLoadViewDepth(ivec2 texelPos) {
+	return DofResolveViewDepth(texelPos, loadDepth1(texelPos));
+}
+
+float DofLoadViewDepthUv(vec2 uv) {
+	ivec2 texelPos = uvToTexel(uv);
+	return DofLoadViewDepth(texelPos);
+}
+
+float DofPrepareFocusDepth() {
+	#if CAMERA_FOCUS_MODE == 0
+		return max(global.dofFocusDistance, dofFocalLength);
+	#else
+		return max(DOF_MANUAL_FOCUS_DISTANCE, dofFocalLength);
+	#endif
+}
+
+vec3 DofPropagateCoC(ivec2 texelPos, float centerDepth, float focusDepth, float maxBlurRadius) {
+	const float inverseSampleCount = rcp(float(DOF_COC_SPREAD_SAMPLES));
+	float cocScale = DofCoCScale(focusDepth);
+	float inverseMaxBlurRadius = rcp(maxBlurRadius);
+	float originalCoc = DofCoCRadius(centerDepth, focusDepth, cocScale, maxBlurRadius);
+	float centerCoc = originalCoc;
+	float centerCocRadius = abs(centerCoc) * inverseMaxBlurRadius;
+	float gatherRadiusFraction = centerCocRadius;
+
+	vec2 centerUv = texelToUv(texelPos);
+	vec2 kernelNoise = SampleStbnVec2(texelPos, frameCounter + 5);
+	float radialPhase = kernelNoise.y * inverseSampleCount;
+	float jitterAngle = TAU * kernelNoise.x;
+	vec2 direction = vec2(cos(jitterAngle), sin(jitterAngle));
+	float aperturePhase = kernelNoise.x;
+	#ifdef DOF_APERTURE_VIGNETTING
+		vec3 vignettingData = DofApertureVignettingPrepare(centerUv);
+	#endif
+
+	for (uint i = 0u; i < uint(DOF_COC_SPREAD_SAMPLES); ++i) {
+		float pairSide = float(i & 1u);
+		float sampleRadius = DofVogelRadius(i, radialPhase, inverseSampleCount);
+		vec2 sampleDirection = direction * (1.0 - 2.0 * pairSide);
+		float samplePhase = aperturePhase + 0.5 * pairSide;
+		vec2 sampleOffset = DofApertureOffset(sampleDirection, samplePhase, sampleRadius * maxBlurRadius);
+		#ifdef DOF_APERTURE_VIGNETTING
+			DofApertureVignettingApply(sampleOffset, maxBlurRadius, vignettingData);
+		#endif
+		vec2 sampleUv = DofMirrorUv(centerUv + sampleOffset * viewPixelSize);
+		float sampleDepth = DofLoadViewDepthUv(sampleUv);
+		float sampleCocRadius = abs(DofCoCRadius(sampleDepth, focusDepth, cocScale, maxBlurRadius)) * inverseMaxBlurRadius;
+		float sampleCoverage = DofApertureCoverage(sampleCocRadius, sampleRadius, maxBlurRadius);
+
+		if (sampleCoverage > 0.0 && sampleDepth <= centerDepth) {
+			gatherRadiusFraction = max(gatherRadiusFraction, sampleCocRadius);
+			if (centerCocRadius < sampleCocRadius - sampleRadius) {
+				centerCoc = (sampleRadius - sampleCocRadius) * maxBlurRadius;
+				centerCocRadius = abs(centerCoc) * inverseMaxBlurRadius;
+			}
+		}
+
+		if (bool(i & 1u)) {
+			direction = DofRotatePair(direction);
+			aperturePhase = fract(aperturePhase + dofPairPhase);
+		}
+	}
+
+	return vec3(originalCoc, centerCoc, maxEps(gatherRadiusFraction * maxBlurRadius));
+}
+
+//======// Main //================================================================================//
+void main() {
+	ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+
+	vec4 sceneData = texelFetch(colortex0, texelPos, 0);
+	float viewDepth = DofLoadViewDepth(texelPos);
+	float focusDepth = DofPrepareFocusDepth();
+
+	vec3 cocData = DofPropagateCoC(texelPos, viewDepth, focusDepth, DOF_MAX_BLUR_RADIUS);
+	imageStore(colorimg3, texelPos, vec4(sceneData.rgb, cocData.x));
+	imageStore(colorimg15, texelPos, vec4(cocData.yz, 0.0, 0.0));
+}

@@ -51,7 +51,7 @@ layout (rgba16f) restrict uniform image2D colorimg3;
 //   近景(底部/贴墙)出现闪烁小点   → 调小（说明步长已超 9-tap 支撑）。
 //   远景依旧太糊、没改善          → 确认已 ≥0.2，若设大后闪点则回小并接受轻微欠滤。
 #ifndef NRD_RADIUS
-    #define NRD_RADIUS 0.25 // [0.0 0.05 0.1 0.15 0.2 0.3 0.5 0.75 1.0] 世界空间滤波半径（米）
+    #define NRD_RADIUS 0.5 // [0.0 0.05 0.1 0.15 0.2 0.3 0.5 0.75 1.0] 世界空间滤波半径（米）
 #endif
 
 //======// NRD 可靠性权重 //======================================================================//
@@ -76,12 +76,12 @@ layout (rgba16f) restrict uniform image2D colorimg3;
 // 怎么调：0=关闭；0.5=温和；1.0=均衡（推荐 1.0）；2.0+ 更强补填（可能轻微细节损失）。
 // 巡检：边缘新露出区域仍糊/拖影 → 调大；出现"修复痕迹/细节糊" → 调小。
 #ifndef NRD_DISOCCLUSION
-    #define NRD_DISOCCLUSION 1.0 // [0.0 0.5 1.0 2.0 4.0] 去遮挡修复强度（不可靠时放大步长+放松边缘；0=关闭）
+    #define NRD_DISOCCLUSION 0.5 // [0.0 0.5 1.0 2.0 4.0] 去遮挡修复强度（不可靠时放大步长+放松边缘；0=关闭）
 #endif
 
 // [2026-08-28 项3] SVGF 尾级(最后一级并联滤波后)做 3×3 中值剔 firefly（默认开；可在 GUI off 回退原输出）
 #ifndef VOXEL_GI_FIREFLY_MEDIAN
-    #define VOXEL_GI_FIREFLY_MEDIAN
+    //#define VOXEL_GI_FIREFLY_MEDIAN
 #endif
 
 /*

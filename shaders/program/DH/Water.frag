@@ -45,7 +45,7 @@ in vec3 worldPos;
 #include "/lib/universal/Transform.glsl"
 #include "/lib/universal/Random.glsl"
 
-#define PHYSICS_OCEAN_SUPPORT
+//#define PHYSICS_OCEAN_SUPPORT
 
 #ifdef PHYSICS_OCEAN
 	#define PHYSICS_FRAGMENT

@@ -97,24 +97,24 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
     return voxelCoord.xz;
 }
 #ifndef VOXEL_GI_STRENGTH
-    #define VOXEL_GI_STRENGTH 1.0  // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0] GI 整体强度
+    #define VOXEL_GI_STRENGTH 1.5  // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0] GI 整体强度
 #endif
 // 原版 Lightmap 混合（SSILVB_BLENDED_LIGHTMAP 同款滑条，供 DeferredLight 查询端使用）：
 // 1.0=完全保留原版 Lightmap（环境光+方块光），0.0=完全屏蔽原版，间接光照仅由体素 GI 提供。
 // 主定义在 settings.glsl 的 Global Illumination 区（Iris 滑条直接改写），此处仅作兜底。
 #ifndef VOXEL_GI_BLENDED_LIGHTMAP
-    #define VOXEL_GI_BLENDED_LIGHTMAP 1.0 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0] 原版 Lightmap 混合（1.0=保留，0.0=屏蔽，仅 GI）
+    #define VOXEL_GI_BLENDED_LIGHTMAP 0.0 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0] 原版 Lightmap 混合（1.0=保留，0.0=屏蔽，仅 GI）
 #endif
 
 // ------ 传播配置（风格 IRC 随机注入）------
-#define VOXEL_GI_SELF_BOUNCE 0.5       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 自反弹衰减比（光线命中点取前帧 IRC；[2026-08-17] 1.0→0.5 减小 IRC 亮度，避免整体过亮；[2026-08-28] 上限扩到 32，>1 为超强自反弹放大，用于传播调试/刻意增强）
-#define VOXEL_GI_EMISSIVE_THRESHOLD 0.1 // [0.0 0.01 0.02 0.05 0.1 0.2] 发射度阈值（LabPBR 发射贴图，太低会把矿物误判为发光体）
-#define VOXEL_GI_BOOST 1.5              // [0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 发射体素能量倍率
+#define VOXEL_GI_SELF_BOUNCE 0.8       // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 自反弹衰减比（光线命中点取前帧 IRC；[2026-08-17] 1.0→0.5 减小 IRC 亮度，避免整体过亮；[2026-08-28] 上限扩到 32，>1 为超强自反弹放大，用于传播调试/刻意增强）
+#define VOXEL_GI_EMISSIVE_THRESHOLD 0.0 // [0.0 0.01 0.02 0.05 0.1 0.2] 发射度阈值（LabPBR 发射贴图，太低会把矿物误判为发光体）
+#define VOXEL_GI_BOOST 24.0              // [0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 发射体素能量倍率
 // 发射光球形光距离衰减（语义的补充，2026-08-04 #8）：远场（16 格外）偶发
 // "穿心"命中会闪现全强度 → 高对比可见闪烁；× rcp(1 + dist²×FALLOFF) 后远场命中大幅
 // 变弱（dist=8 → 9%），近场 1-2 格几乎不变。只影响球形光路径（发射体素），普通固体
 // 命中/IRC 自反弹不受影响。
-#define VOXEL_GI_LIGHT_FALLOFF 0.1 // [0.02 0.05 0.08 0.1 0.15 0.2 0.3 0.5] 发射光距离衰减（越小传播越远）
+#define VOXEL_GI_LIGHT_FALLOFF 0.02 // [0.02 0.05 0.08 0.1 0.15 0.2 0.3 0.5] 发射光距离衰减（越小传播越远）
 // 发射光球形光源半径（体素格数）。用 0.5（格内切球），但那是多 SPP + ×0.1 低强度
 // 的物理尺度；本项目 1 SPP 低配，球太小 → 贴光源面命中率极低（1 格外 ≈2.8%）→
 // 平均贡献 = 命中率 × 强度 很低 → "走起来亮（TAA 运动降权显示单帧命中）、停下来灭
@@ -151,7 +151,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 与 IRC 长累积，体素间接光照变化慢，视觉差异极小；相机/世界快速移动时注入滞后至多 N-1 帧，
 // 由 IRC history 吸收。见 VoxelGI.frag 循环内 phase 过滤。
 #ifndef VOXEL_IRC_UPDATE_INTERVAL
-    #define VOXEL_IRC_UPDATE_INTERVAL 1 // [1 2 4] IRC 注入降频（每 N 帧重注入 1 次）
+    #define VOXEL_IRC_UPDATE_INTERVAL 4 // [1 2 4] IRC 注入降频（每 N 帧重注入 1 次）
 #endif
 // 新暴露格天空播种倍率：相机移动时 64³ 前缘
 // 新进入网格的固体格 pValid=false，旧实现直接用裸 1-SPP 随机样本当初值 → 移动时
@@ -162,16 +162,16 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 从"网格外 SH 环境光"瞬间切到"网格内 GI"且 GI 新暴露种子暗 → 边缘暗→亮跳变。
 // DeferredLight 在网格内边缘此距离内按距离渐进混入网格外同款 SH 环境光，
 // 外部光→内部 GI 平滑过渡。0 = 关闭过渡（老行为）。
-#define VOXEL_EDGE_BLEND_DISTANCE 6.0 // [0.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0] 网格边缘环境光过渡带（格数）
+#define VOXEL_EDGE_BLEND_DISTANCE 8.0 // [0.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0] 网格边缘环境光过渡带（格数）
 
 // ------ 注入内部系数（随 VOXEL_GI_STRENGTH 整体缩放，不单独暴露滑条）------
 // 天空光用 0-1 尺度的 skyMapTex 方向辐射，系数即注入上限（白天暴露面 ≈ 0.1×albedo）。
 // 量级链路：注入 nRC → ×100 存储 → 查询 ×0.01 解码，最终 ≈ 注入值 × albedo × STRENGTH
 // 2026-08-04 真阳光改造（思路）：阳光注入主体改为"阴影贴图判定直射"（sunVis），
 // vanilla 天空光 lightmap 降级为弱环境底，保留洞穴渐变。
-#define VOXEL_GI_SUN_STRENGTH 0.5      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显）
-#define VOXEL_GI_SKY_STRENGTH 1.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 2.0→1.0：室内天光略过量）
-#define VOXEL_GI_BLOCK_STRENGTH 0.8    // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 方块光注入倍率（× blocklightColor，火把等光源）
+#define VOXEL_GI_SUN_STRENGTH 1.0      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显）
+#define VOXEL_GI_SKY_STRENGTH 3.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 2.0→1.0：室内天光略过量）
+#define VOXEL_GI_BLOCK_STRENGTH 0.5    // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 方块光注入倍率（× blocklightColor，火把等光源）
 // 天空辐射贴图 → 0-1 尺度换算基准（skyViewTex 白天顶光 ≈110-130；与阳光基准同量级，
 // 调大=天光变暗、调小=天光变亮）。定义在 VoxelSkyLight.glsl 之前（VoxelLighting 先 include）
 #define VOXEL_SKY_REFERENCE 300.0   // [100.0 150.0 200.0 250.0 300.0 350.0 400.0 500.0 600.0 800.0 1000.0] 天空辐射贴图→0-1 尺度换算基准
@@ -190,7 +190,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #define VOXEL_TRACE_DISTANCE 32 // [8 16 24 32 48 64 96] 追踪光线最大步进体素数（越大传播越远，性能略降）
 // 追踪 GI 强度总旋钮：信号量级 = 追踪值 × STRENGTH（命中/出界已按 语义全强度输出，
 // 过亮就降这个，过暗就升；洞穴不过量由 lightmap 泄漏衰减保证，不靠压低天空值）。
-#define VOXEL_GI_TRACE_STRENGTH 1.0 // [0.0 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0] 追踪 GI 总强度（过亮降、过暗升）
+#define VOXEL_GI_TRACE_STRENGTH 1.5 // [0.0 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0] 追踪 GI 总强度（过亮降、过暗升）
 // 物理直射辐照度 → 0-1 尺度换算基准（GlobalStorage.comp：directIlluminance = 128×(sun+moon)，
 // 白天约 300；除以该值即得 0-1 尺度阳光色——自带昼夜明暗 + 暖色温，见 VoxelTracing 阳光弹射）
 #define VOXEL_SUN_REFERENCE 300.0
@@ -203,12 +203,12 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 已暴露为 GUI 滑条（shaders.properties sliders），可在光影设置里直接调。
 // [2026-08-19] 夜晚月光反弹强度：moonlightMult(~0.001) 让 directIlluminance 夜晚≈0 →
 // 体素 GI 无月光反弹。此为独立方向化月光反弹倍率（月亮向面弹射），夜晚才有间接月光 GI。
-#define VOXEL_MOON_STRENGTH 0.5 // [0.0 0.1 0.25 0.5 0.75 1.0 1.5 2.0] 夜晚月光反弹强度（0=关闭月光反弹）
-#define VOXEL_TRACE_SUN_STRENGTH 8.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
+#define VOXEL_MOON_STRENGTH 2.0 // [0.0 0.1 0.25 0.5 0.75 1.0 1.5 2.0] 夜晚月光反弹强度（0=关闭月光反弹）
+#define VOXEL_TRACE_SUN_STRENGTH 32.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
 // 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；
 // 洞穴/室内（skyLightmap≈0）无天光，不会过量。若整体过亮用 VOXEL_GI_TRACE_STRENGTH 旋钮。
-#define VOXEL_GI_TRACE_SKY_STRENGTH 8.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 40.0 48.0] 追踪端出界方向天光倍率
+#define VOXEL_GI_TRACE_SKY_STRENGTH 3.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 40.0 48.0] 追踪端出界方向天光倍率
 // （新增环境光控制宏已移除 2026-08-06：环境光还原旧版纯 skySH 行为）
 
 // [2026-08-21] 射线天光门控模式：出界天光是否乘原版 lightmap 漏光门控。
@@ -223,6 +223,6 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // SH 被屏蔽 → 朝下表面只靠 GI 自反弹（距离有限）易死黑。恢复网格内 SH 加法混入——
 // 用 SH 全空间辐照度（含下半球）做环境底，补朝下表面，且随昼夜自动变化。
 // 0=完全屏蔽（现状）；1=完全 SH 平涂；低值（0.1-0.2）只轻微补底、不破坏 GI 方向性。
-#define VOXEL_GI_SH_MIX 0.15 // [0.0 0.05 0.1 0.15 0.2 0.3 0.5 0.75 1.0] 网格内 SH 球谐光混合强度（加法混入环境光）
+#define VOXEL_GI_SH_MIX 0.5 // [0.0 0.05 0.1 0.15 0.2 0.3 0.5 0.75 1.0] 网格内 SH 球谐光混合强度（加法混入环境光）
 
 #endif // VOXEL_GI_LIGHTING_INCLUDED

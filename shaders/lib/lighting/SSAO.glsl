@@ -1,11 +1,11 @@
 /* Screen-Space Ambient Occlusion */
 
-#define SSAO_SAMPLES 4 // [1 2 3 4 5 6 7 8 9 10 12 16 18 20 22 24 26 28 30 32 48 64]
+#define SSAO_SAMPLES 2 // [1 2 3 4 5 6 7 8 9 10 12 16 18 20 22 24 26 28 30 32 48 64]
 #define SSAO_STRENGTH 1.2 // [0.05 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.7 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
 
 // 开关：是否在远景（LOD）区块内渲染 SSAO
 // 【性能提示】保持注释状态可关闭远景 SSAO，能大幅提升面对大范围远景时的游戏帧率。
-// #define SSAO_LOD_ENABLED 
+#define SSAO_LOD_ENABLED
 
 // 近距 early-out 阈值：对应 maxSqLen(viewPosZ²*0.25) 的最小有效值，即 SSAO 采样半径约 0.1m。
 // 像素贴平面前极近时采样半径过小，循环内几乎全部采样被 diffSqLen<maxSqLen 剔除，直接判为无遮蔽。

@@ -17,30 +17,30 @@
 #include "/lib/surface/SSRT.glsl"
 
 #ifndef METAL_SSR_MODE
-    #define METAL_SSR_MODE 2 // [0 1 2]
+    #define METAL_SSR_MODE 1 // [0 1 2]
 #endif
 
 // ====== 反射判定模式 ======
 #ifndef METAL_REFLECT_MODE
-    #define METAL_REFLECT_MODE 0   // [0 1 2]  0=仅金属度, 1=仅粗糙度, 2=金属度或粗糙度满足其一
+    #define METAL_REFLECT_MODE 2   // [0 1 2]  0=仅金属度, 1=仅粗糙度, 2=金属度或粗糙度满足其一
 #endif
 #ifndef METALNESS_THRESHOLD
-    #define METALNESS_THRESHOLD 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
+    #define METALNESS_THRESHOLD 0.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #endif
 #ifndef ROUGHNESS_THRESHOLD
-    #define ROUGHNESS_THRESHOLD 0.4 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
+    #define ROUGHNESS_THRESHOLD 0.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #endif
 
 // ====== 粗糙反射 (宏开关) ======
           // 开启粗糙反射
 #ifndef ROUGH_REFLECTIONS_MAX
-    #define ROUGH_REFLECTIONS_MAX 0.7 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 粗糙反射的最高界限
+    #define ROUGH_REFLECTIONS_MAX 0.9 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 粗糙反射的最高界限
 #endif
 #ifndef ROUGH_REFLECTION_STEPS
     #define ROUGH_REFLECTION_STEPS 6 // [2 4 6 8 10 12 16 24 32] 单独设置粗糙物体的 SSR 追踪步数（较低即可）
 #endif
 #ifndef ROUGH_REFLECTION_BLUR_STRENGTH
-    #define ROUGH_REFLECTION_BLUR_STRENGTH 1.0 // [0.2 0.5 0.8 1.0 1.2 1.5 2.0 3.0 10.0 20.0 30.0 40.0 50.0 60.0 80.0 100.0 150.0] 粗糙反射的模糊强度倍率
+    #define ROUGH_REFLECTION_BLUR_STRENGTH 20.0 // [0.2 0.5 0.8 1.0 1.2 1.5 2.0 3.0 10.0 20.0 30.0 40.0 50.0 60.0 80.0 100.0 150.0] 粗糙反射的模糊强度倍率
 #endif
 #ifndef ROUGH_REFLECTION_BLUR_SAMPLES
     #define ROUGH_REFLECTION_BLUR_SAMPLES 6 // [4 6 8 10 12] 粗糙反射的泊松圆盘采样数（越多噪点越少，性能开销越大）
@@ -48,10 +48,10 @@
     //#define ROUGH_REFLECTION_CONTACT_HARDENING  // [注释以关闭] 接触硬化：近处清晰、远处模糊；关闭后使用固定模糊程度
     //#define ROUGH_REFLECTION_ON_METAL          // [注释以关闭] 粗糙反射模糊也对金属表面生效
 #ifndef REFLECTION_METAL_ATTENUATION
-    #define REFLECTION_METAL_ATTENUATION 0.5 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 所有金属反射的固定衰减倍率（降低以透出金属本身纹理）
+    #define REFLECTION_METAL_ATTENUATION 1.0 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 所有金属反射的固定衰减倍率（降低以透出金属本身纹理）
 #endif
 #ifndef REFLECTION_METAL_MIX
-    #define REFLECTION_METAL_MIX 0.75 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 金属反射与纹理的混合权重（1.0=纯反射, 0.0=纯纹理）
+    #define REFLECTION_METAL_MIX 0.9 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 金属反射与纹理的混合权重（1.0=纯反射, 0.0=纯纹理）
 #endif
 
 // ====== 反射亮度控制 ======
@@ -59,7 +59,7 @@
     #define REFLECTION_FALLBACK_BRIGHTNESS 1.0 // [0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.5 2.0]
 #endif
 #ifndef NONMETAL_REFLECTION_BRIGHTNESS
-    #define NONMETAL_REFLECTION_BRIGHTNESS 4.0 // [1.0 1.5 2.0 2.5 3.0 4.0 5.0]  增强非金属反射亮度
+    #define NONMETAL_REFLECTION_BRIGHTNESS 2.5 // [1.0 1.5 2.0 2.5 3.0 4.0 5.0]  增强非金属反射亮度
 #endif
 #ifndef REFLECTION_FALLBACK_BASE
     #define REFLECTION_FALLBACK_BASE 0.0 // 不再使用
@@ -70,7 +70,7 @@
 #endif
 
 #define REFLECTION_GLOBAL
-#define REFLECTION_SKY
+//#define REFLECTION_SKY
 
 // ---------- 快速 SSR 追踪器（模式 2）----------
 #if METAL_SSR_MODE == 2

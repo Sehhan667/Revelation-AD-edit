@@ -12,14 +12,14 @@
 --------------------------------------------------------------------------------
 */
 // 视差映射最大距离（米），超出此距离视差完全失效
-#define PARALLAX_MAX_DISTANCE 8.0  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+#define PARALLAX_MAX_DISTANCE 32  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
 
 // 视差映射淡化距离（米）
-#define PARALLAX_FADE_START 64.0  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
-#define PARALLAX_FADE_END   32.0  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+#define PARALLAX_FADE_START 32  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+#define PARALLAX_FADE_END   16  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
 
 // 方块法线/高光贴图裁剪最大距离（米）
-#define BLOCK_TEXTURE_CULL_DISTANCE 128.0  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+#define BLOCK_TEXTURE_CULL_DISTANCE 64  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
 
 // === Voxel Settings ===
 // ENABLE_VOXELIZATION 和 VISUALIZE_VOXELS 由 shaders.properties 注入，此处不再重复定义

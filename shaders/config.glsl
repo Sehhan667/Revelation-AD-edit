@@ -21,11 +21,14 @@
 	const int 	colortex8Format 			= RGBA16_SNORM;
 	const int 	colortex9Format 			= RGBA16F;
 	const int 	colortex10Format 			= RG16F;
-	const int 	colortex11Format 			= RGBA16F;	// 体积光散射(RGB) + 透射率(A)，1/4 分辨率
 	const int 	colortex12Format 			= RG16;
 	const int 	colortex13Format 			= R8I;
 	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
-	const int 	colortex15Format 			= RGBA8;
+	// [2026-09-11 DoF 移植] colortex15 原为 Voxel GI propagation 输出（RGBA8），
+	// 但唯一使用点 smooth.glsl 只被已禁用的 deferred1_b.csh1 引用 = 死缓冲。
+	// 现改作 DoF gather scratch（移植自原版 Revelation，原版同编号 rgba16f）：
+	// Prepare 写 CoC 数据 / Gather 写过滤色，需 HDR 半精度，故升 RGBA16F。
+	const int 	colortex15Format 			= RGBA16F;
 
 #ifdef VOXY
 	// Translucent data
@@ -59,7 +62,6 @@
 	const bool	colortex8Clear				= false;
 	const bool	colortex9Clear				= false;
 	const bool 	colortex10Clear				= false;
-	const bool 	colortex11Clear				= false;
 	const bool 	colortex12Clear				= true;
 	const bool 	colortex13Clear				= false;
 	const bool 	colortex14Clear				= false;
@@ -98,11 +100,10 @@
 	|	colortex8	|   rgba16_snorm    |	Full res  	|	Normal data
 	|	colortex9	|   rgba16f     	|	Full res	|	Cloud history
 	|	colortex10	|   RG16F           |	Full res	|	Hurt timer/ripple phase
-	|	colortex11	|   rgba16f         |	Quarter res	|	Volumetric light (scattering RGB + transmittance A)
 	|	colortex12	|   rg16          	|	Full res	|	Water data
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)
-	|	colortex15	|   RGBA8		    |	Full res	|	Voxel GI propagation output
+	|	colortex15	|   rgba16f		    |	Full res  	|	DoF gather scratch (Prepare CoC data -> Gather filtered color); old voxel GI use was dead
 	|	colortex18	|   rgba16f			|	Half res	|	SSS source (rgb = source x mask, a = mask), written by DeferredLight
 	|	colortex19	|   rgba16f			|	Half res	|	SSS horizontal blur result
 	|	colortex20	|   rgba16f			|	Half res	|	SSS vertical blur result (consumed by IntegrateScene)

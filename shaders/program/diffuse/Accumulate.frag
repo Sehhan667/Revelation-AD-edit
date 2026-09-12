@@ -44,12 +44,12 @@ layout (location = 1) out vec4 encodedNormalDepth;
 #include "/lib/universal/Random.glsl"
 
 // ====== Peak Hold 控制宏（仅添加，不改其他）======
-#define SSILVB_PEAK_HOLD
+//#define SSILVB_PEAK_HOLD
 #ifndef SSILVB_HOLD_DOWN_SPEED
-    #define SSILVB_HOLD_DOWN_SPEED 0.05  // [0.01 0.02 0.05 0.1 0.2 0.5 1.0]
+    #define SSILVB_HOLD_DOWN_SPEED 0.1  // [0.01 0.02 0.05 0.1 0.2 0.5 1.0]
 #endif
 #ifndef SSILVB_HOLD_UP_SPEED
-    #define SSILVB_HOLD_UP_SPEED 3.0     // [0.1 0.5 1.0 2.0 3.0 5.0]
+    #define SSILVB_HOLD_UP_SPEED 7.0     // [0.1 0.5 1.0 2.0 3.0 5.0]
 #endif
 
 #ifdef TAA_ENABLED

@@ -16,7 +16,7 @@
     #define COMPENSATION_Y_THRESHOLD -20.0          // World Y above which compensation may apply
 #endif
 #ifndef COMPENSATION_BOOST
-    #define COMPENSATION_BOOST 1.0                 // Overall brightness multiplier for the compensation
+    #define COMPENSATION_BOOST 0.4                 // Overall brightness multiplier for the compensation
 #endif
 #ifndef COMPENSATION_FADE_RANGE
     #define COMPENSATION_FADE_RANGE 8.0            // Distance over which the effect fades in (meters)

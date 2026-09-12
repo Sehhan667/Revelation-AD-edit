@@ -26,26 +26,27 @@ out vec3 finalOut;
 #include "/lib/universal/Random.glsl"
 
 #include "/lib/post/KillRipple.glsl"
+#include "/lib/post/StartupLogo.glsl"
 
+// [2026-09] 启动 logo 改为矢量绘制：形状与绘制动画都在 lib/post/StartupLogo.glsl 里，
+// 原来是采样 shaders/texture/logo.png（128x128 位图放大 5 倍，边缘全是方块）。
+// STARTUP_LOGO 关掉时整段不参与编译，与改动前一致。
+// 注意：logo.png 现在不再被 shader 引用（文件保留没删，方便对照形状）。
 #define STARTUP_LOGO
-#define LOGO_SCALE 5.0
-#ifdef STARTUP_LOGO
-uniform sampler2D startupTex;
-#endif
 
 // ---------- 调试：始终显示全屏故障（取消注释即生效） ----------
 //#define ALWAYS_GLITCH
 
 // ---------- 全屏受伤故障 ----------
 #define GLITCH_VISUAL
-#define HURT_GLITCH_INTENSITY 1.0 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
+#define HURT_GLITCH_INTENSITY 0.4 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 
 // ---------- 实体区域故障 ----------
 #define ENTITY_AREA_GLITCH
-#define ENTITY_AREA_GLITCH_INTENSITY 0.6 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
+#define ENTITY_AREA_GLITCH_INTENSITY 0.3 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 
 // ---------- 撕裂层数（推荐 2~6） ----------
-#define GLITCH_TEAR_LAYERS 6 // [2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
+#define GLITCH_TEAR_LAYERS 10 // [2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
 
 // ---------- 实体撕裂模式 ----------
 #define ENTITY_GLITCH_OUTLINE_TEAR // [注释以关闭] 开启：实体轮廓随条带一起撕裂（缺口用邻近背景近似填充）；关闭：旧版仅内部颜色错位
@@ -85,6 +86,29 @@ void HistogramDisplay(inout vec3 color, in ivec2 texel) {
     }
 }
 
+// ---------- 横向色差（Chromatic Aberration）：镜头终点一次性整体效果 ----------
+// 对已 tone-map 完成的 colortex0 做径向 RGB 通道分离：R 略向外、B 略向内、G 不动。
+// 强度 CHROMATIC_ABERRATION_STRENGTH 定义为四角最大偏移像素数，随到中心距离线性增长
+// （中心无色散，符合真实镜头）。这个效果不新增 pass，只在本 pass 采样时生效。
+vec3 LoadChromaticScene(in ivec2 texel) {
+    vec3 e = FFXCasFilter(texel, CAS_STRENGTH);
+#ifdef CHROMATIC_ABERRATION
+    vec2 uv = (vec2(texel) + 0.5) * viewPixelSize;
+    vec2 c = uv - 0.5;
+    float dist = length(c);
+    float distNorm = dist * rcp(0.70710678118); // 除以半对角，四角归一为 1.0
+    vec2 dir = c * rcp(maxEps(dist));
+    vec2 off = dir * (CHROMATIC_ABERRATION_STRENGTH * distNorm) * viewPixelSize;
+    return vec3(
+        texture(colortex0, uv + off).r,
+        e.g,
+        texture(colortex0, uv - off).b
+    );
+#else
+    return e;
+#endif
+}
+
 float loop(float x) {
     x = mix(x, x - 1.0, float(x > 1.0));
     x = mix(x, x + 1.0, float(x < 0.0));
@@ -98,24 +122,21 @@ void main() {
     #ifdef DEBUG_BLOOM_TILES
         finalOut = texelFetch(colortex4, texelPos, 0).rgb;
     #else
-        finalOut = FFXCasFilter(texelPos, CAS_STRENGTH);
+        finalOut = LoadChromaticScene(texelPos);
     #endif
 
-    // 启动图片淡出
+    // 启动 logo（矢量绘制 + 逐笔描画 + 淡出）
     #ifdef STARTUP_LOGO
-        const int logoDuration = 180, fadeStart = 60;
+        // 时间轴：主字形 0~48 帧扫出来，文字 34~58 帧接上，
+        // 画完后**停 110 帧**再开始淡出，180 帧结束。
+        // （停顿时长就是这里的 logoFadeStart；原来是 80，按要求多了 0.5 秒 = 30 帧。）
+        const int logoDuration = 180, logoFadeStart = 110;
         if (frameCounter < logoDuration) {
-            float fade = 1.0 - smoothstep(float(fadeStart), float(logoDuration), float(frameCounter));
-            ivec2 texSize = textureSize(startupTex, 0);
-            ivec2 logoSize = ivec2(vec2(texSize) * LOGO_SCALE);
-            ivec2 startPos = ivec2(viewSize) / 2 - logoSize / 2;
-            ivec2 logoCoord = texelPos - startPos;
-            if (all(greaterThanEqual(logoCoord, ivec2(0))) && all(lessThan(logoCoord, logoSize))) {
-                ivec2 srcCoord = ivec2(logoCoord / LOGO_SCALE);
-                srcCoord.y = texSize.y - 1 - srcCoord.y;
-                vec4 logoColor = texelFetch(startupTex, srcCoord, 0);
-                finalOut = mix(finalOut, logoColor.rgb, logoColor.a * fade);
-            }
+            float fade = 1.0 - smoothstep(float(logoFadeStart), float(logoDuration), float(frameCounter));
+            vec2 screenUV = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
+            float logoCoverage = StartupLogoMask(screenUV, vec2(viewWidth, viewHeight), float(frameCounter)).x;
+            // 纯白（按需求：与截图里的白色一致）
+            finalOut = mix(finalOut, vec3(1.0), logoCoverage * fade);
         }
     #endif
 

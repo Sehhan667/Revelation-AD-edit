@@ -57,7 +57,7 @@ in vec3 worldPos;
 #include "/lib/universal/Transform.glsl"
 #include "/lib/universal/Random.glsl"
 
-#define PHYSICS_OCEAN_SUPPORT
+//#define PHYSICS_OCEAN_SUPPORT
 
 // 🌊 波浪细节控制宏（可在外层 config 中定义，1~5，默认 2）
 #ifndef WATER_WAVE_SAMPLES

@@ -65,7 +65,9 @@ void main() {
 
 		#ifdef VOLUMETRIC_FOG
 			if (isEyeInWater == 0) {
-				mat2x3 volFogData = RaymarchAtmosphericFog(vec3(0.0), worldDir * FLT_MAX, noise.x, true, VF_MAX_SAMPLES >> 1, 1.0);
+				// 天空 LUT：没有阴影贴图可用（prepare 在 shadow pass 之前），可见度传全亮；
+				// 雾中光束只作用于屏幕空间的主雾（IntegrateScene）。
+				mat2x3 volFogData = RaymarchAtmosphericFog(vec3(0.0), worldDir * FLT_MAX, noise.x, true, 1.0, vec3(1.0), global.directIlluminance);
 				skyRadiance = ApplyFog(skyRadiance, volFogData);
 			}
 		#endif

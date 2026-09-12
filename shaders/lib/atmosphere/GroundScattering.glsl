@@ -26,19 +26,19 @@
 
 // 参数兜底默认值（与 settings.glsl 一致；GUI 解压后通常由 settings 定义覆盖）
 #ifndef GS_DENSITY
-	#define GS_DENSITY 1.0
+	#define GS_DENSITY 3.0
 #endif
 #ifndef GS_SKY_BRIGHTNESS
 	#define GS_SKY_BRIGHTNESS 1.0
 #endif
 #ifndef GS_SUN_BRIGHTNESS
-	#define GS_SUN_BRIGHTNESS 1.0
+	#define GS_SUN_BRIGHTNESS 0.1
 #endif
 #ifndef GS_MIE_G
-	#define GS_MIE_G 0.4
+	#define GS_MIE_G 0.2
 #endif
 #ifndef GS_RAIN_BOOST
-	#define GS_RAIN_BOOST 1.0
+	#define GS_RAIN_BOOST 4.0
 #endif
 
 // 地面视线的"空气量放大基数"。

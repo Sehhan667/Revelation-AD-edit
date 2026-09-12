@@ -39,7 +39,7 @@ uniform vec2 taaJitter;
 
 //======// Function //============================================================================//
 
-#define PHYSICS_OCEAN_SUPPORT
+//#define PHYSICS_OCEAN_SUPPORT
 #ifdef PHYSICS_OCEAN_SUPPORT
 #endif
 

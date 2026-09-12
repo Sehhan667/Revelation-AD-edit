@@ -22,24 +22,24 @@
 #define PASS_DEFERRED_LIGHTING
 
 #ifndef SHADOW_CONTRAST_STRENGTH
-    #define SHADOW_CONTRAST_STRENGTH 1.0 // [0.1 0.2 0.3 0.4 0.5 1.0 2.0 3.0 4.0 6.0 8.0 10.0]
+    #define SHADOW_CONTRAST_STRENGTH 0.3 // [0.1 0.2 0.3 0.4 0.5 1.0 2.0 3.0 4.0 6.0 8.0 10.0]
 #endif
 
 // 启用补偿
-#define COMPENSATION_ENABLED
+//#define COMPENSATION_ENABLED
 
 // 补偿参数
 #ifndef COMPENSATION_BOOST
-    #define COMPENSATION_BOOST 0.5 // [0.0 0.05 0.1 0.15 0.2 0.25 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
+    #define COMPENSATION_BOOST 0.4 // [0.0 0.05 0.1 0.15 0.2 0.25 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #endif
 #ifndef COMPENSATION_FADE_SPEED
     #define COMPENSATION_FADE_SPEED 0.2 // [0.1 0.2 0.3 0.4 0.5 1.0 2.0 3.0 4.0 6.0 8.0 10.0]
 #endif
 #ifndef COMPENSATION_DELAY
-    #define COMPENSATION_DELAY 6.0 // [0.0 0.5 1.0 1.5 2.0 3.0 5.0 6.0 10.0 15.0]
+    #define COMPENSATION_DELAY 1.5 // [0.0 0.5 1.0 1.5 2.0 3.0 5.0 6.0 10.0 15.0]
 #endif
 #ifndef COMPENSATION_AO_BOOST
-    #define COMPENSATION_AO_BOOST 1.5 // [0.0 0.1 0.2 0.3 0.5 0.7 1.0 1.5 2.0]
+    #define COMPENSATION_AO_BOOST 0.0 // [0.0 0.1 0.2 0.3 0.5 0.7 1.0 1.5 2.0]
 #endif
 
 // ====== 次表面散射距离控制 ======
@@ -49,7 +49,7 @@
 
 // ====== 镜面高光泛光增强 ======
 #ifndef SPECULAR_BLOOM_BOOST
-    #define SPECULAR_BLOOM_BOOST 3.0 // [1.0 1.5 2.0 2.5 3.0 4.0 5.0]
+    #define SPECULAR_BLOOM_BOOST 2.0 // [1.0 1.5 2.0 2.5 3.0 4.0 5.0]
 #endif
 
 // ====== 阳光 / 月光亮度控制 ======
@@ -70,7 +70,7 @@
 
 // 环境光阳光色调混合最大强度 (实际强度 = 此值 × 太阳高度因子，仅主世界)
 #ifndef AMBIENT_SUNLIGHT_TINT_RATIO
-    #define AMBIENT_SUNLIGHT_TINT_RATIO 1.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0]
+    #define AMBIENT_SUNLIGHT_TINT_RATIO 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0]
 #endif
 
 // ====== 夜间阴影增强 ======
@@ -84,6 +84,12 @@
 // [2026-09] 旧版 SSS 模型的阴影幂门控指数（重写版模型不使用它）。
 // 之前随「SSS 与阴影门控解耦」被删过；现在旧版模型回归，这里一并恢复。
 #define SSS_CONTRAST_POW (1.2 / SHADOW_CONTRAST_STRENGTH)
+// [2026-09] 「植物判定补充」(UNLABELLED_FOILAGE_DETECTION) 与十字方块的 PCF 厚度
+// 已改成 GUI 宏，见 settings.glsl 的 SUBSURFACE_SCATTERING_CROSS_THICKNESS /
+// SUBSURFACE_SCATTERING_NONCROSS_THICKNESS（**只在 PCF 生效**；PCSS 用真实 blocker 深度）。
+// 判定来源：program/gbuffers/Terrain.vert —— 无标签(materialID < 1u) 且
+// maxOf(abs(法线)) < 0.99（十字模型这类非轴向面）→ materialID = 1003u；block.properties 的
+// block.11000-11003 也是同一族（草/花/树苗），所以"十字方块"= materialID 1000-1003。
 
 //======// Utility //=============================================================================//
 
@@ -754,13 +760,13 @@ void main() {
 
     // ====== 次表面散射（SSS）======
     // [2026-09] 两套模型，由 GUI 选项 SUBSURFACE_SCATTERING_MODEL 选择：
-    //   0 = 旧版（默认，还原 2026-09 之前的实现）：sigmaS × phase（相位 75% 各向同性）×
-    //       阴影幂门控 × 接触阴影；厚度项用 PCSS 的 blockerDepth（PCF 模式下恒为 0）。
+    //   0 = 旧版（默认）= **原版 Revelation 的 SSS 逐行移植**（来源与差异见下方模型段）。
     //   1 = 重写版（备选）：见 lib/lighting/Subsurface.glsl —— 材质分类的真实厚度、
     //       天光/环境项、背光透光（默认关，视角相关）、与屏幕空间阴影解耦、不含相机方向。
     // 阴影距离外（rawShadow 恒 1，阴影贴图在最后 8 格起就停采）两版的处理不同：
     //   旧版：**不做任何亮度限制**（曾试过倍率与亮度上限，都因远处显得假而移除），
-    //         亮度与距离无关，明暗完全交给屏幕空间接触阴影 —— 它在贴图停采的那一刻与直接光同刻接管。
+    //         亮度与距离无关，明暗完全交给屏幕空间接触阴影 —— 原版的写法让这次交接在
+    //         最后 8 格内连续发生（saturate(distanceFade + cutout * 0.75)）。
     //   重写版：其太阳项按 sssSunGate = 1 - distanceFade 平滑淡出，只保留自带的天光项。
     #if SHADOW_SOFT_TYPE > 0
         #ifdef SSS_DISABLE_BEYOND_SHADOW_DIST
@@ -772,23 +778,49 @@ void main() {
 
         if (sssAllowed && sssAmount > EPS) {
             #if SUBSURFACE_SCATTERING_MODEL == 0
-                // ---------- 旧版模型 ----------
-                // sunlightFactor 是原实现的外层门槛（夜晚/未受天光的像素本来就整段跳过）。
-                // [2026-09 修正] 旧版整项都是太阳驱动的，直接按 (1 - distanceFade) 淡出会让
-                // 阴影距离外**完全没有** SSS。正确做法是把太阳那份降级而不是清零：
-                //   近处：完全等价于原实现（radiance = sunlightBase）
-                //   远处：太阳 × SUBSURFACE_SCATTERING_FAR_SCALE + 环境辐照
-                // 即"不知道远处有没有被遮挡 → 取部分受光的保守值"，远处仍有可见的次表面感。
+                // ---------- 旧版模型 = 原版 Revelation SSS（逐行移植）----------
+                // 来源：vanilla Revelation 的 shaders/program/CombineLighting.frag「Shadows and SSS」段
+                // （与 upstream/dev 的 cf7a0f67 一致）：
+                //     vec3 beta   = approxSqrt(saturate(normalize(albedo)));
+                //     vec3 sigmaA = oms(beta) * 8.0 / (sssAmount * SUBSURFACE_SCATTERING_STRENGTH);
+                //     vec3 sigmaS = 2.0 * beta * sssAmount;
+                //     float phase = HenyeyGreensteinPhase(-LdotV, 0.7) * 0.25 + uniformPhase * 0.75;
+                //     vec3 sss    = sigmaS * phase * exp2(-rLOG2 * surfaceDepth * (sigmaS + sigmaA));
+                //     sss *= mix(1.0, contactShadow, saturate(distanceFade + cutout * 0.75));
+                //     diffuseRadiance += sunlightBase * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
+                // 这里的 sssBlockerDepth 就是原版的 surfaceDepth（CalculatePCSS 的 blocker 深度
+                // 输出；PCF 模式下恒为 0 ⇒ 厚度项 exp2(...) = 1 ⇒ 系数就是纯倍率）。
+                //
+                // [2026-09 移植] 移植前 AD-edit 的旧版把两个系数都写成了原版的 2 倍
+                // （sigmaS 4.0、sigmaA 16.0），在厚度项恒为 1 的 PCF 模式下这就是**整整一倍**
+                // 的偏亮 —— 也正是"次表面方块阳面比普通方块亮"的直接来源之一。现按原版改回。
+                // 接触阴影的混合同样改回原版的连续写法（旧版是 distanceFade >= EPS 的硬开关）。
                 if (sunlightFactor > EPS) {
-                    vec3 beta = approxSqrt(normalize(albedo));
-                    vec3 sigmaA = oms(beta) * 16.0 / (sssAmount * SUBSURFACE_SCATTERING_STRENGTH);
-                    vec3 sigmaS = 4.0 * beta * sssAmount;
+                    vec3 beta = approxSqrt(saturate(normalize(albedo)));
+                    vec3 sigmaA = oms(beta) * 8.0 / (sssAmount * SUBSURFACE_SCATTERING_STRENGTH);
+                    vec3 sigmaS = 2.0 * beta * sssAmount;
                     float LdotV = dot(worldLightDir, -worldDir);
                     float phase = HenyeyGreensteinPhase(-LdotV, 0.7) * 0.25 + uniformPhase * 0.75;
-                    vec3 sss = sigmaS * phase * exp2(-rLOG2 * sssBlockerDepth * (sigmaS + sigmaA));
-
+                    // 厚度（**只在 PCF 生效**）：PCF 下 sssBlockerDepth 恒为 0（blockerDepth 只在
+                    // SHADOW_SOFT_TYPE == 2 时被填写），厚度因此由两个 GUI 宏给 —— 十字方块
+                    // (materialID 1000-1003，含「植物判定补充」检出的 1003) 与非十字方块分开设置，
+                    // 0 = 该类退回纯平加。PCSS 下不覆盖真实 blocker 深度（那份数据比常量准）。
                     #if SHADOW_SOFT_TYPE == 1
-                        sss *= pow(sssFrontVisibility, SSS_CONTRAST_POW);
+                        float sssThickness = clamp(materialID, 1000u, 1003u) == materialID
+                                           ? SUBSURFACE_SCATTERING_CROSS_THICKNESS
+                                           : SUBSURFACE_SCATTERING_NONCROSS_THICKNESS;
+                    #else
+                        float sssThickness = sssBlockerDepth;
+                    #endif
+                    vec3 sss = sigmaS * phase * exp2(-rLOG2 * sssThickness * (sigmaS + sigmaA));
+
+                    #ifdef SUBSURFACE_SCATTERING_EXTRA_GATES
+                        // ---- AD-edit 附加项（原版没有）：阴影幂门控 ----
+                        // 让 SSS 随阴影可见性衰减，即"旧 sss 会根据阴影自动补强度"。
+                        // 关掉 EXTRA_GATES（并把「阳面抑制」调到 0）就是纯原版行为。
+                        #if SHADOW_SOFT_TYPE == 1
+                            sss *= pow(sssFrontVisibility, SSS_CONTRAST_POW);
+                        #endif
                     #endif
 
                     float cutout = float(clamp(materialID, 1000u, 1003u) == materialID || clamp(materialID, 27u, 28u) == materialID);
@@ -796,9 +828,10 @@ void main() {
                     // "全亮"假设下的贡献（未乘接触阴影）
                     vec3 sssLit = sunlightBase * sss * SUBSURFACE_SCATTERING_BRIGHTNESS;
 
-                    // [2026-09] 入射因子 —— 修正"阴影距离外靠近太阳时异常发亮、失去阴影"：
-                    // 旧版 SSS 公式里没有 N·L（平加性项），阴影距离内是靠 pow(rawShadow, ...) 的
-                    // 贴图门控替它遮挡自阴影的。但两件事叠加后它就露出来了：
+                    #ifdef SUBSURFACE_SCATTERING_EXTRA_GATES
+                    // ---- AD-edit 附加项（原版没有）：入射因子 —— 修正"阴影距离外靠近太阳时
+                    // 异常发亮、失去阴影"。旧版 SSS 公式里没有 N·L（平加性项），阴影距离内是靠
+                    // pow(rawShadow, ...) 的贴图门控替它遮挡自阴影的。但两件事叠加后它就露出来了：
                     //   ① 阴影距离外不再有贴图（rawShadow 恒 1，门控恒为 1）；
                     //   ② "视角朝太阳"这个几何会让屏幕空间阴影退化 —— ScreenSpaceShadow 里
                     //      rayDir = ViewToScreenPos(viewLightDir * |viewPos.z| + viewPos) - rayPos，
@@ -811,17 +844,27 @@ void main() {
                     float sssEntry = saturate(dot(worldNormal, worldLightDir) * 2.5 + 1.0);
                     sssLit *= sssEntry;
 
-                    // ---- 暗部来源：与直接光**同刻**换挡 ----
-                    // CalculatePCSS 只在 distanceFade < EPS 时执行，直接光就是在那一刻失去贴图阴影的；
-                    // SSS 的暗部也在同一刻完全交给屏幕空间接触阴影：
-                    //   贴图范围内：max(0, cutout × 0.75) = 原实现的权重（非 cutout 材质不乘接触阴影）
-                    //   跨过那一刻：系数 1，从此由接触阴影充当暗部
-                    // 注意这里是"同刻切换"而不是渐变 —— 渐变会留下"直接光已切换、SSS 还没切换"的空白带。
-                    float sssContactMix = max(float(distanceFade >= EPS), cutout * 0.75);
+                    // ---- AD-edit 附加项（原版没有）：阳面抑制 ----
+                    // 原版 SSS 也是平加性项（公式里没有 N·L），受光面上等于白送一份光：
+                    // 次表面材质的方块（羊毛/冰/树叶/草等）被阳光直射的面比普通方块亮。
+                    // 这一项按 (1 - N·L) 反向抑制：正对太阳的面降到 0，掠射（N·L ≈ 0）保持
+                    // 原强度 —— SSS 因此退化成"明暗交界处的透光"（薄片透光的经典形状）。
+                    // 与上面的 sssEntry 互补：sssEntry 压背光面（N·L < 0），这一项压阳面（N·L > 0）。
+                    // 0 = 原版行为（不做抑制），1 = 完全抑制（默认）。
+                    float sssFrontSuppress = mix(1.0, saturate(1.0 - NdotL), SUBSURFACE_SCATTERING_FRONT_SUPPRESS);
+                    sssLit *= sssFrontSuppress;
+                    #endif
+
+                    // ---- 暗部来源：原版写法 = 接触阴影连续混合 ----
+                    // 贴图范围内：saturate(cutout × 0.75) = 原实现权重（非 cutout 材质不乘接触阴影，
+                    //             它们的暗部由阴影贴图负责）
+                    // 最后 8 格过渡带：随 distanceFade 升到 1，交接在带内连续完成（无硬跳变）
+                    // 阴影距离外：恒为 1，完全由屏幕空间接触阴影充当暗部
+                    float sssContactMix = saturate(distanceFade + cutout * 0.75);
 
                     // [2026-09 已移除] 阴影距离外的亮度限制（曾用 SUBSURFACE_SCATTERING_FAR_LIMIT 夹上限，
                     // 更早还用过 FAR_SCALE 乘倍率）。上限会让远处 SSS 变成一个与当地光照无关的固定亮度，
-                    // 看起来假；去掉后远处亮度与距离无关，明暗完全由屏幕空间阴影提供（见上面的换挡）。
+                    // 看起来假；去掉后远处亮度与距离无关，明暗完全由屏幕空间阴影提供。
                     sceneOut += sssLit * mix(1.0, sssContactShadow, sssContactMix);
                 }
             #else

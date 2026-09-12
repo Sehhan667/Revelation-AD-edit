@@ -82,12 +82,15 @@ screen.MiscMaterials=Miscellaneous
 
 screen.FidelityFX=FidelityFX
 screen.DoF=DoF
+screen.DoF.comment=Lens blur (bokeh): adds realistic focal length and aperture to the frame - in-focus areas stay sharp, out-of-focus areas blur.
 screen.TAA=TAA
 screen.MotionBlur=Motion Blur
 screen.Bloom=Bloom
 screen.Exposure=Exposure
 screen.Vignette=Vignette
 screen.Color=Color
+screen.ChromaticAberration=Chromatic Aberration
+screen.ChromaticAberration.comment=Lateral chromatic aberration (lens RGB channel separation) for a realistic lens-edge RGB fringe.
 
 
 # OPTIONS
@@ -190,32 +193,31 @@ suffix.CLOUD_SHADOW_DISTANCE=Chunks
 
 # Fog
 option.VOLUMETRIC_FOG=Volumetric Fog
-option.VF_MAX_SAMPLES=Volumetric Fog Max Samples
 option.VF_CLOUD_SHADOWS=Volumetric Fog Cloud Shadows
 option.VF_HEIGHT=Volumetric Fog Height
 suffix.VF_HEIGHT=m
+option.VF_NIGHT_FOG_SATURATION=Night Fog Saturation
+option.VF_NIGHT_FOG_SATURATION.comment=The blue of the night fog comes from two sources: the moonlight term is blue itself, and the fog's Rayleigh scattering coefficient is strongly blue (hidden during the day by the warm-white sun term). 0 = fully neutral (brightness only, i.e. grey fog at night), 1 = keep the original blue. Night only; daytime is unaffected
+option.VF_RAIN_SUN_FLOOR=Rain Sun Term Floor
+option.VF_RAIN_SUN_FLOOR.comment=Rain cloud shading multiplies the fog sun term by max(1 - wetness * cloudShadowStrength, 0), and cloud shadow strength defaults to 1.0, so at full rain this term reaches exactly zero - the fog loses its only strong light source and is left with dim skylight, which reads as dark and yellow. This option puts a floor under that multiplier: keep at least this much of the sun term when it rains. 0 = original behaviour (zeroed in rain, darkest), 1 = no rain attenuation at all. Clear weather is unaffected
+option.VF_FOG_THICKNESS=Fog Layer Thickness
+option.VF_FOG_THICKNESS.comment=Half-height of the fog layer envelope, in blocks. This decides whether blocks or the sky get occluded more: with a thin layer, looking up from inside it leaves the fog within a dozen blocks, so the sky stays clear while horizontal views of blocks stay inside the layer and get fogged; with a thick layer (256+ is close to uniform fog) occlusion depends only on distance, so the sky (256 blocks) is fogged more than nearby blocks. Thicker layers raise the overall fog amount, so lower Global Fog Density accordingly
+suffix.VF_FOG_THICKNESS=blocks
 
 option.VF_RAYLEIGH_DENSITY=Volumetric Fog Rayleigh Density
 option.VF_MIE_DENSITY=Volumetric Fog Mie Density
 option.VF_MIE_DENSITY_RAIN_MULT=Volumetric Fog Mie Density Rain Multiplier
-option.VF_NOISE_QUALITY=Volumetric Fog Noise Quality
-value.VF_NOISE_QUALITY.LOW=Low
-value.VF_NOISE_QUALITY.MEDIUM=Medium
-value.VF_NOISE_QUALITY.HIGH=High
 option.VF_TIME_FADE=Volumetric Fog Time Fade
 option.COLORED_VOLUMETRIC_FOG=Colored Volumetric Fog
 
 option.VOLUMETRIC_LIGHT=Volumetric Light (God Rays)
-option.VOLUMETRIC_LIGHT.comment=Sun/moon beams pierce leaves, windows and openings, tinted by stained glass. Noise is smoothed by TAA
-option.VOLUMETRIC_LIGHT_MODE=Volumetric Light Mode
-option.VOLUMETRIC_LIGHT_MODE.comment=0=Quarter-res ray marching: fine beams through leaves/window gaps, more cost; 1=Full-res screen-space sun shafts: simple radial beams toward the sun, less cost
-value.VOLUMETRIC_LIGHT_MODE.0=Ray Marching (Quarter Res)
-value.VOLUMETRIC_LIGHT_MODE.1=Screen-Space Sun Shafts (Full Res)
+option.VOLUMETRIC_LIGHT.comment=The beams come from the volumetric fog itself: the fog's sun term is multiplied by the shadow visibility along the view ray, so the light/dark pattern cut by leaves, windows and openings grows directly on the fog. Requires Volumetric Fog; beams share the fog's color, density and height falloff. Stained-glass tint is controlled by Colored Volumetric Fog; noise is smoothed by TAA
 option.VF_VOLUME_INTENSITY=Volumetric Light Intensity
-option.VF_VOLUME_MAX_STEPS=Volumetric Light Max Steps
-option.VF_VOLUME_MAX_STEPS.comment=Ray march steps at quarter resolution. Higher = finer beams, more cost
-option.VF_SHAFT_COLOR_BRIGHTNESS=Volumetric Light Color Brightness
-option.VF_SHAFT_COLOR_BRIGHTNESS.comment=Overall brightness of shafts / moon halo (unified intensity knob for daylight sun and night moonlight). Higher = brighter
+option.VF_VOLUME_INTENSITY.comment=Shadow contrast of the beams: 0 = no darkening at all (no beams), 1 = fully attenuated by shadow visibility (full contrast, higher values have no effect). For brighter beams use Volumetric Light Brightness / Volumetric Fog Mie Density
+option.VF_SHAFT_BRIGHTNESS=Volumetric Light Brightness
+option.VF_SHAFT_BRIGHTNESS.comment=Brightens only the sunlit part of the fog (leaves the ambient fog untouched), so this is the direct way to make the beams stand out: raising fog density or Mie density brightens the ambient fog as well and leaves the contrast unchanged. 1.0 = current look, 2-3 is already very visible
+option.VF_VOLUME_SHADOW_SAMPLES=Volumetric Light Shadow Samples
+option.VF_VOLUME_SHADOW_SAMPLES.comment=How many shadow-map samples are taken along each view ray (stratified + per-pixel dithered, noise averaged by TAA). 0 disables the beams; higher = finer, more continuous beams at linearly higher cost
 option.SUN_HALO=Sun Halo (Base)
 option.SUN_HALO.comment=Base glow around the sun/moon, independent of fog density (visible even without fog); drawn on sky pixels only
 option.SUN_HALO_STRENGTH=Sun Halo Strength
@@ -224,7 +226,6 @@ option.SUN_HALO_WIDTH=Sun Halo Width
 option.SUN_HALO_WIDTH.comment=Angular width of the halo (larger = wider and softer)
 
 option.UW_VOLUMETRIC_FOG=Underwater Volumetric Fog
-option.UW_VF_MAX_SAMPLES=Underwater Volumetric Fog Max Samples
 
 option.UW_SUN_OCCLUSION=Underwater Sun Halo Occlusion
 option.UW_SUN_OCCLUSION.comment=Whether the blurry halo toward the sun in underwater fog disappears when the sun is occluded on screen. If the sun is blocked/behind/off-screen the halo hides, keeping the uniform multi-scatter ambient fog
@@ -397,6 +398,14 @@ value.SUBSURFACE_SCATTERING_MODE.1=Hardcoded + PBR
 value.SUBSURFACE_SCATTERING_MODE.2=PBR Only
 option.SUBSURFACE_SCATTERING_STRENGTH=Subsurface Scattering Strength
 option.SUBSURFACE_SCATTERING_BRIGHTNESS=Subsurface Scattering Brightness
+option.SUBSURFACE_SCATTERING_FRONT_SUPPRESS=Front-Lit Suppression (old model only)
+option.SUBSURFACE_SCATTERING_FRONT_SUPPRESS.comment=The old SSS formula contains no N.L and its thickness term is exactly 1 in PCF mode, so on a sunlit face it is simply extra light added on top of the diffuse: subsurface materials (wool, ice, leaves, grass) look brighter than normal blocks when directly lit. This option suppresses SSS by (1 - N.L): full when facing the sun, unchanged at grazing angles, so SSS becomes a terminator glow. 0 = vanilla behaviour (for A/B), 1 = fully suppressed (default).
+option.SUBSURFACE_SCATTERING_EXTRA_GATES=Extra Gates (off = pure vanilla formula)
+option.SUBSURFACE_SCATTERING_EXTRA_GATES.comment=The old SSS path is now a line by line port of the vanilla Revelation formula, and vanilla has no shadow or orientation gates at all: SSS follows the sun irradiance only, ignoring shadow visibility and face orientation. AD-edit added two on top - the shadow power gate (fades SSS with shadow visibility) and the back-face entry factor (fixes the abnormal glow when looking towards the sun beyond the shadow distance). Off disables both; combine with Front-Lit Suppression at 0 for 100% vanilla behaviour.
+option.SUBSURFACE_SCATTERING_CROSS_THICKNESS=Cross-Model Thickness (PCF only)
+option.SUBSURFACE_SCATTERING_CROSS_THICKNESS.comment=Volumetric thickness applied to cross-model blocks only (materialID 1000-1003: grass, flowers, saplings, including the 1003 assigned by Unlabelled Foliage Detection). In PCF mode there is no blocker depth (sssBlockerDepth is always 0, so the thickness term exp2(0)=1) and SSS degenerates into a flat additive term; this gives it a thickness. 0 = back to the flat additive term (vanilla PCF behaviour), higher = darker and thicker looking. Has no effect in PCSS mode, where the real blocker depth is used.
+option.SUBSURFACE_SCATTERING_NONCROSS_THICKNESS=Non-Cross Thickness (PCF only)
+option.SUBSURFACE_SCATTERING_NONCROSS_THICKNESS.comment=Same as above but for every other SSS material (leaves 13, vines 27/28, wool and hay 37, ice, snow and honeycomb 38, slime 51, ...). Default 0 keeps the vanilla flat additive behaviour in PCF; raise it if you want wool and ice to look thick too. PCF only.
 option.SUBSURFACE_SCATTERING_RADIUS=Subsurface Scattering Radius
 option.SUBSURFACE_SCATTERING_RADIUS.comment=Diffusion mean free path (= value x 4 blocks). Higher = more translucent, weaker volumetric falloff. Also sets the blur radius of the screen-space diffusion step.
 option.SUBSURFACE_SCATTERING_TRANSMISSION=Backlight Translucency (view dependent)
@@ -451,6 +460,45 @@ option.SELECTION_BOX_COLOR_B=Selection Box Color §1Blue
 
 
 # Post-Processing
+option.DEPTH_OF_FIELD=Depth of Field
+option.DEPTH_OF_FIELD.comment=Simulates real-camera lens blur (bokeh): objects on the focus plane stay sharp while off-focus objects blur by a growing circle of confusion. Pair it with TAA for a smoother bokeh.
+option.CAMERA_FOCUS_MODE=Focus Mode
+option.CAMERA_FOCUS_MODE.comment=Auto: continuously racks focus onto the nearest object near screen center. Manual: fixes the focus plane using Manual Focus Distance, independent of view direction.
+value.CAMERA_FOCUS_MODE.0=Auto
+value.CAMERA_FOCUS_MODE.1=Manual
+option.DOF_FOCUS_IGNORE_HAND=Ignore Hand When Focusing
+option.DOF_FOCUS_IGNORE_HAND.comment=When enabled, autofocus ignores the held item in view so a raised hand/block does not steal the focus point.
+option.DOF_FOCAL_LENGTH=Focal Length
+option.DOF_FOCAL_LENGTH.comment=Lens focal length (mm). Larger values narrow the field of view, compress perspective and give shallower DoF. 50mm is the classic standard lens.
+suffix.DOF_FOCAL_LENGTH=mm
+option.DOF_F_STOP=F-Stop
+option.DOF_F_STOP.comment=Aperture f-number. Smaller values mean a wider aperture (more light) and shallower DoF with more background blur; larger values give a deeper focus. Controls overall DoF strength.
+option.DOF_APERTURE_SHAPE=Aperture Shape
+option.DOF_APERTURE_SHAPE.comment=Aperture blade shape sets the bokeh highlight shape. Circular = smooth bokeh; Hexagonal = a typical 6-blade lens effect.
+value.DOF_APERTURE_SHAPE.0=Circular
+value.DOF_APERTURE_SHAPE.1=Hexagonal
+option.DOF_APERTURE_VIGNETTING=Aperture Vignetting
+option.DOF_APERTURE_VIGNETTING.comment=Simulates optical vignetting at the lens rim: bokeh near screen corners is squashed into ellipses/cat-eye shapes, more compressed toward the edges.
+option.DOF_GATHER_SAMPLES=Gather Sample Count
+option.DOF_GATHER_SAMPLES.comment=Bokeh gather samples per pixel. Higher values give rounder, less noisy bokeh at a higher performance cost.
+option.DOF_COC_SPREAD_SAMPLES=CoC Search Sample Count
+option.DOF_COC_SPREAD_SAMPLES.comment=Samples used to spread the Circle of Confusion, controlling how smoothly blur is propagated across foreground seams.
+option.DOF_MAX_BLUR_RADIUS=Maximum Blur Radius
+option.DOF_MAX_BLUR_RADIUS.comment=Maximum circle-of-confusion blur radius in pixels. Larger allows more extreme out-of-focus blur.
+suffix.DOF_MAX_BLUR_RADIUS=px
+option.DOF_FOCUS_HALFLIFE=Focus Response Half-Life
+option.DOF_FOCUS_HALFLIFE.comment=Autofocus tracking half-life (seconds). Smaller reacts faster, larger gives smoother, slower rack focusing.
+suffix.DOF_FOCUS_HALFLIFE=s
+option.DOF_MANUAL_FOCUS_DISTANCE=Manual Focus Distance
+option.DOF_MANUAL_FOCUS_DISTANCE.comment=Distance (meters) of the focus plane from the camera in manual mode. Objects at this distance are sharpest; those nearer/farther blur increasingly.
+suffix.DOF_MANUAL_FOCUS_DISTANCE=m
+
+option.CHROMATIC_ABERRATION=Chromatic Aberration
+option.CHROMATIC_ABERRATION.comment=Lateral chromatic aberration: radially separates the R and B channels from the G channel near the frame edge, producing a realistic red/blue lens fringe. No separation at the center, strongest at the corners.
+option.CHROMATIC_ABERRATION_STRENGTH=Chromatic Aberration Strength
+option.CHROMATIC_ABERRATION_STRENGTH.comment=Peak channel offset in pixels at the screen corners. Higher values give a stronger fringe.
+suffix.CHROMATIC_ABERRATION_STRENGTH=px
+
 option.TAA_ENABLED=Temporal Anti-Aliasing
 option.TAA_CLOSEST_FRAGMENT=Closest Fragment
 option.TAA_SHARPEN=Sharpen

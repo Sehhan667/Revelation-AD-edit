@@ -1,5 +1,207 @@
 # Revelation-AD-edit — GI 调试进度 & 待办（2026-09-04）
 
+## 体积光并入体积雾（2026-09-12）——待实机确认
+
+按「体积雾保持解析（闭式）渲染」的要求，把独立的一层体积光并进雾：雾的太阳 in-scatter 乘上
+「沿这条视线的阴影可见度」，被树叶/窗缝/洞口切开的明暗直接长在雾上。密度闭式积分与透射率
+**一个字符都没动**，只是多了一个逐射线系数，没有引入步进循环。
+
+链路：IntegrateScene(composite4) 的 `ComputeFogSunVisibility` 沿射线分层取
+`VF_VOLUME_SHADOW_SAMPLES`（默认 4）个抖动采样点 → `SampleFogSunShadow`（shadowModelView/
+Projection → DistortShadowSpace → 体素平铺 Shift → shadowtex1 硬件比较）→ 平均后传进
+`RaymarchAtmosphericFog`。逐像素/逐帧抖动，噪声交给 TAA。超出 shadowDistance（默认档 64）
+按未遮挡处理并在最后 8 格内连续淡出。
+
+**实测清单**：
+- F3+R 不报错、不退回原版渲染；GUI 的 雾 → 体积雾 页选项正常（新增
+  `VF_VOLUME_SHADOW_SAMPLES`；`VF_VOLUME_INTENSITY` 语义已改成"阴影对比度"；`VF_DENSITY_MULT`
+  现在也在滑条里）。
+- 白天树林/窗边：光束是否随雾浓度、相机高度联动；`VF_VOLUME_SHADOW_SAMPLES` 0 / 2 / 4 / 8 / 16
+  逐档看细腻度与噪声（4 档应该已接近原 MODE1 的观感）。
+- 夜晚：月光下光束是否还在（月光项跟随 `VOXEL_MOON_STRENGTH`，默认档 2.0；如果夜里雾整体
+  偏亮/偏蓝，就是这一项要下调）。
+- 关掉 `VOLUMETRIC_FOG` 后光束应完全消失（设计如此：光束就是雾的一部分）；`VOLUMETRIC_LIGHT`
+  关掉应回到"雾没有阴影"的旧观感。
+- `COLORED_VOLUMETRIC_FOG` 开启后穿过染色玻璃的光束应带玻璃色（默认关；开启后每个采样点多 2 次
+  纹理读取）。
+
+**已知取舍**：光束比原 MODE0（1/16 分辨率 × 32 步）软 —— 采样点少、靠 TAA 补；要更锐就往上调
+采样数。天空 LUT（GenSkyMap）里的雾不含月光补项（那里在 shadow pass 之前，也没有阴影贴图），
+所以夜里夜空背景的雾与屏幕雾可能有轻微亮度差，需实测确认是否看得出来。
+
+## 启动 Logo：改成矢量绘制 + 逐笔描画（2026-09-11）
+
+原来的做法是在 `program/post/Final.frag` 里采样 `shaders/texture/logo.png`（128×128、一共 3 种
+颜色）再放大贴到屏幕上 —— 等于把位图硬拉大，边缘全是方块。
+现在整段换成**解析式矢量绘制**：`shaders/lib/post/StartupLogo.glsl`，
+字形由多边形距离场构成，用 `fwidth` 抗锯齿，任何分辨率下边缘都是干净的 1px 过渡。
+
+**字形**：项目根目录的干净原图（白色 ZV 组合标志 + 纯黑底）。轮廓是**描出来的**：
+
+```
+node rdc_analysis/marching_trace.js --tol=0.4   # marching squares 提轮廓 + Douglas–Peucker
+node rdc_analysis/stabilize_trace.js            # 顶点稳定化：自动合并亚像素假拐点
+```
+
+结果写进 shader 的 `LOGO_POLY0` / `LOGO_POLY1` 两个顶点表（10 + 18 = 28 点），
+设计中用「射线法判内外 + 到边界最短距离」求有符号距离，两个多边形取并集。
+
+**标志其实是两个互不相连的笔画**（Z 主体 + V 主体），所以是**两张**顶点表、不能用单张外轮廓。
+
+**验证**（这一步是必须的，之前正是因为没做才错了很久）：
+- `rdc_analysis/stabilize_trace.js` 会把多边形栅格化回去和原掩膜比 IoU；
+  顶点稳定化后 **IoU = 0.9949**（漏 156 / 多 206 px）。
+- `rdc_analysis/diff_shader_vs_source.js` 直接读 shader 里的顶点表复刻一遍渲染，再和原图比：
+  **IoU = 0.9872**。两者差值来自源掩膜 bbox（601×284）与设计框（600.45×283.29）之间
+  约 0.5 px 的亚像素对齐不确定度，属于正常范围。
+- `rdc_analysis/raster_shader_mark.js` 用 JS 复刻 shader 的算法栅格化，可以按 `--progress` 打印
+  绘制过程的覆盖率 —— 用它抓到了下面那个"动画方向反了"的 bug。
+
+**过程记录（踩过的坑，别再犯）**：
+- **不要用矩形拼字形**。前几版用几十个轴对齐矩形去拼，斜边上必然留台阶，屏幕上就是一圈锯齿
+  （IoU 只有 0.82~0.88）。标志是直边多边形，就该老老实实描轮廓。
+- **Moore 邻域轮廓跟踪会走丢**：实测漏掉 1538 px，在细颈/斜角处跑偏。
+  改用 marching squares 的等值线 + 端点配对串环就没有这个问题。
+- **"所有边都是竖直或 45°"这个前提不成立**：原以为在剪切坐标 `(u=x, v=x+y)` 下能把楼梯合并成直线，
+  结果一条边都合并不掉（实测 V 的右臂约 53°，不是 45°）。最后靠"顶点稳定化"（合并近共线/过近顶点）解决。
+- **设计框常量必须和顶点表同源**。曾经手工填 `LOGO_BOX_*`，比实际 bbox 差 40 个单位，
+  形状整体跑出轮廓。现在由追踪脚本输出，两处不会不同步。
+- **动画方向容易写反**。`v` 越小越靠左上，所以"从上往下画"要用
+  `cov *= 1.0 - smoothstep(sweep - w, sweep + w, v)`；
+  一开始写成 `cov *= smoothstep(...)`，结果动画是**倒着擦掉**。
+- **扫掠区间的两端必须由 `LOGO_BOX_W/H` 算出来，不能写死**：
+  `v` 的实际范围是 `0 .. (W+H)/W`；写死过 1.50（大于真实上限），导致 `progress=1` 时字形是空的。
+- 早期还用过 `shaders/texture/logo.png`（128×128、3 种颜色）当参考，它下采样太狠、
+  中间几条 3~9px 的缝隙分不清是"缝"还是抗锯齿，不适合做矢量还原。现在 shader 不再引用它，文件保留方便对照。
+
+**绘制动画**：`RenderStartupMark` 沿斜向 `v = (x + y) / LOGO_BOX_W` 自上而下扫出来
+（用斜向而不是竖直，是为了贴合标志本身的剪切方向），前沿带一点点宽度。
+节奏常量：`LOGO_MARK_DRAW_FRAMES`（主字形 48 帧）、`LOGO_AD_START_FRAME`（0，与主字形同时）、
+`LOGO_AD_FADE_FRAMES`（文字整体淡入 30 帧）；总时长 `logoDuration = 180`（在 `program/post/Final.frag`），
+**画完后停到第 110 帧**才开始淡出（`logoFadeStart = 110`，比原来的 80 多 0.5 秒）。
+
+**文字不做逐段描画**：`RenderStartupText(p, opacity)` 整行一起按 `opacity` 淡入，
+不再按字形/段序号依次"长出来"。原因是和主字形的扫掠叠在一起显得很碎；
+而且它是从第 0 帧就开始淡入，**不等主字形画完**（`LOGO_AD_START_FRAME = 0`）。
+
+**速度曲线（只作用于主字形）**：`LOGO_DRAW_EASE`，曲线 `p = 1 - (1 - t)^k`（t = 线性时间 0..1）。
+默认 **2.0**（开头快、结尾慢）；`1.0` 就是匀速，`3.0` 更"急刹"。
+端点精确（t=0→0、t=1→1），所以不会出现"画不满"。
+实测 @k=2、48 帧：画到 25% 只需 0.11s（线性要 0.20s），每帧新增量从 0.160 递减到 0.015。
+
+**预览任意一帧**：`node rdc_analysis/make_logo_gameview.js --frame=24`。
+注意扫掠的裁剪区要在**设计坐标**里算 —— 预览里 `<g>` 是镜像过的，
+`clip-path` 会跟着一起镜像，坐标不换算就会得到"倒着播"的动画（踩过）。
+
+**"AD Edit"**：字模来自 **Hershey 单线（1-stroke）矢量字体**（`futural` = "Sans 1-stroke"，公有领域）。
+选它是因为它本身就是"每笔画一条折线"，和这里"线段距离场 + 圆头端点"的渲染方式完全对得上，
+不需要引入贝塞尔曲线。数据取自 `hersheytext.json`（npm 包 hersheytext），放在 `rdc_analysis/`。
+
+```
+node rdc_analysis/gen_ad_font.js --text "AD Edit"   # 取字形 -> 归一化 -> 写进 shader
+node rdc_analysis/sheet_table.js                    # 把表里实际生效的字形逐个画出来核对
+node rdc_analysis/preview_text.js --px=110          # 大字号看整行
+```
+
+**踩坑：这份字体的下标不能按 ascii 推算。**
+试过 `ascii-32`、`ascii-31` 两种偏移都不对（`D` 会取到 `E` 的字形，屏幕上直接是 `ABEgU` 乱码）。
+而且同一个字母的"部件"会单独占一个下标（`d/o/e` 的碗、`i` 的点各自一个条目）。
+最后是先用 `gen_ad_font.js` 里的 `GLYPH_INDEX` 手写映射，再用**包围盒断言**自动校验
+（每个字形的实测 bbox 必须和期望一致，不符就报错退出），才算钉死。
+现在这份映射是：`A=32, E=36, D=67, d=67, i=72, t=83`（其中大写 `D` 借用了字体的 `d`，
+因为这个字体里没有带直边的方框 `D`，借来的 `d` 视觉上是完整的 D）。
+
+**排版**：字体自带的 `o` 对有些字形是偏的，而且字形带**负左边距**
+（`d` 的墨迹从 -0.056 开始），直接拿 `o` 当步进会让相邻字母叠在一起。
+所以生成时把每个字形按**自己的墨迹宽度**居中到一个固定宽的格子（`LETTER_ADV=0.98`，
+空格 `SPACE_W=0.52`），步进值写进 `AD_ADVANCE`，shader 只按它步进。
+
+**笔画宽度**：`LOGO_AD_STROKE = 1.6` 源像素（≈屏幕上 1.3px），刻意接近主字形自己的笔画宽度；
+之前用"字号的比例"当笔画宽度，字一粗就比标志还重，而且字母会粘在一起。
+
+**屏幕上下翻转（重要）**：`LOGO_FLIP_Y`（默认 1）。
+设计框的 y 是**向下**为正（跟源图一致），而片元坐标的 y 是**向上**为正，两者差一个符号。
+上一版漏了这一步，实机里表现为"**图案上下倒过来，而且文字跑到图案上方**"——两个症状必须同时出现
+才算诊断对（只倒图案、文字位置不变是不可能的，两者共用 `p`）。
+`LOGO_FLIP_Y=1` 时在 `StartupLogoMask` 里做一次 `p.y = contentH - p.y`，图案和文字会一起翻正。
+对照图：`node rdc_analysis/render_flip_pair.js` → `rdc_analysis/flip_pair.html`。
+
+**待实测**：F3+R 确认图案方向、逐笔描画是否顺畅、`AD Edit` 大小位置是否合适
+（旋钮：`LOGO_HEIGHT` 0.22、`LOGO_OFFSET_Y` -0.02、`LOGO_AD_GAP` 46、`LOGO_AD_H` 52、
+`LOGO_AD_STROKE` 2.8、`LOGO_DRAW_EASE` 2.0、`LOGO_AD_FADE_FRAMES` 30、`LOGO_FLIP_Y` 1）。
+
+**调参记录（2026-09-12）**：实机反馈"文字偏小、太细、离标志太近"，之后又"再往下一些、绘制要前快后慢"，
+再之后"文字不要逐段描画、要和 logo 同时开始淡入、还是偏细"。
+- `LOGO_AD_H` 40 → **52**（屏幕上大写高 33.5 → 43.6px）
+- `LOGO_AD_STROKE` 1.6 → 2.0 → **2.8**（屏幕上 1.34 → 1.68 → 2.35px）——偏细反馈了两次
+- `LOGO_AD_GAP` 24 → 33 → **46**（分两次往下推；屏幕上净下移约 19px）
+- 字号变大让内容块变高、整体被压低约 34px，所以 `LOGO_OFFSET_Y` -0.04 → **-0.02** 顶回来
+- `LOGO_DRAW_EASE` 新增，取 **2.0**（先快后慢）
+- 文字改为 `RenderStartupText(p, opacity)` 整体淡入；`LOGO_AD_DRAW_FRAMES`(24) 换成
+  `LOGO_AD_FADE_FRAMES`(30)；`LOGO_AD_START_FRAME` 34 → **0**
+
+## 阴影 warp（RTWSM）：修到可用，待实机确认（2026-09-11）
+
+上一轮把 RTWSM 打开后整包不可用（F3+R 直接退回原版渲染），根因是**两个"注释里的字符"**，
+不是算法问题：
+
+1. `program/setup/ShadowWarp.comp` 的文件头注释里多写了一个半角双引号。Iris 是在**源码文本**上
+   扫描 `#include` 行的，注释里成对的引号会被它当成字符串界定符 → 紧跟其后的
+   `#include "/lib/lighting/shadow/Common.glsl"` 被解析成 `lib/lighting/shadow/Common.glsl" + 文字`
+   → `java.nio.file.InvalidPathException: Illegal char <">` → 整包加载失败。
+   **规矩**：`.glsl/.comp/...` 的注释块里不要出现半角双引号（`.lang` 里可以）。
+2. `settings.glsl` 第 358 行的行注释里写了 `world*/composite1.csh`。`//` 注释里的 `*/` 会让
+   Iris 的 GLSL 解析器把块注释状态搞错 → `setup12` 解析报
+   `line 2602:7 extraneous input '?'`。**规矩**：行注释里别写 `*/`，用 `|` 分隔目录名。
+3. 顺手在 `Warp.glsl` 里把新写的密度因子写成了 `SHADOW_WARP_CONTENT_STRENGTH`，而真名是
+   `RTWSM_CONTENT_STRENGTH`（**Iris GUI 选项名**，`shaders.properties`/lang 都按它索引）
+   → `setup12` 报 `error C1503: undefined variable`。Iris 管理的选项名不能自己改名。
+
+### 防同类问题的离线检查（新增工具）
+
+`rdc_analysis/preproc_check.js`：不依赖游戏，把某个入口的 `#include` 递归展开后跑一遍
+`#define`/`#if*`，报告"全大写标识符里从未被定义、也没在条件编译里引用过"的名字 ——
+上面第 3 条那种笔误（以及第 1 条那种 include 被引号劫持）都能在 F3+R 之前抓到。
+
+```
+node rdc_analysis/preproc_check.js shaders/world0/setup12.csh   # 单个入口
+node rdc_analysis/preproc_check.js --all                        # 全部 350 个入口
+```
+
+已知会有若干"本来就命中"的碎片入口（DH / begin / blocks 等由 Iris 拼装后再编译，单独展开时
+名字天然不全），已记进 `rdc_analysis/preproc_check.baseline.json`；只有**基线之外的新增命中**
+才会亮灯。`--update-baseline` 重新记录基线。
+
+当前状态：350 个入口全部无新增命中（三个 setup12、DeferredLight、shadow vsh/vert 单独复检也干净）。
+
+同时修掉三处会让 RTWSM"能开但不好用"的问题：
+
+3. **表项合法区间写读不一致**（`Warp.glsl` 的 `WarpEntryInvalid` 写 `[0.01, 64]`，填表端实际夹在
+   `[0.05, 32]`）。校验比写入更严 ⇒ `RTWSM_CONTENT_STRENGTH` 一大就有成片**合法**表项被判坏、
+   逐点回退解析曲线 ⇒ 表与兜底曲线混用 ⇒ 阴影边缘错位。现在上下界统一为
+   `SHADOW_WARP_SLOPE_MIN/MAX`，由 `Warp.glsl` 提供、填表端复用。
+4. **解析兜底没归一化**：表是 CDF 拉伸到铺满 `[-1,1]` 的，恒等于"解析曲线 × k"（k = 曲线在
+   `|u|=1` 处的取值），而兜底直接用未归一化的曲线 ⇒ 角点只有表的一半左右，混用即突变。
+   现在 `WarpAxisAnalytic` 乘上 `1/WarpAxisCurveAnalytic(1.0)`；`WarpAxisScaleAnalytic` 也补了
+   下限（中心差分在 u→0 有抵消误差，可能算出 0 ⇒ 偏置归零 ⇒ 大面积自阴影）并夹到合法区间。
+5. **体素平铺条带没有分辨率下限**：开体素化时阴影图左侧 256 纹素宽的竖条是体素立方体平铺区，
+   而 warp 逐轴分配看不出这条竖条 ⇒ 内容驱动把它压扁 ⇒ 体素 GI 的太阳阴影花掉。现在
+   `DeferredLight.frag` 的 `ShadowWarpImportanceAt` 对落在条带内的 x 给 `[0.6, 1]` 的渐变下限
+   （渐变而非阶跃：阶跃本身就是 warp 条纹的来源）。
+
+顺带把测量端与填表端各自一份的归一化/密度夹紧收成 `Warp.glsl` 里的
+`ShadowWarpRelativeImportance` / `ShadowWarpDensityFactor`，并在 `ShadowWarp.comp` 里写清
+"CDF 最后会整体归一化 ⇒ k 不改变总覆盖、只改局部斜率"（否则很容易误以为 k 应该改变总覆盖）。
+
+**待实测**（改的都是编译期/数值问题，静态检查已全通过，但没有游戏内验证）：
+- F3+R 换包不报错、不再退回原版渲染（这条是本次的主要目标）。
+- `SHADOW_WARP_RTWSM` 开/关各走一圈：贴墙/贴地移动看有无整块自阴影、阴影边缘有无错位或条纹。
+- `RTWSM_CONTENT_STRENGTH` 0 → 1 → 2 看是否**有梯度**（此前"和 0 没区别"是信号被夹平）。
+- 开体素化时体素 GI 的太阳阴影是否仍正常（对应上面第 5 条）。
+- 诊断：先关着 `SHADOW_WARP_RTWSM`、开 `DEBUG_SHADOW_WARP_DIFF`——R 沿两轴应接近 0、
+  整屏不发蓝（发蓝 = 表没写进来）；再开 `DEBUG_SHADOW_WARP` 看分辨率挪到哪儿去了
+  （B = 表项局部缩放，亮 = 该点分到更多阴影分辨率）。
+
 ## ⏸ 当前状态：DDGI/IRC 探针 GI 任务暂停（2026-09-06）
 
 - **暂停**：方块光 DDGI 大体可用、仍有打磨项（浮动/格痕/单弹射），先挂起，恢复时从下方"待办"第 1 项开始。

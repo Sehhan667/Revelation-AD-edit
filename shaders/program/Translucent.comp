@@ -24,7 +24,7 @@
     #define TRANSLUCENT_SSR_MODE 1 // [0 1 2]
 #endif
 
-#define TRANSLUCENT_SKY_REF       // [开关] 是否启用半透明与水面的天空盒静态反射
+//#define TRANSLUCENT_SKY_REF       // [开关] 是否启用半透明与水面的天空盒静态反射
 //#define TRANSLUCENT_SSRT_MAX_STEPS // [开关] 强制始终使用最大步数（忽略菲涅尔权重）
 
 // 默认启用快速双线性采样以提升性能

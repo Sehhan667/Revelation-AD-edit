@@ -82,12 +82,15 @@ screen.MiscMaterials=杂项
 
 screen.FidelityFX=FidelityFX
 screen.DoF=景深
+screen.DoF.comment=镜头虚化（散景）：给画面增加真实的焦距与光圈效果，焦内清晰、焦外模糊。
 screen.TAA=抗锯齿
 screen.MotionBlur=动态模糊
 screen.Bloom=泛光
 screen.Exposure=曝光
 screen.Vignette=暗角
 screen.Color=色彩
+screen.ChromaticAberration=色散
+screen.ChromaticAberration.comment=横向色差（镜头 RGB 通道分离），给画面加入真实的镜头边缘色散。
 
 
 # OPTIONS
@@ -202,32 +205,31 @@ suffix.CLOUD_SHADOW_DISTANCE=区块
 
 # Fog
 option.VOLUMETRIC_FOG=体积雾
-option.VF_MAX_SAMPLES=这个选项没用了
 option.VF_CLOUD_SHADOWS=考虑云影
 option.VF_HEIGHT=体积雾高度
 suffix.VF_HEIGHT=m
+option.VF_NIGHT_FOG_SATURATION=夜晚雾色饱和度
+option.VF_NIGHT_FOG_SATURATION.comment=夜里雾的蓝来自两处：月光项本身是蓝的，以及雾的 Rayleigh 散射系数本身偏蓝（白天被暖白的太阳项压着看不出来）。0 = 完全中性（只留亮度，夜里就是灰雾），1 = 保持原来的蓝。只作用于夜晚，白天不受影响
+option.VF_RAIN_SUN_FLOOR=雨天太阳项保留
+option.VF_RAIN_SUN_FLOOR.comment=雨天云的阴影会把雾的太阳项乘以 max(1 - 湿度×云影强度, 0)，而云影强度默认 1.0，所以雨最大时这项会归零——雾唯一的强光源没了，只剩暗天空光，看起来又黑又黄。本项给这个乘子一个下限：雨天至少保留这么多太阳项。0 = 原来的行为（雨天归零，最暗），1 = 雨天完全不衰减。晴天完全不受影响
+option.VF_FOG_THICKNESS=雾层厚度
+option.VF_FOG_THICKNESS.comment=雾层高度包络的半衰高度（格）。它决定「方块与天空谁被遮得多」：薄层时站在层里抬头看天空，射线十几格就离开雾层 → 天空几乎不被遮，而水平方向的方块一直在层内 → 方块被遮得多；把厚度调大（尤其 256 以上 ≈ 均匀雾）后，遮蔽只由距离决定，天空（256 格）反而比方块更被遮。调厚时整体雾量会上升，记得相应降低「全局雾气密度」
+suffix.VF_FOG_THICKNESS=格
 
 option.VF_RAYLEIGH_DENSITY=瑞利散射雾密度
 option.VF_MIE_DENSITY=米氏散射雾密度
 option.VF_MIE_DENSITY_RAIN_MULT=米氏散射雾密度-雨天增益
-option.VF_NOISE_QUALITY=体积雾噪声质量
-value.VF_NOISE_QUALITY.LOW=低
-value.VF_NOISE_QUALITY.MEDIUM=中
-value.VF_NOISE_QUALITY.HIGH=高
 option.VF_TIME_FADE=时段过渡
 option.COLORED_VOLUMETRIC_FOG=彩色阴影
 
-option.VOLUMETRIC_LIGHT=体积光（God Rays）
-option.VOLUMETRIC_LIGHT.comment=阳光/月光穿透树叶、窗户、洞口形成光束，穿过染色玻璃会带上玻璃颜色。噪声由 TAA 平滑
-option.VOLUMETRIC_LIGHT_MODE=体积光方案
-option.VOLUMETRIC_LIGHT_MODE.comment=0=1/4分辨率光线步进：细腻、穿透树叶/窗缝形成光束，性能开销大；1=全分辨率屏幕空间太阳光轴：简单、正对太阳方向径向光束，性能开销小
-value.VOLUMETRIC_LIGHT_MODE.0=光线步进（1/4 分辨率）
-value.VOLUMETRIC_LIGHT_MODE.1=屏幕空间太阳光轴（全分辨率）
-option.VF_VOLUME_INTENSITY=体积光强度
-option.VF_VOLUME_MAX_STEPS=体积光最大步进数
-option.VF_VOLUME_MAX_STEPS.comment=1/4 分辨率下的光线步进次数。越高光束越细腻，性能开销越大
-option.VF_SHAFT_COLOR_BRIGHTNESS=体积光颜色亮度
-option.VF_SHAFT_COLOR_BRIGHTNESS.comment=光柱/月晕整体亮度倍率（白天阳光与夜晚月光的统一强度旋钮）。调大更亮、调小更暗
+option.VOLUMETRIC_LIGHT=体积光（雾中光束）
+option.VOLUMETRIC_LIGHT.comment=让体积雾的太阳散射吃阴影贴图：被树叶、窗户、洞口切开的明暗直接长在雾上，形成光束。需要开启体积雾；光束与雾同色同浓度、随相机高度一起消失。穿过的染色玻璃是否上色由「彩色阴影」控制，噪声由 TAA 平滑
+option.VF_VOLUME_INTENSITY=光束强度
+option.VF_VOLUME_INTENSITY.comment=光束的阴影对比度：0=完全不压暗（等于没有光束），1=完全按阴影可见度衰减（满对比度，再往上无效）。想让光束更亮见「光束亮度」与「米氏散射雾密度」
+option.VF_SHAFT_BRIGHTNESS=光束亮度
+option.VF_SHAFT_BRIGHTNESS.comment=只提亮被太阳照到的那部分雾（不动环境雾），所以是「让光束更明显」的正解：抬「体积雾浓度」或「米氏散射雾密度」会把环境雾一起提亮、对比度反而不变。1.0 = 现状，2~3 已经很明显
+option.VF_VOLUME_SHADOW_SAMPLES=光束阴影采样数
+option.VF_VOLUME_SHADOW_SAMPLES.comment=每条视线沿距离取几个点去采样阴影贴图（分层 + 逐像素抖动，噪声交给 TAA 平均）。0=关闭光束；越大光束越细腻连贯，开销线性增长
 option.SUN_HALO=太阳日晕（保底）
 option.SUN_HALO.comment=太阳/月亮周围光晕，独立于体积雾浓度（无雾也有基础强度）；仅天空区域绘制
 option.SUN_HALO_STRENGTH=日晕强度
@@ -236,7 +238,6 @@ option.SUN_HALO_WIDTH=日晕宽度
 option.SUN_HALO_WIDTH.comment=日晕角宽（越大越宽越柔）
 
 option.UW_VOLUMETRIC_FOG=水下体积雾
-option.UW_VF_MAX_SAMPLES=水下体积雾最大采样数
 
 option.UW_SUN_OCCLUSION=水中太阳光晕遮挡
 option.UW_SUN_OCCLUSION.comment=水雾正对太阳方向的模糊光晕是否随"屏幕上太阳被遮挡"消失。太阳被地形挡/出屏/在相机背后 → 光晕隐藏，保留均匀多散射环境雾
@@ -421,6 +422,14 @@ value.SUBSURFACE_SCATTERING_MODE.1=硬编码+PBR
 value.SUBSURFACE_SCATTERING_MODE.2=仅PBR
 option.SUBSURFACE_SCATTERING_STRENGTH=次表面散射强度
 option.SUBSURFACE_SCATTERING_BRIGHTNESS=次表面散射亮度
+option.SUBSURFACE_SCATTERING_FRONT_SUPPRESS=阳面抑制（仅旧版模型）
+option.SUBSURFACE_SCATTERING_FRONT_SUPPRESS.comment=旧式 SSS 公式里没有 N·L，PCF 模式下厚度项又恒为 1，所以它在受光面上等于白送一份光：次表面材质的方块（羊毛/冰/树叶/草等）被阳光直射的面会比普通方块亮。这一项按 (1 - N·L) 反向抑制：正对太阳的面降到 0、掠射（明暗交界处）保持原强度，SSS 因此变成"交界处的透光"。0 = 原版行为（用于 A/B 对比），1 = 完全抑制（默认）。
+option.SUBSURFACE_SCATTERING_EXTRA_GATES=附加门控（关掉 = 纯原版公式）
+option.SUBSURFACE_SCATTERING_EXTRA_GATES.comment=旧版 SSS 已按 vanilla Revelation 公式逐行移植，而原版没有任何阴影/朝向门控：SSS 只随太阳辐照变化，不看阴影、不看朝向。AD-edit 额外加了两项——阴影幂门控（让 SSS 随阴影可见性衰减，即"会根据阴影补强度"）与背光入射因子（修"阴影距离外朝太阳看异常发亮"）。关掉本项这两项都不生效；再配合把「阳面抑制」调到 0，就是 100% 原版行为。
+option.SUBSURFACE_SCATTERING_CROSS_THICKNESS=十字方块厚度（仅 PCF）
+option.SUBSURFACE_SCATTERING_CROSS_THICKNESS.comment=只对十字方块（materialID 1000-1003：草/花/树苗，含「植物判定补充」检出的 1003）生效的体积厚度。PCF 模式下没有 blocker 深度（sssBlockerDepth 恒 0 ⇒ 厚度项 exp2(0)=1），SSS 会退化成与厚度无关的平加项；这里给它一份厚度。0 = 退回纯平加（= 原版在 PCF 下的行为），越大越暗越"厚"。PCSS 模式下不生效，那里用真实 blocker 深度。
+option.SUBSURFACE_SCATTERING_NONCROSS_THICKNESS=非十字方块厚度（仅 PCF）
+option.SUBSURFACE_SCATTERING_NONCROSS_THICKNESS.comment=同上，但对其它所有 SSS 材质生效（树叶 13、藤 27/28、羊毛/干草 37、冰/雪/蜂窝 38、黏液 51 等）。默认 0 = 保持原版在 PCF 下的纯平加行为；想让羊毛/冰这类也有厚度感就往上调。仅 PCF 生效。
 option.SUBSURFACE_SCATTERING_RADIUS=次表面散射半径
 option.SUBSURFACE_SCATTERING_RADIUS.comment=扩散平均自由程（= 该值 × 4 方块）。越大越"透"，体积衰减越弱；第 2 步的屏幕空间扩散也用它决定模糊半径。
 option.SUBSURFACE_SCATTERING_TRANSMISSION=背光透光强度（视角相关）
@@ -503,6 +512,45 @@ option.SELECTION_BOX_COLOR_B=选择框颜色-§1蓝
 
 
 # Post-Processing
+option.DEPTH_OF_FIELD=景深
+option.DEPTH_OF_FIELD.comment=模拟真实相机的镜头虚化（散景）：焦平面上的物体保持清晰，焦外的物体随距离增大而呈弥散圆逐渐模糊。可配合抗锯齿(TAA)让散景更平滑。
+option.CAMERA_FOCUS_MODE=对焦模式
+option.CAMERA_FOCUS_MODE.comment=自动：持续对准屏幕中心附近最近的物体进行跟焦；手动：用下方「手动对焦距离」固定焦平面，不随视角变化。
+value.CAMERA_FOCUS_MODE.0=自动
+value.CAMERA_FOCUS_MODE.1=手动
+option.DOF_FOCUS_IGNORE_HAND=对焦时忽略手部
+option.DOF_FOCUS_IGNORE_HAND.comment=开启后自动对焦会忽略画面中的手持物品，避免举起物品时手部抢走对焦。
+option.DOF_FOCAL_LENGTH=焦距
+option.DOF_FOCAL_LENGTH.comment=镜头焦距（毫米）。数值越大视野越窄、透视越压缩，景深也越浅；50mm 是常用的标准镜头焦段。
+suffix.DOF_FOCAL_LENGTH=毫米
+option.DOF_F_STOP=光圈值
+option.DOF_F_STOP.comment=光圈 f 数。数值越小光圈越大（进光更多）、景深越浅、背景越模糊；数值越大焦深越深（更清晰）。影响整体景深的强弱。
+option.DOF_APERTURE_SHAPE=光圈形状
+option.DOF_APERTURE_SHAPE.comment=光圈叶片形状决定散景高光的形状。圆形=柔和平滑的散景；六边形=常见的六叶光圈镜头效果。
+value.DOF_APERTURE_SHAPE.0=圆形
+value.DOF_APERTURE_SHAPE.1=六边形
+option.DOF_APERTURE_VIGNETTING=口径蚀
+option.DOF_APERTURE_VIGNETTING.comment=模拟镜头边缘对光线的遮挡：画面四角的散景会被压扁成椭圆/肾形，光线越靠角压缩越明显。
+option.DOF_GATHER_SAMPLES=聚集采样数
+option.DOF_GATHER_SAMPLES.comment=每个像素的散景采样点数。数值越高散景越圆润、噪点越少，但性能开销越大。
+option.DOF_COC_SPREAD_SAMPLES=弥散圆搜索采样数
+option.DOF_COC_SPREAD_SAMPLES.comment=传播弥散圆(CoC)的采样数，决定前后景接缝处的模糊传播是否平滑。
+option.DOF_MAX_BLUR_RADIUS=最大模糊半径
+option.DOF_MAX_BLUR_RADIUS.comment=散景的最大弥散圆半径（像素）。数值越大允许的焦外虚化越强烈。
+suffix.DOF_MAX_BLUR_RADIUS=像素
+option.DOF_FOCUS_HALFLIFE=对焦响应半衰期
+option.DOF_FOCUS_HALFLIFE.comment=自动对焦跟踪的响应半衰期（秒）。越小对焦反应越快，越大跟焦越平缓。
+suffix.DOF_FOCUS_HALFLIFE=秒
+option.DOF_MANUAL_FOCUS_DISTANCE=手动对焦距离
+option.DOF_MANUAL_FOCUS_DISTANCE.comment=手动模式下焦平面到相机的距离（米）。此距离上的物体最清晰，前后的物体逐渐模糊。
+suffix.DOF_MANUAL_FOCUS_DISTANCE=米
+
+option.CHROMATIC_ABERRATION=色散
+option.CHROMATIC_ABERRATION.comment=横向色差：把镜头边缘的 RGB 三通道按径向轻微错开，产生红/蓝镶边的真实镜头感。中心无色差，越靠近四角越明显。
+option.CHROMATIC_ABERRATION_STRENGTH=色散强度
+option.CHROMATIC_ABERRATION_STRENGTH.comment=屏幕四角的最大错位量（像素）。数值越大色散越明显、边缘红蓝镶边越强。
+suffix.CHROMATIC_ABERRATION_STRENGTH=像素
+
 option.TAA_ENABLED=时域抗锯齿(TAA)
 option.TAA_QUALITY_MODE=taa模式
 value.TAA_QUALITY_MODE.0=质量
@@ -628,7 +676,6 @@ option.DEBUG_VOXEL_RADIANCE.comment=直接显示传播后的体素辐照度，�
 
 
 #other
-option.VF_SHADOW_QUALITY=雾气阴影质量
 option.VF_DENSITY_MULT=全局雾气密度
 option.SSS_LOD_ENABLED=lod模组区块内的屏幕空间阴影
 option.SVGF_QUALITY=SVGF质量

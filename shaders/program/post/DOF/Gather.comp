@@ -1,0 +1,264 @@
+/*
+--------------------------------------------------------------------------------
+
+	Revelation Shaders
+
+	Copyright (C) 2026 HaringPro
+	Apache License 2.0
+
+	Pass: Depth-aware camera blur
+    Reference: Guillaume Abadie, 2018, A Life of a bokeh, https://epicgames.ent.box.com/s/s86j70iamxvsuu6j35pilypficznec04
+
+	Ported from vanilla Revelation (Revelation-dev) 2026-09-11.
+	适配说明：无 RENDER_SCALE 体系，scaled* 坐标全部替换为全分辨率
+	（viewSize / viewPixelSize / texelToUv），scaleScreenUv 为恒等变换（直接采样）。
+	自动对焦状态存于 SSBO global.dofFocusDistance（本包 GlobalData 末尾新增字段）。
+
+--------------------------------------------------------------------------------
+*/
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+//======// Input //===============================================================================//
+
+layout(local_size_x = 16, local_size_y = 16) in;
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+
+//======// Output //==============================================================================//
+
+layout(rgba16f) restrict uniform image2D colorimg15;
+
+//======// Uniform //==============================================================================//
+
+#include "/lib/universal/Uniform.glsl"
+
+//======// SSBO //================================================================================//
+
+#define SSBO_DECLARED_TPYE restrict
+#include "/lib/universal/SSBO.glsl"
+
+//======// Function //============================================================================//
+
+#include "/lib/universal/Random.glsl"
+
+#include "/lib/universal/Transform.glsl"
+#include "/lib/post/DOF.glsl"
+
+struct DofGatherSample {
+	vec3 color;
+	float centerCoverage;
+	float coveringCoverage;
+	float coveringOpacity;
+	float colorWeight;
+};
+
+vec4 DofLoadPoint(vec2 centerUv, vec2 sampleOffset) {
+	vec2 sampleUv = centerUv + sampleOffset * viewPixelSize;
+	sampleUv = DofMirrorUv(sampleUv);
+	vec4 pointData = textureLod(colortex3, sampleUv, 0.0);
+	return pointData;
+}
+
+DofGatherSample DofBuildGatherSample(
+	vec2 centerUv,
+	vec2 sampleOffset,
+	float sampleDistance,
+	float centerCoc,
+	float centerCocRadius,
+	float coveringCoc
+) {
+	vec4 sampleData = DofLoadPoint(centerUv, sampleOffset);
+	float sampleCocRadius = abs(sampleData.a) * rcp(DOF_MAX_BLUR_RADIUS);
+	float coveringBias = float(coveringCoc < 0.0);
+	float coveringMembership = saturate(coveringCoc - sampleData.a + coveringBias);
+	float coveringCoverage = DofApertureCoverage(
+		sampleCocRadius, sampleDistance, DOF_MAX_BLUR_RADIUS
+	) * coveringMembership;
+
+	DofGatherSample gatherSample;
+	gatherSample.color = sampleData.rgb;
+	gatherSample.centerCoverage = DofApertureCoverage(
+		centerCocRadius, sampleDistance, DOF_MAX_BLUR_RADIUS
+	) * saturate(sampleData.a - centerCoc + 1.0) * (1.0 - coveringMembership);
+	gatherSample.coveringCoverage = coveringCoverage;
+	gatherSample.coveringOpacity = coveringCoverage;
+	gatherSample.colorWeight = rcp(max(sqr(sampleData.a), 0.25));
+	return gatherSample;
+}
+
+void DofAccumulateGatherSample(
+	DofGatherSample gatherSample,
+	inout vec3 centerLayerColor,
+	inout float centerLayerWeight,
+	inout vec3 coveringColor,
+	inout float coveringWeight
+) {
+	float centerWeight = gatherSample.colorWeight * gatherSample.centerCoverage;
+	float sampleCoveringWeight = gatherSample.colorWeight * gatherSample.coveringCoverage;
+	centerLayerColor += gatherSample.color * centerWeight;
+	centerLayerWeight += centerWeight;
+	coveringColor += gatherSample.color * sampleCoveringWeight;
+	coveringWeight += sampleCoveringWeight;
+}
+
+vec3 DofGatherDisk(
+	vec2 centerUv,
+	vec4 centerData,
+	vec2 initialDir,
+	float initialPhase,
+	float radialPhase,
+	float centerCoc,
+	float coveringCoc,
+	float gatherRadius
+) {
+	const float inverseSampleCount = rcp(float(DOF_GATHER_SAMPLES));
+	radialPhase *= inverseSampleCount;
+
+	float inverseMaxBlurRadius = rcp(DOF_MAX_BLUR_RADIUS);
+	float gatherRadiusFraction = gatherRadius * inverseMaxBlurRadius;
+	float centerCocRadius = abs(centerCoc) * inverseMaxBlurRadius;
+	vec3 centerLayerColor = centerData.rgb * EPS;
+	float centerLayerWeight = EPS;
+	vec3 coveringColor = vec3(0.0);
+	float coveringWeight = 0.0;
+	float coveringOpacity = 0.0;
+	vec2 direction = initialDir;
+	float aperturePhase = initialPhase;
+	#ifdef DOF_APERTURE_VIGNETTING
+		vec3 vignettingData = DofApertureVignettingPrepare(centerUv);
+	#endif
+
+	for (uint pairIndex = 0u; pairIndex < uint(DOF_GATHER_SAMPLES >> 1); ++pairIndex) {
+		uint firstIndex = pairIndex << 1u;
+		float firstRadius = DofVogelRadius(firstIndex, radialPhase, inverseSampleCount);
+		float secondRadius = DofVogelRadius(firstIndex + 1u, radialPhase, inverseSampleCount);
+		vec2 firstOffset = DofApertureOffset(
+			direction, aperturePhase, firstRadius * gatherRadius
+		);
+		vec2 secondOffset = DofApertureOffset(
+			-direction, aperturePhase + 0.5, secondRadius * gatherRadius
+		);
+		#ifdef DOF_APERTURE_VIGNETTING
+			DofApertureVignettingApply(firstOffset, gatherRadius, vignettingData);
+			DofApertureVignettingApply(secondOffset, gatherRadius, vignettingData);
+		#endif
+		DofGatherSample firstSample = DofBuildGatherSample(
+			centerUv, firstOffset, firstRadius * gatherRadiusFraction,
+			centerCoc, centerCocRadius, coveringCoc
+		);
+		DofGatherSample secondSample = DofBuildGatherSample(
+			centerUv, secondOffset, secondRadius * gatherRadiusFraction,
+			centerCoc, centerCocRadius, coveringCoc
+		);
+
+		DofAccumulateGatherSample(
+			firstSample, centerLayerColor, centerLayerWeight, coveringColor, coveringWeight
+		);
+		DofAccumulateGatherSample(
+			secondSample, centerLayerColor, centerLayerWeight, coveringColor, coveringWeight
+		);
+		coveringOpacity += 2.0 * max(firstSample.coveringOpacity, secondSample.coveringOpacity);
+
+		direction = DofRotatePair(direction);
+		aperturePhase = fract(aperturePhase + dofPairPhase);
+	}
+
+	vec3 resolvedCenter = centerLayerColor / centerLayerWeight;
+	vec3 resolvedCovering = coveringColor / maxEps(coveringWeight);
+	coveringOpacity *= inverseSampleCount * float(coveringWeight > EPS);
+	return mix(resolvedCenter, resolvedCovering, saturate(coveringOpacity));
+}
+
+vec4 DofFilter(ivec2 texelPos) {
+	vec4 centerData = texelFetch(colortex3, texelPos, 0);
+	float fogMask = texelFetch(colortex0, texelPos, 0).a;
+
+	vec2 centerUv = texelToUv(texelPos);
+
+	float centerCoc = centerData.a;
+	vec2 kernelNoise = SampleStbnVec2(texelPos, frameCounter + 6);
+	float jitterAngle = TAU * kernelNoise.x;
+	vec2 initialDir = vec2(cos(jitterAngle), sin(jitterAngle));
+
+	vec4 gatherData = imageLoad(colorimg15, texelPos);
+	float gatherRadius = maxEps(gatherData.y);
+	vec3 filteredColor = DofGatherDisk(
+		centerUv, centerData, initialDir, kernelNoise.x, kernelNoise.y,
+		centerCoc, gatherData.x, gatherRadius
+	);
+	return vec4(filteredColor, fogMask);
+}
+
+float DofResolveFocusViewDepth(ivec2 texelPos, float screenDepth) {
+	#if defined LOD_MOD
+		if (screenDepth > 1.0 - EPS) {
+			return -ScreenToViewDepthLod(loadDepth1Lod(texelPos));
+		}
+	#endif
+
+	return -ScreenToViewDepth(screenDepth);
+}
+
+float DofLoadFocusViewDepth(ivec2 texelPos) {
+	#ifdef DOF_FOCUS_IGNORE_HAND
+		float screenDepth = loadDepth2(texelPos);
+	#else
+		float screenDepth = loadDepth1(texelPos);
+
+		if (screenDepth < 0.56) {
+			screenDepth = screenDepth * rcp(MC_HAND_DEPTH) + (0.5 - 0.5 / MC_HAND_DEPTH);
+		}
+	#endif
+	return DofResolveFocusViewDepth(texelPos, screenDepth);
+}
+
+float DofFindFocusTarget() {
+	ivec2 imageEnd = ivec2(viewSize) - 1;
+	ivec2 centerTexel = imageEnd >> 1;
+	float closestDepth = FP16_MAX;
+
+	for (int y = -2; y <= 2; ++y) {
+		for (int x = -2; x <= 2; ++x) {
+			ivec2 sampleTexel = clamp(centerTexel + ivec2(x, y) * 2, ivec2(0), imageEnd);
+			closestDepth = min(closestDepth, DofLoadFocusViewDepth(sampleTexel));
+		}
+	}
+
+	float depthBandwidth = rcp(max(0.25, closestDepth * 0.05));
+	vec2 weightedDepth = vec2(0.0);
+	for (int y = -2; y <= 2; ++y) {
+		for (int x = -2; x <= 2; ++x) {
+			ivec2 sampleTexel = clamp(centerTexel + ivec2(x, y) * 2, ivec2(0), imageEnd);
+			float sampleDepth = DofLoadFocusViewDepth(sampleTexel);
+			float depthDelta = (sampleDepth - closestDepth) * depthBandwidth;
+			float spatialWeight = rcp(1.0 + 0.15 * sdot(vec2(x, y)));
+			float weight = spatialWeight * rcp(1.0 + depthDelta * depthDelta);
+			weightedDepth += vec2(sampleDepth, 1.0) * weight;
+		}
+	}
+
+	return weightedDepth.x / maxEps(weightedDepth.y);
+}
+
+void DofUpdateFocus() {
+	float targetDepth = DofFindFocusTarget();
+	float previousDepth = global.dofFocusDistance;
+	float blendWeight = exp2(-frameTime * rcp(DOF_FOCUS_HALFLIFE));
+	global.dofFocusDistance = mix(targetDepth, previousDepth, saturate(blendWeight));
+}
+
+//======// Main //================================================================================//
+void main() {
+	ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+
+	imageStore(colorimg15, texelPos, DofFilter(texelPos));
+
+	#if CAMERA_FOCUS_MODE == 0
+		if (all(equal(texelPos, ivec2(0)))) {
+			DofUpdateFocus();
+		}
+	#endif
+}

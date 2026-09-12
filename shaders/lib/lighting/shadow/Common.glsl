@@ -1,11 +1,11 @@
 // --- 阴影设置 ---
 #define SHADOW_DISTORTION          // [OFF ON] 阴影形变开关
-#define SHADOW_DISTORTION_STRENGTH 2.75 // [1.0 1.5 2.0 2.25 2.5 2.75 3.0 3.25 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0]
+#define SHADOW_DISTORTION_STRENGTH 4.0 // [1.0 1.5 2.0 2.25 2.5 2.75 3.0 3.25 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0]
 
 // [2026-09] 表驱动可分离 warp（RTWSM）。接口与表内容说明见 Warp.glsl。
 // **默认开**：关掉（注释下面那一行）时下面两个函数走原有解析径向曲线，与改动前逐位一致。
 // 开启后 Shadows 页会出现同名开关，可随时 GUI 切换。
-#define SHADOW_WARP_RTWSM
+//#define SHADOW_WARP_RTWSM
 // [2026-09 第二阶段] 内容驱动强度：把阴影图分辨率往"需要分辨率的地方"挪。
 //   0 = 密度只用解析底座（**与第一阶段逐点一致**，默认；测量照跑但不产生影响）
 //   >0 = 密度 = 解析密度 × ShadowWarpDensityFactor(clamp(相对重要性, 0.1, 10))，再积分成 CDF

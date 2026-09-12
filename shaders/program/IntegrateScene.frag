@@ -56,8 +56,8 @@ layout (location = 0) out vec4 sceneOut;
 #include "/lib/surface/BRDF.glsl"
 #include "/lib/surface/SSRT.glsl"
 
-// 体积光（VOLUMETRIC_LIGHT_MODE == 1，SDV 风格世界空间步进）需要阴影采样：
-// 阴影形变 + 体素平铺 Shift（与体积光 pass / 体素 GI 同约定）。
+// 雾中光束（VOLUMETRIC_LIGHT）需要阴影采样：阴影形变 + 体素平铺 Shift
+//（与体素 GI 同约定）。
 #include "/lib/lighting/shadow/Common.glsl"
 #include "/lib/lighting/VoxelLighting.glsl"
 
@@ -69,7 +69,7 @@ layout (location = 0) out vec4 sceneOut;
     uniform sampler2D colortex20;
 #endif
 
-// 体积光阴影采样（彩色阴影：实心挡=0，直射=1，穿玻璃=玻璃吸收色）
+// 雾中光束的阴影采样（实心挡=0，直射=1；COLORED_VOLUMETRIC_FOG 开启时穿玻璃=玻璃吸收色）
 uniform sampler2DShadow shadowtex1;
 uniform sampler2D shadowtex0;
 uniform sampler2D shadowcolor0;
@@ -124,9 +124,15 @@ float CalcSunScreenVisibility() {
     return edgeFade * occ * (1.0 / 5.0);
 }
 
-// 阴影贴图彩色可见性（与 VolumetricFog.frag 的 SampleVolumetricShadow 同逻辑）：
-// 实心挡=0，直射=1，穿玻璃=玻璃吸收色。camRelPos 为相机相对世界坐标。
-vec3 SampleSunShaftsShadow(in vec3 camRelPos) {
+// [2026-09-12 雾中光束] 单点阴影可见度：1 = 未被实心方块挡（或超出阴影范围），
+// 0 = 被实心方块挡；开了 COLORED_VOLUMETRIC_FOG 时穿过玻璃会返回玻璃吸收色。
+// camRelPos 为相机相对世界坐标，viewDist 为该点到相机的距离（用于距离淡出）。
+// 超出 shadowDistance（含阴影贴图范围外）按"未遮挡"处理，并在最后 8 格内连续淡出
+// —— 与 DeferredLight 的 distanceFade 同一约定，避免阴影图边界处出现一道硬边。
+vec3 SampleFogSunShadow(in vec3 camRelPos, in float viewDist) {
+    float rangeFade = linearstep(shadowDistance - 8.0, shadowDistance, viewDist);
+    if (rangeFade >= 1.0) return vec3(1.0);
+
     vec3 shadowClipPos = (shadowModelView * vec4(camRelPos, 1.0)).xyz;
     shadowClipPos = (shadowProjection * vec4(shadowClipPos, 1.0)).xyz;
     vec3 ssp = DistortShadowSpace(shadowClipPos) * 0.5 + 0.5;
@@ -138,100 +144,45 @@ vec3 SampleSunShaftsShadow(in vec3 camRelPos) {
     if (all(equal(ssp, saturate(ssp)))) {
         result = vec3(0.0);
         ssp.z -= 4e-5; // 消除自阴影深度偏差
-        float soildShadow = textureLod(shadowtex1, vec3(ssp.xy, ssp.z), 0.0);
-        if (soildShadow > 0.5) {
-            float translucentShadow = step(ssp.z, textureLod(shadowtex0, ssp.xy, 0.0).x);
-            result += vec3(translucentShadow);
-            float coloredShadow = saturate(soildShadow - translucentShadow);
-            if (coloredShadow > 1e-3) {
-                vec4 shadowColorSample = textureLod(shadowcolor0, ssp.xy, 0.0);
-                result += sRGBToLinear(shadowColorSample.rgb) * shadowColorSample.a * coloredShadow;
-            }
+        // 实心深度（硬件深度比较）：1 = 未被实心挡，0 = 被挡
+        float solidShadow = textureLod(shadowtex1, vec3(ssp.xy, ssp.z), 0.0);
+        if (solidShadow > 0.5) {
+            #ifdef COLORED_VOLUMETRIC_FOG
+                // 玻璃染色是可选开销：每采样点多 2 次纹理读取（shadowtex0 + shadowcolor0）。
+                // 默认关 —— 光束的可见度只需要"挡/不挡"，染色是锦上添花。
+                float translucentShadow = step(ssp.z, textureLod(shadowtex0, ssp.xy, 0.0).x);
+                float coloredShadow = saturate(solidShadow - translucentShadow);
+                result = vec3(translucentShadow);
+                if (coloredShadow > 1e-3) {
+                    vec4 shadowColorSample = textureLod(shadowcolor0, ssp.xy, 0.0);
+                    result += sRGBToLinear(shadowColorSample.rgb) * shadowColorSample.a * coloredShadow;
+                }
+            #else
+                result = vec3(1.0);
+            #endif
         }
+        result = mix(result, vec3(1.0), rangeFade);
     }
     return result;
 }
 
-// [2026-08-21] 体积光（SDV 风格，世界空间光柱步进）：从相机沿视线方向步进，
-// 每步把世界坐标投影到阴影贴图，采样彩色阴影（实心挡=0/直射=1/玻璃染色）累加。
-// 被方块挡住的光束自然断裂；"只在雾内部"由雾密度门控（1-exp2(-dist*密度) 距离累积）
-// + 高度衰减（玩家在雾层上方光消失）共同实现，与体积雾浓度联动。
-// 颜色 = 体积雾散射色相（fogScatter 归一化）× 物理辐照度，与雾完全一致且可见。
-// 噪声靠 TAA。仅 VOLUMETRIC_FOG 开启时由调用方门控。
-vec3 ScreenSpaceSunShafts(vec2 uv, vec2 pixelSize, vec3 worldDir, float dither, vec3 fogScatter) {
-    // 夜晚月光判定（moonAmt 用于给光轴颜色补月光；光柱形状由阴影贴图决定，与方向无关）
-    float moonAmt = smoothstep(-0.10, -0.25, worldSunDir.y);
-
-    float curDepth = loadDepth0(uvToTexel(uv));
-
-    // 步进终点：像素深度（几何体）或固定远端（天空）
-    float rayEnd;
-    if (curDepth > 1.0 - 1e-4) {
-        rayEnd = 256.0;
-    } else {
-        vec3 viewPos = ScreenToViewPos(vec3(uv, curDepth));
-        vec3 endWorld = transMAD(gbufferModelViewInverse, viewPos) + cameraPosition;
-        rayEnd = min(length(endWorld - cameraPosition), 256.0);
-    }
-    if (rayEnd < 0.5) return vec3(0.0);
-
-    // ---- 雾密度门控（SDV 核心：体积光只在雾内部）----
-    // 距离累积雾密度：1-exp2(-dist*浓度)，随距离和雾浓度增长；插值到 fogFactor
-    //（体积雾强度）使光强与雾联动。用 CalculateFogDensity 取相机位置的雾浓度。
-    float fogFactor = CalculateFogDensity(vec3(0.0), 0.0).y * VF_DENSITY_MULT;
-    float volumetricFogDensity = (1.0 - exp2(-rayEnd * fogFactor * 0.01));
-    volumetricFogDensity = (volumetricFogDensity - fogFactor) * 0.5 + fogFactor;
-    if (volumetricFogDensity <= 1e-3) return vec3(0.0);
-
-    // ---- 高度衰减（玩家在雾层上方 → 体积光消失）----
-    // 相机高度 cameraPosition.y 相对雾层高度 VF_HEIGHT，越远衰减越快。
-    float h = saturate((VF_HEIGHT - cameraPosition.y) / 64.0);
-    float heightFade = sqr(sqr(1.0 - sqr(h)));
-    if (heightFade <= 1e-3) return vec3(0.0);
-
-    // ---- 光源颜色：体积雾散射色相（fogChroma）× 物理直射辐照度 ----
-    // fogScatter（fogData[0]）是体积雾的散射色，量级偏低（尤其白天，0-1 尺度下
-    // 光柱看不见）。正确做法：先归一化出色相（fogChroma，保留雾的天体光晕/维度色调/
-    // 阳光染色方向），再乘物理直射辐照度 global.directIlluminance（白天 ≈128，
-    // 夜晚被 moonlightMult 压到近 0），保证白天/夜晚都可见且色相与雾完全一致。
-    vec3 fogChroma = fogScatter / max(luminance(fogScatter), 1e-4);
-    vec3 lightColor = fogChroma * global.directIlluminance;
-    if (moonAmt > 0.0) {
-        // 夜晚月光：directIlluminance 夜晚≈0（moonlightMult 压制），光柱/月晕主体
-        // 由月光补项提供，色相淡蓝、强度跟随 VOXEL_MOON_STRENGTH。
-        lightColor += vec3(0.30, 0.42, 0.85) * moonAmt * VOXEL_MOON_STRENGTH;
-    }
-
-    // ---- Mie 前向散射相位（天体光晕）----
-    // 夜晚沿月亮方向（-worldSunDir）、白天沿太阳方向（worldLightDir）聚拢 → 天体
-    // 周围出现辉光（夜晚月晕由此而来）。与均匀项 mix 避免正对光源的尖锐峰值盖过
-    // 周围光柱（"太阳亮、光柱弱"）。方向由 dot(lightDir, worldDir) 决定。
-    vec3 lightDir = worldLightDir;
-    if (moonAmt > 0.0) lightDir = -worldSunDir;
-    float miePhase = mix(1.0, AtmospherePhase(dot(lightDir, worldDir)).y, 0.5);
-
-    // ---- 世界空间光柱步进（SDV：7-12 步）----
-    // [P1 2026-09-02] 12 -> 8：光柱每像素步进减为 8，少 4 次阴影贴图采样；噪声靠 TAA 平滑，几乎无感
-    const int shaftsSamples = 8;
-    float stepLen = rayEnd / float(shaftsSamples);
-    vec3 shafts = vec3(0.0);
-
-    for (int i = 0; i < shaftsSamples; ++i) {
-        float t = (float(i) + dither) * stepLen;
-        vec3 sampleCamRel = worldDir * t; // 相机相对世界坐标
-        // 彩色阴影采样：实心挡=0，直射=1，穿玻璃=玻璃色
-        vec3 shd = SampleSunShaftsShadow(sampleCamRel);
-        shafts += lightColor * miePhase * shd * (1.0 / float(shaftsSamples));
-    }
-
-    // 强度 = 步进累积 × 雾密度门控 × 高度衰减 × 亮度倍率 × 正午衰减。
-    // 昼夜分开换算：白天阳光 ≈128 需压回可见范围（0.03），夜晚月光 ≈1 用更大系数
-    // 保持月晕/光柱可见。VF_VOLUME_INTENSITY / VF_SHAFT_COLOR_BRIGHTNESS 仍独立可调。
-    // [2026-08-21 正午衰减] 正午太阳在头顶，光柱方向与视线几乎不交叉、天顶大气路径
-    // 最短 → 体积光不可见（与方案 0 同曲线）。worldSunDir.y 白天 0(日出)→1(正午)。
-    float noonFade = 1.0 - smoothstep(0.30, 0.60, max(worldSunDir.y, 0.0));
-    float intensityScale = mix(0.03, 0.5, moonAmt);
-    return shafts * VF_VOLUME_INTENSITY * volumetricFogDensity * heightFade * VF_SHAFT_COLOR_BRIGHTNESS * intensityScale * noonFade;
+// [2026-09-12 雾中光束] 估计"这条视线上的平均阴影可见度"：沿射线分层取
+// VF_VOLUME_SHADOW_SAMPLES 个点，每点采样阴影贴图；采样点带逐像素/逐帧抖动
+// （dither 来自 BlueNoise），噪声交给 TAA 时域平均（与旧体积光 pass 同一套路，
+// 只是采样点少得多）。0 = 关（返回全亮 = 没有光束）。
+// 放在 IntegrateScene 而不是 AtmosphericFog.glsl：阴影相关的 include 顺序与声明都在
+// 这边，雾那边只接收一个逐射线系数 —— 密度/透射率的闭式积分完全不受影响。
+vec3 ComputeFogSunVisibility(in vec3 worldDir, in float rayLength, in float dither) {
+    #if VF_VOLUME_SHADOW_SAMPLES > 0
+        vec3 visSum = vec3(0.0);
+        for (int i = 0; i < VF_VOLUME_SHADOW_SAMPLES; ++i) {
+            float t = rayLength * (float(i) + dither) / float(VF_VOLUME_SHADOW_SAMPLES);
+            visSum += SampleFogSunShadow(worldDir * t, t);
+        }
+        return visSum / float(VF_VOLUME_SHADOW_SAMPLES);
+    #else
+        return vec3(1.0);
+    #endif
 }
 
 void main() {
@@ -388,7 +339,22 @@ void main() {
                 }
             }
             
-            fogData = RaymarchAtmosphericFog(vec3(0.0), fogEndPos, dither, skyMask, 1u, sunVis);
+            // [2026-09-12 雾中光束] 这条视线的阴影可见度（VOLUMETRIC_LIGHT 关掉时恒为 1
+            // = 与合并前完全一致的"无光束"行为）。射线从相机出发，故射线长度 = |fogEndPos|。
+            vec3 fogSunShadow = vec3(1.0);
+            #ifdef VOLUMETRIC_LIGHT
+                fogSunShadow = ComputeFogSunVisibility(worldDir, length(fogEndPos), dither);
+            #endif
+
+            // 雾的定向光能量：白天 = 太阳辐照度。夜晚 global.directIlluminance ≈ 0
+            //（moonlightMult 压制），这里补一个月光项 —— 与旧体积光 pass / SUN_HALO 同一套
+            // 色相与强度约定（淡蓝、跟随 VOXEL_MOON_STRENGTH）。没有它，夜晚雾的太阳项归零，
+            // 雾中光束会在入夜后整个消失。
+            float fogMoonAmt = smoothstep(-0.10, -0.25, worldSunDir.y);
+            vec3 fogLightEnergy = global.directIlluminance
+                                + vec3(0.30, 0.42, 0.85) * fogMoonAmt * VOXEL_MOON_STRENGTH;
+
+            fogData = RaymarchAtmosphericFog(vec3(0.0), fogEndPos, dither, skyMask, sunVis, fogSunShadow, fogLightEnergy);
         #endif
 
         // [2026-09 新增] 地面大气散射（空气透视）：与体积雾相互独立的一层，只作用于主世界
@@ -415,30 +381,6 @@ void main() {
 
     if (viewDistance == 0.0) viewDistance = length(viewPos);
     RenderVanillaFog(sceneColor, fogMask, viewDistance);
-
-    // [2026-08-21] 体积光（God Rays）叠加。方案 0：colortex11 为 1/4 分辨率 RGBA16F，
-    // 全屏 UV 与其 UV 范围一一对应，直接采样后上采样叠加（RGB=散射，A=透射率）。
-    // 方案 1：全分辨率屏幕空间太阳光轴内联计算（无需 colortex11），仅体积雾
-    // （VOLUMETRIC_FOG）开启时生效。噪声均由 TAA 平滑。
-    #ifdef VOLUMETRIC_LIGHT
-        #if VOLUMETRIC_LIGHT_MODE == 1
-            #ifdef VOLUMETRIC_FOG
-                float shaftsDither = BlueNoise(texelPos, frameCounter);
-                // 光轴颜色用该像素体积雾的散射色（fogData[0]），与体积雾完全一致；
-                // 夜晚月光、阳光染色、维度色调均已含在体积雾散射色中。
-                vec3 shafts = ScreenSpaceSunShafts(screenCoord, viewPixelSize, worldDir, shaftsDither, fogData[0]);
-                // 只能和体积雾重叠渲染：用该像素体积雾的散射色（fogData[0]）做门控——
-                // 散射色>0（该像素有体积雾散射）= 显示光轴；无雾处散射色≈0 = 光轴消失。
-                // 不用透射率（1-fogData[1]）做门控：白天薄雾透射率≈1 会误杀光轴。
-                float fogPresence = saturate(luminance(fogData[0]) * 50.0);
-                sceneColor += shafts * fogPresence;
-            #endif
-
-        #else
-            vec4 volumeLight = textureLod(colortex11, screenCoord, 0);
-            sceneColor = sceneColor * volumeLight.a + volumeLight.rgb;
-        #endif
-    #endif
 
     // [2026-09 独立日晕] 太阳/月亮保底光晕：不依赖体积雾浓度、也不依赖体积光开关
     // （VOLUMETRIC_FOG/VOLUMETRIC_LIGHT 均关也生效），由 SUN_HALO 独立总控。

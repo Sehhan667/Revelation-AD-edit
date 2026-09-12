@@ -19,13 +19,13 @@
 #define ULTRA_LOW_END_ALU_REDUCTION // 启用底层 RCP 指令和指令流乘加合并优化
 #define POTATO_GAMMA_APPROX         // 启用土豆级 Gamma 逼近：用单周期硬件 sqrt 近似替代昂贵的全局 pow 幂运算（低端机帧率提升明显）
 
-#define TONE_MAPPER AgX_Minimal // [None AcademyFit AcademyFull AgX_Minimal AgX_Full Lottes GT GT7 Fast_Reinhard]
+#define TONE_MAPPER AcademyFit // [None AcademyFit AcademyFull AgX_Minimal AgX_Full Lottes GT GT7 Fast_Reinhard]
 
-#define GAMMA_CORRECTION 2.2 // [1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.1 2.2 2.3 2.4 2.5 2.6 2.7 2.8 2.9 3.0 3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 4.0 4.1 4.2 4.3 4.4 4.5 4.6 4.7 4.8 4.9 5.0]
+#define GAMMA_CORRECTION 3.0 // [1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.1 2.2 2.3 2.4 2.5 2.6 2.7 2.8 2.9 3.0 3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 4.0 4.1 4.2 4.3 4.4 4.5 4.6 4.7 4.8 4.9 5.0]
 
 // 【修复】滑块配置注释已全部接回，游戏内菜单调节功能恢复正常
 #define BLOOM_BLENDING_MODE 1 // [0 1 2]
-#define BLOOM_INTENSITY 3.0 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 3.0 4.0 5.0 7.0 10.0 15.0 20.0]
+#define BLOOM_INTENSITY 1.6 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 3.0 4.0 5.0 7.0 10.0 15.0 20.0]
 #define BLOOMY_FOG_INTENSITY 1.0 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.75 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0 3.5 4.0 5.0]
 
 #define PURKINJE_SHIFT
@@ -35,8 +35,8 @@
 #define PURKINJE_SHIFT_G 0.78 // [0.0 to 1.0]
 #define PURKINJE_SHIFT_B 1.0  // [0.0 to 1.0]
 
-// #define VIGNETTE_ENABLED
-#define VIGNETTE_STRENGTH 1.0 // [0.1 to 5.0]
+#define VIGNETTE_ENABLED
+#define VIGNETTE_STRENGTH 0.1 // [0.1 to 5.0]
 #define VIGNETTE_ROUNDNESS 0.5 // [0.1 to 5.0]
 
 //======// Output //==============================================================================//

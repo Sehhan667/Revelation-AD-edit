@@ -701,3 +701,144 @@ $c -notmatch '\?'                                  # 无乱码
   `Unknown image type! / Image X is invalid! Format: null`，纹理根本没创建 → imageStore 写空、sampler 读黑 →
   **缓存永远为空 → GI 全黑，且一切读缓存的调试视图全黑**（不报编译错，极难定位）。教训：新加 image 行先查
   游戏 logs/latest.log 有没有该条目的 `Unknown image type` 错误。
+
+---
+
+# 备忘：景深 DoF 移植（2026-09-11，自 Revelation-dev 原版）
+
+## 移植内容（A Life of a bokeh 三段式）
+- `lib/post/DOF.glsl`（CoC 计算/圆形+六边形光圈/口径蚀/Vogel 采样）+ `program/post/DOF/`
+  Prepare/Gather/Postfilter 三个 comp + `world0/composite6.csh / composite6_a.csh / composite6_b.csh` 入口。
+- 数据流：Prepare 读 colortex0(场景)+depth1 → 写 colortex3(scene+CoC.a)+colortex15(CoC 传播数据)；
+  Gather 读 colortex3 采样 + colortex15 读 gather 半径 → 写 colortex15(过滤色+原 alpha)；
+  Postfilter 读 colortex15+colortex3.a 做 3x3 中值 → 写回 colortex0。输出位置在 composite7(TAA) 之前，
+  采样噪声由 TAA 时域平滑（与原版 composite3/4/5 → composite7 的相对位置一致）。
+
+## 关键适配（本包与原版的差异）
+1. **无 RENDER_SCALE 体系**（MEMO SVGF 一节的老坑）：原版所有 scaled* 坐标全部换成全分辨率
+   （scaledViewSize→viewSize、scaledTexelSize→viewPixelSize、texelToUvScaled→texelToUv、
+   uvToTexelScaled→uvToTexel、scaleScreenUv→恒等），workGroupsRender 恒 vec2(1.0)。
+2. **composite6/6_a/6_b 挂法**：Iris 的 compositeN.csh 是 compositeN.fsh 的附着 compute，按
+   base→_a→_b 顺序派发（ShaderDoc；本包 prepare→prepare_a、deferred1→deferred1_a 依赖链已验证）。
+   5/6/7 里只有 6 空着（5=HurtTimer、7=TAA），所以三段 DOF 全挂在 composite6 族下。
+3. **colortex15 死缓冲复用**：原 RGBA8 "Voxel GI propagation"，唯一使用点 smooth.glsl 只被
+   已禁用的 deferred1_b.csh1 引用。升 RGBA16F 作 DOF gather scratch（HDR 需半精度）。
+   colortex3 在 composite4.csh(Translucent 写)→composite4.fsh(IntegrateScene 消费)之后空闲，
+   TAA 的运动向量(composite7 写 colortex3)在 DOF 之后——无冲突。
+4. **YCoCg 兼容**：IntegrateScene 在 TAA 开启时把 colortex0 编码为 YCoCg。DOF 的 gather 是线性
+   加权平均，blur(YCoCg)==YCoCg(blur)，无需转色空间（TAA 读到的仍是合法 YCoCg）；
+   Postfilter 的逐通道中值在 YCoCg 空间做，与 RGB 中值略有差异但仍是有效的离群值剔除。
+   colortex0.a（1-fogMask）经 Gather(colortex15.a)→Postfilter 原样透传，语义不变。
+5. **SSBO**：GlobalData 末尾追加 `float dofFocusDistance`（std430 尾部追加不动既有成员偏移），
+   自动对焦时 Gather 的 DofUpdateFocus 单线程(texelPos==0)指数平滑写入；手动模式不写。
+   初始值 0 由 Prepare 的 `max(global.dofFocusDistance, dofFocalLength)` 兜底。
+
+## 其它
+- 原版只有 world0 有 DOF（Revelation-dev 无 world-1/world1 目录），本移植同样只加 world0；
+  下界/末地不开景深。
+- 选项接线三件套已同步：settings.glsl 选项块、shaders.properties（screen.DoF 填充 + sliders 追加
+  7 个滑条 + composite6/6_a/6_b.enabled = DEPTH_OF_FIELD）、lang 双语。
+- Iris 选项 txt 无旧 DOF 残留值；DEPTH_OF_FIELD 默认关，GUI 后处理 → 景深里开启。
+- 排查提示：DOF 三段任一没跑的症状是画面不模糊/CoC 数据错乱花屏——先查日志里 composite6/6_a/6_b
+  是否编译失败，再确认 DEPTH_OF_FIELD 宏与 .enabled 规则生效。
+
+---
+
+# 备忘：色散 Chrstasic Aberration（2026-09-11）
+
+## 实现
+- 纯最终输出后处理，不改管线、不新增 pass/缓冲：Final.frag 的 `LoadChromaticScene(texel)` 替代
+  原 `FFXCasFilter` 获取最终场景色。CAS 关闭时 FFXCasFilter 恒等返回中心色，色散分支仍独立生效。
+- 算法：对已 tone-map 完成的 colortex0，R 略向外、B 略向内、G 不动径向分离，偏移按到中心距离
+  线性增长（除以半对角 0.7071 使四角归一 = CHROMATIC_ABERRATION_STRENGTH 像素）。中心无色散，
+  符合真实镜头横向色差。
+- 玩法：glitch/R!G!B! 撕裂类效果覆盖在色散之上（它们自身就有错位感），色散作为底层镜头效果，
+  静止画面观感不受干扰。
+
+## 注意
+- **shaders.properties 仍是 ASCII 硬约束**：本轮我在 screen.ChromaticAberration 注释里写了中文
+  （横向色差）导致 25 个非 ASCII 字节，Iris jcpp 会崩——已改英文。properties 注释一律英文。
+- 宏接线三件套：settings.glsl（CHROMATIC_ABERRATION 默认关 + CHROMATIC_ABERRATION_STRENGTH
+  默认 0.8，RENDER_MODE==0 截图模式统一 #undef）、shaders.properties（screen.ChromaticAberration 分组
+  + sliders）、lang 双语 + 说明。
+- suffix.CHROMATIC_ABERRATION_STRENGTH=像素（px），GUI 后处理 → 色散 开启，滑条直接拖强度。
+
+---
+
+# 备忘：体积光并入体积雾（2026-09-12）
+
+## 结论
+独立的「体积光」（god rays）层已删除，改成**让体积雾的太阳散射吃阴影贴图**：
+`RaymarchAtmosphericFog` 新增 `sunShadowVis`（逐射线阴影可见度）与 `lightEnergy`（定向光能量）
+两个参数，`scatteringSun` 乘上 `cloudShadow × mix(1, sunShadowVis, VF_VOLUME_INTENSITY)`。
+雾的密度闭式积分与透射率**没动**，只是多了一个逐射线系数，没有步进循环。
+
+## 为什么不是「把雾改成步进」
+用户明确要求体积雾保持解析（闭式）渲染 —— 那是 2026-09-10 修掉「雾层同心环」的成果
+（`IntegrateFogDensityAlongRay`，在折点处精确切分）。所以光束不通过「沿射线累加 in-scatter」
+实现，而是给**整条射线的太阳项**乘一个可见度系数：可见度沿射线的平均决定了这条视线的明暗，
+逐像素的差异就形成光束。代价是光束比真步进软（靠 TAA 时域平均补）。
+
+## 踩过的坑
+- **阴影采样只能放在 IntegrateScene**：`prepare`（GenSkyMap 天空 LUT）在 shadow pass 之前，
+  那里没有 shadowtex；而 AtmosphericFog.glsl 被多个 pass 共用（IntegrateScene / GenSkyMap /
+  Translucent.comp）。所以「可见度」由调用方算好传进去，雾函数自己不做阴影采样。
+- 原来那段「体积雾阴影采样」（`#if defined PASS_VOLUMETRIC_FOG`）是**死代码**：PASS_VOLUMETRIC_FOG
+  只在 VolumetricFog.frag 里定义，而那个文件不 include AtmosphericFog.glsl。里面还写了
+  `texelFetch(sampler2DShadow, ...).x` —— 根本编不过，只是从没被编译过，所以一直没暴露。
+- **月光项不能直接写进 AtmosphericFog.glsl**：`VOXEL_MOON_STRENGTH` 定义在 VoxelLighting.glsl，
+  而 IntegrateScene 是在它之前 include AtmosphericFog.glsl 的；宏取不到值会变成「GUI 旋钮失效」。
+  所以定向光能量也由调用方传入（IntegrateScene 里算 directIlluminance + 月光补项）。
+- 原 MODE1 的成本是 MODE0 的 4 倍（207 万像素 × 8 vs 13 万像素 × 32），而设置里的描述写反了；
+  且 MODE1 下 `composite` pass 在默认配置里每帧空转。合并后这些都不存在了。
+
+## 新选项
+- `VOLUMETRIC_LIGHT`：雾中光束总开关（需要 `VOLUMETRIC_FOG` 开启）
+- `VF_VOLUME_INTENSITY`：光束强度 = 阴影对比度（0 = 不压暗 = 没有光束）
+- `VF_VOLUME_SHADOW_SAMPLES`：沿视线的阴影采样数（0 = 关；默认 4，8 档 ≈ 原 MODE1 的开销）
+- 删除：`VOLUMETRIC_LIGHT_MODE` / `VF_VOLUME_MAX_STEPS` / `VF_SHAFT_COLOR_BRIGHTNESS` /
+  `VF_MAX_SAMPLES` / `UW_VF_MAX_SAMPLES` / `VF_NOISE_QUALITY` / `VF_SHADOW_QUALITY`
+
+---
+
+# 已移除：「体积雾不透明度」+「云层模式」（2026-09-12 当天加入当天移除）
+
+两个功能都已完整回退（`git checkout <加它们之前> -- AtmosphericFog/settings/properties/lang`），
+但下面的结论值得留着 —— 免得以后又走一遍同样的弯路。
+
+## 为什么做不出来
+
+需求是「雾拉高之后要像体积云、要有明确边界的云」。结论：**「最后渲染不步进」与「看起来像体积云」
+在数学上互斥**。非步进 ⇒ 每条射线只能有一个密度值，于是：
+1. **图案被钉在射线上某个固定距离**（原取射线∩云带的中点，水平视线落在半个视距 ≈128 格 →
+   一面「中距离云墙」，走动时从身边滑过）。改成「进入云带处 + 半厚度」只能减轻，治不了根。
+2. **沿射线没有密度变化** —— 云的立体感有一半来自沿射线的自遮挡，一个采样点算不出来。
+3. **单点阈值化的噪声是「剪纸」式硬块**，块内没有任何明暗层次。
+
+## 顺带查清的两件事（有复用价值）
+
+### 1) 包里的噪声纹理分布都很窄，阈值化前必须拉开
+
+| 纹理 | 绑定 | 实测分布 | 备注 |
+|---|---|---|---|
+| Noise2D.png | `noisetex`（`texture.noise`） | R/G min 40/255 max 213/255 **std ≈ 0.11**；两次采样混合后 **std ≈ 0.06** | 直接 `smoothstep(0.5,0.65,·)` → 平均覆盖率仅 0.16、实心 3.6%、空隙 66% ⇒ 等于没有 |
+| CloudMap.bin | `cloudMapTex` 2D RG8 512² | mean 0.617 / std 0.18 | 云的覆盖率贴图 |
+| AlligatorFbm_128.bin | `baseNoiseTex` 3D R8 128³ | mean 0.387 / std 0.127 | 云的 FBM 形状 |
+| SimplexGrad_64.bin | `curlNoise3D` 3D RGB8 64³ | mean 0.483 / std 0.11 | 云的 curl 侵蚀 |
+
+- 这些纹理的 `.mcmeta` 都是 `{"blur":true,"clamp":false}` ⇒ **线性过滤 + repeat**，可任意缩放采样；
+  三个 sampler 都声明在 `lib/universal/Uniform.glsl`（35/37/40 行），任何 pass 都能直接用。
+- **尺度必须换算**：云的噪声按公里级标定（`cloudMapExtend = 96e3` m、噪声空间 = 世界/2000），
+  搬到几十格的尺度上会变成一个常数。
+- **标定手法**：把 `.bin` 当原始字节读进 Python，等价实现采样 + 阈值化，跑蒙特卡洛统计覆盖率
+  （比在游戏里反复试快得多）。
+
+### 2) 包里的体积云本来就是现成的，做「云海」不需要写代码
+
+- `program/clouds/Render.comp`（compute）+ `Reconstruct.frag`：完整体积云渲染器，
+  `CLOUD_TAAU_SCALE`（默认档 4）= 1/4 分辨率 + 时域累积，自适应步数 `CLOUD_LOW_SAMPLES_MIN/MAX` = 12/24。
+- 三层选项在 `lib/atmosphere/clouds/Common.glsl`（**不在 settings.glsl**）：
+  LOW/CU（高度 1100 / 厚度 1500 / 覆盖率 0.5）、MID/AS（4000 / 2000）、HIGH（8000）。
+- **想要低空云海**：把某一层降下来即可 —— 滑条最低 400/500，例如
+  `CLOUD_MID_ALTITUDE` 4000 → 500、`CLOUD_MID_THICKNESS` → 500~800、`CLOUD_AS_COVERAGE` 0.5~0.8，
+  头顶 500~1000 格处就是一层真体积云。代价：那一层原来的高空云没了。
