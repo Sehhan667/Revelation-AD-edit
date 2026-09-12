@@ -26,6 +26,8 @@
 	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
 	// [2026-09-11 DoF 移植] colortex15 原为 Voxel GI propagation 输出（RGBA8），
 	// 但唯一使用点 smooth.glsl 只被已禁用的 deferred1_b.csh1 引用 = 死缓冲。
+	// [2026-09-12] smooth.glsl 已随本批死代码一并删除（它只被 .csh1 禁用 pass 引用）；
+	// 保留上句是为了说明 colortex15 当年为何能安全改格式。
 	// 现改作 DoF gather scratch（移植自原版 Revelation，原版同编号 rgba16f）：
 	// Prepare 写 CoC 数据 / Gather 写过滤色，需 HDR 半精度，故升 RGBA16F。
 	const int 	colortex15Format 			= RGBA16F;
