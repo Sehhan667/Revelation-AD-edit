@@ -122,7 +122,7 @@ python -c "…lang 是否带 BOM…"                 # 必须 False
 python -c "…#if* 与 #endif 计数…"             # 必须归零
 git status --porcelain                        # 只应出现你打算提交的文件
 ```
-> `preproc_check.js` 目前在工作区 `rdc_analysis/`（未入库），**建议移入 `scripts/` 并提交**。
+> `preproc_check.js` 在 `scripts/`（已入库）。注：`rdc_analysis/` 是 RenderDoc 分析临时区（93M，被 .gitignore 忽略）。
 
 **功能类改动**：提交信息里写清"待实测"清单（进游戏怎么验、看什么现象、旋钮在哪）。
 

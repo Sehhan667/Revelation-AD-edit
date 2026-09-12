@@ -1,0 +1,20 @@
+{
+  "hits": [
+    "Blur.comp::OFFSET",
+    "EAWF.comp::FILTER_PASS_INDEX",
+    "ImageClear.comp::CLEAR_COLOR",
+    "ImageClear.comp::CLEAR_IMAGE",
+    "SkyView.comp::MOON_SKY_BRIGHTNESS",
+    "SkyView.comp::MOON_SKY_TINT",
+    "VoxelClear.comp::VOXEL_COARSE_N",
+    "VoxelClear.comp::VOXEL_COARSE_SHIFT",
+    "begin.csh::MOON_SKY_BRIGHTNESS",
+    "begin.csh::MOON_SKY_TINT",
+    "begin1.csh::VOXEL_COARSE_N",
+    "begin1.csh::VOXEL_COARSE_SHIFT",
+    "composite31.fsh::RRT_PARAMS",
+    "dh_terrain.vsh::DH_BLOCK_LEAVES",
+    "dh_water.vsh::DH_BLOCK_WATER",
+    "gbuffers_block.fsh::COLORS"
+  ]
+}

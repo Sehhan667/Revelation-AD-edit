@@ -28,7 +28,7 @@
    → 文案（lang 双语）→ 默认值 = 现状（新功能默认关）。本轮新增的 6 个选项全部按这个范式走。
 3. **约定俗成的东西是自洽的**：函数 PascalCase、选项 SCREAMING_SNAKE、`// ---- 段落 ----` 分隔、
    `#ifndef` 兜底默认值、`PASS_*` 宏区分编译单元、用 `.csh1/.fsh1` 改名禁用 pass。
-4. **已有自制验证工具**：`rdc_analysis/preproc_check.js`（递归展开 `#include` + 跑预处理，抓
+4. **已有自制验证工具**：`scripts/preproc_check.js`（原在 `rdc_analysis/`，已入库）（递归展开 `#include` + 跑预处理，抓
    "全大写标识符从未定义"和 `#include` 被引号劫持这类 Iris 特有事故）、`stabilize_trace.js` 等。
 5. **提交粒度与信息**：近期每个提交都写清"背景 / 改了什么 / 为什么 / 待实测"，还带校验结果。
 
@@ -37,7 +37,7 @@
 ### 🔴 高优先级（建议本轮就做）
 
 **H1. 验证工具没有入库** —— `rdc_analysis/` 在 `.gitignore` 里（第 6 行），而
-`preproc_check.js` 是本项目**唯一能提前抓 Iris 解析事故的工具**。它现在只存在于本机工作区：
+`preproc_check.js` 是本项目**唯一能提前抓 Iris 解析事故的工具**。修复前它只存在于本机工作区：
 换机器、误删、或以后交给别人/AI 接手就没了。同时 `scripts/` 是入库的（含 LICENSE 与文本编码工具），
 说明项目本来就有"工具入库"的先例。
 → **建议**：把 `preproc_check.js`（及其 `baseline.json`）移入 `scripts/` 并入库，`rdc_analysis/`
