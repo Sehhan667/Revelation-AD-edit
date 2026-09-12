@@ -4,6 +4,9 @@
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
+
     Pass: Cached Gaussian blur for bloom tiles (L0 canvas only)
 
     [AD-edit] 单级泛光的半径控制从 Downsample 移到这里：
@@ -16,6 +19,7 @@
     - 共享内存缓存保留：每线程只取 1~2 次纹素（另由 128 宽工作组首尾补充
       halo），整行/整列数据经 LDS 复用，带宽开销小。
 -------------------------------------------------------------------------------
+
 */
 
 //======// 模糊半径 → 核半宽 ================================================//

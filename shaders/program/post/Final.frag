@@ -4,11 +4,15 @@
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
+
     Pass: Contrast adaptive sharpening and final output 
           (Startup Logo + Screen Hurt FX + Entity Area Glitch)
     Uses low 2 bits of materialOut.w for entity/hurt flags.
     Added: GLITCH_TEAR_LAYERS, ALWAYS_GLITCH macro.
 --------------------------------------------------------------------------------
+
 */
 
 //======// Utility //=============================================================================//

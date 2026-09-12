@@ -1,3 +1,6 @@
+// Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+// Modified by AnotherCream, 2026.
+
 vec3 ScreenToViewPosRaw(vec3 screenPos) {
     vec3 ndcPos = screenPos * 2.0 - 1.0;
     return ProjectDivide(gbufferProjectionInverse, ndcPos);  // 注意参数顺序

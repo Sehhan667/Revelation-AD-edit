@@ -4,6 +4,8 @@
 // https://cybereality.com/screen-space-indirect-lighting-with-visibility-bitmask-improvement-to-gtao-ssao-real-time-ambient-occlusion-algorithm-glsl-shader-implementation/
 
 //================================================================================================//
+// Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+// Modified by AnotherCream, 2026.
 
 #define SSILVB_SLICE_COUNT 1 // [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
 #define SSILVB_SAMPLE_COUNT 10 // [4 6 8 10 12 14 16 18 20 22 24 26 28 30 32 34 36 38 40 42 44 46 48 50 52 54 56 58 60 62 64]

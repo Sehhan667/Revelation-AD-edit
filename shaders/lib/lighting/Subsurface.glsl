@@ -33,6 +33,10 @@
     第 2 步（屏幕空间扩散 pass）会把本函数的输出当作「去 albedo 的漫射源」送进
     半分辨率可分离模糊，所以这里返回的是源项而非最终颜色。
 --------------------------------------------------------------------------------
+
+
+    Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Copyright 2026 AnotherCream.
 */
 
 #ifndef SSS_SUBSURFACE_GLSL

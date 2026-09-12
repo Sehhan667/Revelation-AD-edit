@@ -4,6 +4,9 @@
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
+    Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Copyright 2026 AnotherCream.
+
     Pass: 阴影 warp 表构建（RTWSM，setup12，跑在 shadow pass 之前）
 
     [2026-09] 每帧填写 256 x 2 的 warp 表（见 lib/lighting/shadow/Warp.glsl）：
@@ -33,6 +36,7 @@
     成本：一个 workgroup（16x16 = 256，正好一个表项一个线程）= 1 次 imageLoad/Store
       + 512 个清零，可忽略。CDF 那一小段串行代码只有 t == 0 一个线程跑（256 项）。
 --------------------------------------------------------------------------------
+
 */
 
 layout (local_size_x = 16, local_size_y = 16) in;

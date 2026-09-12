@@ -1,6 +1,8 @@
 //================================================================================================//
 // SVGF Upscale Diffuse Indirect (轻量稳定版，已移除体积雾及非必要宏)
 //================================================================================================//
+// Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+// Modified by AnotherCream, 2026.
 #if defined PASS_DEFERRED_LIGHTING
 // [FIX 2026-08-06] 用简单 #if defined 控制（原复合条件 `#if defined SVGF_ENABLED &&
 // (defined GI_ACTIVE_SSILVB || defined GI_ACTIVE_VXGI)` 会破坏 Iris 对布尔宏 SVGF_ENABLED 的

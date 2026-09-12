@@ -8,6 +8,10 @@
     PCF: Vogel disk precomputed radii & pre-rotated directions (no per-sample sin/cos).
     SSS: Precomputed step base, minor ALU reductions.
 --------------------------------------------------------------------------------
+
+
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
 */
 
 // [0 1 2] 0: Hard Shadow (Fastest), 1: PCF (Medium), 2: PCSS (Physical Soft)

@@ -6,11 +6,15 @@
 	Copyright (C) 2026 HaringPro
 	Apache License 2.0
 
+	Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+	Modified by AnotherCream, 2026.
+
     Pass: Variance estimation for SVGF
 	Reference:  https://research.nvidia.com/sites/default/files/pubs/2017-07_Spatiotemporal-Variance-Guided-Filtering://svgf_preprint.pdf
                 https://cescg.org/wp-content/uploads/2018/04/Dundr-Progressive-Spatiotemporal-Variance-Guided-Filtering-2.pdf
 
 --------------------------------------------------------------------------------
+
 */
 
 //======// Input //===============================================================================//

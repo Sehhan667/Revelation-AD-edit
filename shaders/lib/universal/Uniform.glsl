@@ -1,3 +1,6 @@
+// Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+// Modified by AnotherCream, 2026.
+
 uniform sampler2D noisetex;
 
 uniform sampler2D colortex0;

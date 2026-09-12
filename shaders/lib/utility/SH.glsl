@@ -3,6 +3,8 @@
 // https://doi.org/10.1145/3478513.3480563
 
 // ========== 方向性亮度控制（按需启用） ==========
+// Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+// Modified by AnotherCream, 2026.
 #define SH_DIRECTIONAL_BRIGHTNESS_ENABLED   // 取消注释即可启用
 
 // 六个面的亮度倍率（1.0 = 原始亮度）

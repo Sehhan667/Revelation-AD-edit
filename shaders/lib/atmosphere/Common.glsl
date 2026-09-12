@@ -8,6 +8,10 @@
             https://github.com/sebh/UnrealEngineSkyAtmosphere
 
 --------------------------------------------------------------------------------
+
+
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
 */
 
 //================================================================================================//

@@ -4,6 +4,10 @@
     Mode 0 (High Quality): Playdead's variance-clipping & perceptual YCoCg TAA
     Mode 1 (High Performance): MakeUp Fast RGB TAA (fixed history weight)
 --------------------------------------------------------------------------------
+
+
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
 */
 
 //======// 配置与宏定义 //=======================================================================//

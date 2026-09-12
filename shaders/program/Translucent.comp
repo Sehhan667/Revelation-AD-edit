@@ -4,6 +4,9 @@
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
+
     Pass: Compute translucent lighting & water fog
     Optimizations:
         - Moved volumetric fog calculation out of this pass (already computed in composite).
@@ -15,6 +18,7 @@
          1 = Original SSRT (ScreenSpaceRaytrace)
          2 = Fast SSR (Belmu/Shadax style) – default
 --------------------------------------------------------------------------------
+
 */
 
 #define PASS_TRANSLUCENT

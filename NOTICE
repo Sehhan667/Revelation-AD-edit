@@ -1,0 +1,92 @@
+Revelation-AD-edit
+Copyright 2026 AnotherCream
+
+This product is a modified derivative of "Revelation"
+(https://github.com/HaringPro/Revelation) and is distributed under the
+Apache License, Version 2.0. The full text of that license is in the
+LICENSE file at the root of this distribution.
+
+The notices below are provided to satisfy section 4(d) of the Apache
+License, Version 2.0. They are for informational purposes only and do not
+modify the License. Each third-party component remains governed by its own
+license terms, which take precedence for that component.
+
+
+--------------------------------------------------------------------------------
+1. Upstream work
+--------------------------------------------------------------------------------
+
+    Revelation Shaders
+    Copyright (C) 2026 HaringPro
+    License: Apache License, Version 2.0
+    Source:  https://github.com/HaringPro/Revelation
+
+"Revelation-AD-edit" modifies files taken from the upstream source and adds
+new ones. Every file that was changed carries a prominent in-file notice
+stating that it was modified and by whom, as required by section 4(b) of the
+Apache License, Version 2.0.
+
+
+--------------------------------------------------------------------------------
+2. Third-party components
+--------------------------------------------------------------------------------
+
+AMD FidelityFX - Single Pass Downsampler (SPD)
+    Location: shaders/ffx/
+    Copyright (C) 2025 Advanced Micro Devices, Inc. All rights reserved.
+    License: AMD FidelityFX license, reproduced in shaders/ffx/license.md.
+             Redistribution in binary form only; no reverse engineering,
+             decompilation or disassembly of this software is permitted.
+
+Character renderer (TextRenderer)
+    Location: shaders/lib/universal/TextRenderer.glsl
+    Copyright (c) 2024 Mo Yongxin "qwertyuiop", Factorization, HaringPro
+    Reference: https://github.com/moyongxin/mc-shaders-helpers
+    License: MIT. See scripts/LICENSE.
+
+Character encoding generator (helper script)
+    Location: scripts/text_enc_gen/
+    Copyright (c) 2024 moyongxin
+    License: MIT. See scripts/LICENSE.
+
+AgX minimal tone mapper
+    Location: shaders/lib/post/AgX.glsl
+    Copyright (c) 2024 Missing Deadlines (Benjamin Wrensch)
+    Reference: https://iolite-engine.com/blog_posts/minimal_agx_implementation
+    License: MIT.
+
+GT7 tone mapper
+    Location: shaders/lib/post/GT.glsl
+    Copyright (c) 2025 Polyphony Digital Inc.
+    Reference: https://blog.selfshadow.com/publications/s2025-shading-course/pdi/supplemental/gt7_tone_mapping.cpp
+    License: MIT.
+
+Academy Color Encoding System (ACES) components
+    Location: shaders/lib/post/ACES.glsl
+    Copyright (c) 2015 Academy of Motion Picture Arts and Sciences (A.M.P.A.S.)
+    Reference: https://github.com/ampas/aces-dev
+    License: ACES License Terms - worldwide, royalty-free, non-exclusive right
+             to copy, modify, create derivatives and use, in source and binary
+             forms, subject to acceptance of that license.
+
+Shader Fast Math Lib
+    Location: shaders/lib/utility/ShaderFastMathLib.glsl
+    Copyright (c) 2014 Michal Drobot
+    License: MIT.
+
+SSILVB - screen space indirect lighting with visibility bitmask
+    Location: shaders/lib/lighting/SSILVB.glsl
+    Adapted from "Screen Space Indirect Lighting with Visibility Bitmask"
+    by Olivier Therrien, et al. (arXiv:2301.11376).
+
+Volumetric cloud modelling
+    Location: shaders/lib/atmosphere/clouds/
+    Technique reference: Andrew Schneider, "Nubis: Authoring Realtime
+    Volumetric Cloudscapes with the Decima Engine", SIGGRAPH 2017.
+
+Ocean wave function
+    Location: shaders/lib/water/PhysicsOceans.glsl
+    Based on afl_ext's shader https://www.shadertoy.com/view/Xdlczl
+
+Starmap image
+    NASA Scientific Visualization Studio, https://svs.gsfc.nasa.gov/4851

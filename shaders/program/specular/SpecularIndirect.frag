@@ -4,6 +4,9 @@
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
+
     Pass: Compute specular reflections
     Optimizations:
       - Fixed LOD depth culling logic conflict.
@@ -11,6 +14,7 @@
       - Removed dead ALU calculations (Unused absolute worldPos).
     Updated: Use geometry normal and materialID for new reflection function.
 --------------------------------------------------------------------------------
+
 */
 
 #define PASS_SPECULAR_LIGHTING

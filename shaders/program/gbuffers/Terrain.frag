@@ -5,11 +5,15 @@
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
+
     Performance Optimized: reduced redundant computations, early exits,
                            combined conditionals, minor math simplifications.
     Fix: Clear low 2 bits of materialOut.w to avoid entity flag conflicts.
     Feature: Voxel Mapping Integration
 --------------------------------------------------------------------------------
+
 */
 // 视差映射最大距离（米），超出此距离视差完全失效
 #define PARALLAX_MAX_DISTANCE 32  // [2 4 6 8 16 32 64 128 256 512 1024 2048]

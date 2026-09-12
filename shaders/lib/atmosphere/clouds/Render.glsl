@@ -6,6 +6,10 @@
         [Wrenninge et al., 2013] …
 
 --------------------------------------------------------------------------------
+
+
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
 */
 
 #include "/lib/atmosphere/clouds/Shape.glsl"

@@ -22,6 +22,10 @@
 	厚度，肉眼几乎看不出空气透视，故按 GROUND_SCATTER_PATH_SCALE 统一放大，并暴露
 	GS_DENSITY 供现场增减（空气透视本身是"看得见的夸张"，标定值见下方常量注释）。
 --------------------------------------------------------------------------------
+
+
+	Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+	Copyright 2026 AnotherCream.
 */
 
 // 参数兜底默认值（与 settings.glsl 一致；GUI 解压后通常由 settings 定义覆盖）

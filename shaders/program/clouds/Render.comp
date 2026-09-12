@@ -6,11 +6,15 @@
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
+
     Optimizations:
       - SampleDepthMax4x4 now uses 2 gathers instead of 4, halving depth fetches.
       - SkyCheck4x4 uses bitwise AND for faster sky detection.
       - All original macros and paths remain unchanged.
 --------------------------------------------------------------------------------
+
 */
 
 //======// Utility //=============================================================================//

@@ -2,6 +2,10 @@
 --------------------------------------------------------------------------------
     Revelation Shaders - Specular Filter Pass (DISABLED)
 --------------------------------------------------------------------------------
+
+
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
 */
 
 layout (local_size_x = 16, local_size_y = 16) in;

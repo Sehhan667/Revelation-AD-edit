@@ -6,6 +6,9 @@
 	Copyright (C) 2026 HaringPro
 	Apache License 2.0
 
+	Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+	Copyright 2026 AnotherCream.
+
 	Pass: Depth-aware camera blur
     Reference: Guillaume Abadie, 2018, A Life of a bokeh, https://epicgames.ent.box.com/s/s86j70iamxvsuu6j35pilypficznec04
 
@@ -15,6 +18,7 @@
 	自动对焦状态存于 SSBO global.dofFocusDistance（本包 GlobalData 末尾新增字段）。
 
 --------------------------------------------------------------------------------
+
 */
 
 //======// Utility //=============================================================================//

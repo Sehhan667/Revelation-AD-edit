@@ -1,4 +1,8 @@
 /* Ground-Truth Ambient Occlusion */
+
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
+
 // Reference: https://www.activision.com/cdn/research/Practical_Real_Time_Strategies_for_Accurate_Indirect_Occlusion_NEW%20VERSION_COLOR.pdf
 
 #define GTAO_SLICES	2 // [1 2 3 4 5 6 8 10 12 15 17 20]

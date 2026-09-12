@@ -23,6 +23,10 @@
             https://dl.acm.org/doi/10.1145/2504459.2504518
 
 --------------------------------------------------------------------------------
+
+
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
 */
 
 #if !defined INCLUDE_CLOUDS_SHADOWS

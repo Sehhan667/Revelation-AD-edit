@@ -6,6 +6,10 @@
 
     Copyright © 2024 Mo Yongxin "qwertyuiop", Factorization, HaringPro 
 
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
+
+
 =============================================================================
 
     How to use?
@@ -65,6 +69,7 @@
     It is strange that we can't use "char" as name of variable or constant on NVGPU.
 
 =============================================================================
+
 */
 
 //==============================// Character Encoding //======================================//

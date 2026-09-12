@@ -3,6 +3,9 @@
     Revelation Shaders — Voxel GI 辐照度缓存（IRC 随机注入 · 阶段②）
     Copyright (C) 2026 HaringPro
 
+    Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Copyright 2026 AnotherCream.
+
     IRC 注入语义：
 
     - 表面判定（sampleHemisphere）：恰好 1 空邻居 + 非普通方块（abs(ID)>1，
@@ -24,6 +27,7 @@
     - 时间混合：IRC 是随机采样，靠时域累积降噪（VOXEL_GI_BLEND=0.99）
     - 相机移动时前帧坐标重投影（cDi = cameraPositionInt - previousCameraPositionInt）
 --------------------------------------------------------------------------------
+
 */
 
 //======// Utility //=============================================================================//

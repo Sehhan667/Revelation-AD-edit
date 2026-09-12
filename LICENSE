@@ -186,7 +186,7 @@ Apache License
       same "printed page" as the copyright notice for easier
       identification within third-party archives.
 
-   Copyright [yyyy] [name of copyright owner]
+   Copyright 2026 HaringPro
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -199,3 +199,24 @@ Apache License
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+
+--------------------------------------------------------------------------------
+
+   Derivative work notice
+
+   This distribution, "Revelation-AD-edit", is a Derivative Work of the Work
+   titled "Revelation" (Copyright 2026 HaringPro,
+   https://github.com/HaringPro/Revelation).
+
+   Files in this distribution have been modified, and new files have been
+   added, by AnotherCream, 2026. Each modified file carries a prominent
+   notice stating that it was changed, as required by section 4(b) of the
+   License.
+
+   The attribution notices required by section 4(d) of the License are
+   collected in the NOTICE file distributed alongside this LICENSE.
+
+   "Revelation" is a trademark of its respective owner. This derivative is
+   not endorsed by, affiliated with, or sponsored by the upstream author
+   (section 6 of the License).

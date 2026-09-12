@@ -6,6 +6,9 @@
 	Copyright (C) 2026 HaringPro
 	Apache License 2.0
 
+	Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+	Copyright 2026 AnotherCream.
+
     Pass: PTGI-style median denoise (VXGI alternad denoise, mode=1)
 	单次中值滤波（去 firefly/孤亮点噪）+ 深度/法线边缘混合保边。
 	只替代 SVGF 链的 EAWF(a-trous ×4) 空间滤波，时域累积(Accumulate)与方差
@@ -13,6 +16,7 @@
 
 	[2026-08-28] 棋盘感知：colortex3 是半分辨率棋盘(新旧相位交错)，故用 2*R
 	步长做同奇偶采样，避免中值混入另一相位旧值 → 消除"均匀密点"。
+
 
 ---- [EXTRACTED] ---- */
 

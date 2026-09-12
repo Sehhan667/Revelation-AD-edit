@@ -1,3 +1,19 @@
+# --------------------------------------------------------------------------------
+#     Revelation-AD-edit  -  modified derivative of "Revelation"
+#     Upstream: https://github.com/HaringPro/Revelation  (C) 2026 HaringPro
+#
+#     This file is an addition made for this derivative.
+#     Copyright 2026 AnotherCream
+#
+#     Licensed under the Apache License, Version 2.0. See NOTICE at repo root.
+# --------------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------------
+#     Upstream: https://github.com/HaringPro/Revelation  (C) 2026 HaringPro
+#
+#
+# --------------------------------------------------------------------------------
+
 # Human-in-the-loop FPS benchmark for the "GI-off still slower than 1.0.2b" regression.
 #
 # Usage: run this script, then follow the prompts while the game is open.

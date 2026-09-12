@@ -1,3 +1,6 @@
+// Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+// Modified by AnotherCream, 2026.
+
 const float PI 			    = 3.14159265359;
 const float hPI 		    = 1.57079632679;
 const float rPI 		    = 0.31830988618;

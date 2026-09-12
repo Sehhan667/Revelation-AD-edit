@@ -27,6 +27,10 @@
     诊断：DEBUG_SHADOW_WARP 看 warp 场本身，DEBUG_SHADOW_WARP_DIFF 看"表 vs 解析曲线"的
       差异场与表项合法性（两个都不依赖 SHADOW_WARP_RTWSM，可先关着 warp 验表）。
 --------------------------------------------------------------------------------
+
+
+    Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Copyright 2026 AnotherCream.
 */
 
 #ifndef SHADOW_WARP_GLSL

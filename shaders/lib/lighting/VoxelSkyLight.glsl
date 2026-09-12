@@ -1,3 +1,15 @@
+/*
+    --------------------------------------------------------------------------------
+        Revelation-AD-edit  -  modified derivative of "Revelation"
+        Upstream: https://github.com/HaringPro/Revelation  (C) 2026 HaringPro
+
+        This file is an addition made for this derivative.
+        Copyright 2026 AnotherCream
+
+        Licensed under the Apache License, Version 2.0. See NOTICE at repo root.
+    --------------------------------------------------------------------------------
+*/
+
 //================================================================================================//
 // Voxel SkyLight — GI 方向天空光（原创实现，2026-08-10 重构为物理天空采样结构）
 //

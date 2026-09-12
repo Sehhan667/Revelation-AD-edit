@@ -3,6 +3,8 @@
 // [2026-08-20] 水雾太阳前向散射是否受"屏幕上太阳被遮挡"影响：
 // sunVisFactor 由调用方（Translucent / IntegrateScene）算好的太阳屏幕可见性（0/1）。
 // 开启后，太阳被地形挡/出屏/在相机背后 → 压掉水中正对太阳方向的模糊光晕。
+// Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+// Modified by AnotherCream, 2026.
 #ifndef UW_SUN_OCCLUSION
     #define UW_SUN_OCCLUSION // [OFF ON] 水雾太阳光晕受太阳是否被遮挡影响
 #endif

@@ -6,6 +6,9 @@
     Copyright (C) 2026 HaringPro
     Apache License 2.0
 
+    Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+    Modified by AnotherCream, 2026.
+
     Pass: Compute refraction, combine translucent and fog
     Optimizations: 
       - Sky-bypass early Z culling.
@@ -14,6 +17,7 @@
       - Removed unused LdotV calculation.
     Note: Horizon blending (edgeFactor) removed for performance / compatibility.
 --------------------------------------------------------------------------------
+
 */
 
 #define PASS_COMPOSITE

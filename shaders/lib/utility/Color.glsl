@@ -1,3 +1,6 @@
+// Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+// Modified by AnotherCream, 2026.
+
 
 const mat3 Rec2020_2_sRGB = mat3(
      1.6603034854, -0.5875701425, -0.0728900602,

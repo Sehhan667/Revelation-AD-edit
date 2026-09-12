@@ -1,4 +1,16 @@
 /*
+    --------------------------------------------------------------------------------
+        Revelation-AD-edit  -  modified derivative of "Revelation"
+        Upstream: https://github.com/HaringPro/Revelation  (C) 2026 HaringPro
+
+        This file is an addition made for this derivative.
+        Copyright 2026 AnotherCream
+
+        Licensed under the Apache License, Version 2.0. See NOTICE at repo root.
+    --------------------------------------------------------------------------------
+*/
+
+/*
  * 粗粒度 GLSL 预处理检查（离线、不依赖游戏）
  *
  * 目的：在 F3+R 之前抓出「宏名写错」这类只在游戏里才会报的错。

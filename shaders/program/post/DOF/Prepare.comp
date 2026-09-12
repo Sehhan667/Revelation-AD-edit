@@ -6,6 +6,9 @@
 	Copyright (C) 2026 HaringPro
 	Apache License 2.0
 
+	Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+	Copyright 2026 AnotherCream.
+
 	Pass: Prepare scene color and propagate CoC
     Reference: Guillaume Abadie, 2018, A Life of a bokeh, https://epicgames.ent.box.com/s/s86j70iamxvsuu6j35pilypficznec04
 
@@ -14,6 +17,7 @@
 	（viewSize / viewPixelSize / texelToUv / uvToTexel），workGroupsRender 恒为 1.0。
 
 --------------------------------------------------------------------------------
+
 */
 
 //======// Utility //=============================================================================//

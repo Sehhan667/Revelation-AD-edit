@@ -1,3 +1,15 @@
+/*
+    --------------------------------------------------------------------------------
+        Revelation-AD-edit  -  modified derivative of "Revelation"
+        Upstream: https://github.com/HaringPro/Revelation  (C) 2026 HaringPro
+
+        This file is an addition made for this derivative.
+        Copyright 2026 AnotherCream
+
+        Licensed under the Apache License, Version 2.0. See NOTICE at repo root.
+    --------------------------------------------------------------------------------
+*/
+
 //================================================================================================//
 // Probe GI — 方向性探针辐照度缓存（完整 DDGI，2026-09-03 重写）查询层
 //
