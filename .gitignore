@@ -4,3 +4,5 @@ GenCloudMap.comp
 renderdoc.txt
 ProbeGI_写端调试记录.txt
 rdc_analysis/
+# WorkBuddy AI 的工作目录（记忆日志等，非项目文件；勿删，只是不入库）
+.workbuddy-ai/
