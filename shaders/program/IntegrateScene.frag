@@ -193,6 +193,55 @@ vec3 ComputeFogSunVisibility(in vec3 worldDir, in float rayLength, in float dith
     #endif
 }
 
+// [2026-09-21 水下体积雾 + 体积光] 相机在水下时的雾（UW_VOLUMETRIC_FOG）。
+// 透射保持闭式 exp2(-σ·d) —— σ 取相机深度定标的均匀值（深水整体更浓），与采样位置/
+// 抖动无关，无噪声无条带；散射按 UW_FOG_SAMPLES 段步进，每段权重 = 段两端透射之差
+//（均匀 σ 下的精确段积分：无抖动时逐段求和恰好望远镜回 (1-T_total) 的原闭式结果，
+// 抖动只影响源强的采样位置）。每段中点求：
+//   · 逐点水深（相机估计深度 - 相对相机高度）→ 阳光穿水柱衰减 + 深水增浓
+//    （浅水青绿亮、深水浓蓝黑）；
+//   · 阴影可见度 SampleFogSunShadow（UW_VOLUMETRIC_LIGHT，桥/洞顶把光束切开；
+//     水面本身不进 shadowtex1，不挡光）。
+// 步进中心带 BlueNoise 抖动防光束条带，噪声交 TAA（与雾中光束同一套路）。
+// 旧版的整体 skylight 门控改为逐点水下光衰减（物理等效，避免双重衰减）。
+mat2x3 RaymarchWaterFog(in float skylight, in float waterDepth, in vec3 worldDir,
+                        in float LdotV, in float sunVisFactor, in float dither, in vec3 lightEnergy) {
+    float camDepth = EstimateCameraWaterDepth(skylight);
+
+    // 整条射线的等效消光：以相机深度定标（深水 = 场景衰减与散射权重同步更浓）
+    float densityAtCam = mix(1.0, UW_FOG_DEEP_DENSITY, saturate(camDepth / UW_FOG_DEEP_RANGE));
+    vec3 extinction = waterExtinction * densityAtCam;
+
+    vec3 transmittance = exp2(-rLOG2 * extinction * waterDepth);
+
+    float halfSeg = 0.5 * waterDepth / float(UW_FOG_SAMPLES);
+
+    vec3 scattering = vec3(0.0);
+    for (int i = 0; i < UW_FOG_SAMPLES; ++i) {
+        // 段中心抖动（BlueNoise + 逐帧），段宽固定 = 总长/段数；首尾段夹回 [0, D]
+        float tMid = waterDepth * (float(i) + dither) / float(UW_FOG_SAMPLES);
+        float t0 = max(tMid - halfSeg, 0.0);
+        float t1 = min(tMid + halfSeg, waterDepth);
+        if (t1 <= t0) continue;
+
+        // 段权重 = 段两端透射之差（σ 均匀 → 精确段积分，无累积漂移）
+        vec3 T0 = exp2(-rLOG2 * extinction * t0);
+        vec3 T1 = exp2(-rLOG2 * extinction * t1);
+
+        // 该点有效水深：相机深度 - 相对相机高度（向上看变浅、向下看变深）
+        float pointDepth = max(camDepth - worldDir.y * tMid, 0.0);
+
+        vec3 vis = vec3(1.0);
+        #ifdef UW_VOLUMETRIC_LIGHT
+            vis = SampleFogSunShadow(worldDir * tMid, tMid);
+        #endif
+
+        scattering += (T0 - T1) * WaterFogPointSource(pointDepth, LdotV, sunVisFactor, vis, lightEnergy);
+    }
+
+    return mat2x3(scattering, transmittance);
+}
+
 void main() {
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
@@ -314,9 +363,22 @@ void main() {
         sceneColor += sssDiffuse.rgb * (SUBSURFACE_SCATTERING_BRIGHTNESS * sssGate);
     #endif
 
+    // 定向光能量：白天 = 太阳辐照度。夜晚 global.directIlluminance ≈ 0（moonlightMult 压制），
+    // 补一个月光项 —— 与 SUN_HALO 同一套色相与强度约定（淡蓝、跟随 VOXEL_MOON_STRENGTH）。
+    // 没有它，夜晚雾中光束/水下体积光会在入夜后整个消失。水下与大气雾两分支共用。
+    float fogMoonAmt = smoothstep(-0.10, -0.25, worldSunDir.y);
+    vec3 fogLightEnergy = global.directIlluminance
+                        + vec3(0.30, 0.42, 0.85) * fogMoonAmt * VOXEL_MOON_STRENGTH;
+
     if (isEyeInWater == 1) {
         float LdotV = dot(worldLightDir, worldDir);
-        fogData = AnalyticWaterFog(eyeSkylightSmooth, viewDistance, LdotV, CalcSunScreenVisibility());
+        #if defined UW_VOLUMETRIC_FOG
+            // 水下体积雾 + 体积光：深度渐变散射（浅水青绿亮、深水浓蓝黑）+ 逐点阴影光束
+            fogData = RaymarchWaterFog(eyeSkylightSmooth, viewDistance, worldDir, LdotV,
+                                       CalcSunScreenVisibility(), BlueNoise(texelPos, frameCounter), fogLightEnergy);
+        #else
+            fogData = AnalyticWaterFog(eyeSkylightSmooth, viewDistance, LdotV, CalcSunScreenVisibility());
+        #endif
     } else {
         // 太阳屏幕可见度：体积雾的太阳光晕与地面大气散射的太阳项共用，每像素只求一次。
         #if defined VOLUMETRIC_FOG || (defined GROUND_SCATTERING && !defined DIMENSION_NETHER && !defined DIMENSION_THE_END)
@@ -353,14 +415,6 @@ void main() {
             #ifdef VOLUMETRIC_LIGHT
                 fogSunShadow = ComputeFogSunVisibility(worldDir, length(fogEndPos), dither);
             #endif
-
-            // 雾的定向光能量：白天 = 太阳辐照度。夜晚 global.directIlluminance ≈ 0
-            //（moonlightMult 压制），这里补一个月光项 —— 与旧体积光 pass / SUN_HALO 同一套
-            // 色相与强度约定（淡蓝、跟随 VOXEL_MOON_STRENGTH）。没有它，夜晚雾的太阳项归零，
-            // 雾中光束会在入夜后整个消失。
-            float fogMoonAmt = smoothstep(-0.10, -0.25, worldSunDir.y);
-            vec3 fogLightEnergy = global.directIlluminance
-                                + vec3(0.30, 0.42, 0.85) * fogMoonAmt * VOXEL_MOON_STRENGTH;
 
             fogData = RaymarchAtmosphericFog(vec3(0.0), fogEndPos, dither, skyMask, sunVis, fogSunShadow, fogLightEnergy);
         #endif

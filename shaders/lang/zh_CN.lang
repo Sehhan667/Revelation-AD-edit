@@ -248,6 +248,15 @@ option.SUN_HALO_WIDTH=日晕宽度
 option.SUN_HALO_WIDTH.comment=日晕角宽（越大越宽越柔）
 
 option.UW_VOLUMETRIC_FOG=水下体积雾
+option.UW_VOLUMETRIC_FOG.comment=相机入水后的雾升级为混合式：透射仍是闭式（无噪声无条带），散射按深度渐变 —— 由水下天光反解相机深度，浅水青绿透亮、深水浓蓝发黑。关闭则回到原来的均匀分析式水雾（逐位一致）。
+option.UW_FOG_SAMPLES=水下雾步进数
+option.UW_FOG_SAMPLES.comment=散射步进的分段数。开体积光时每段采样一次阴影贴图，开销随段数线性增长；段数越多深度渐变与光束越细腻。
+option.UW_FOG_DEEP_RANGE=深度渐变范围
+option.UW_FOG_DEEP_RANGE.comment=从水面到全浓的距离（格）。调小 = 下潜一点就变浓；调大 = 深海感更平缓。深度由水下天光估计（每格水约降 1 级天光）。
+option.UW_FOG_DEEP_DENSITY=深水增浓倍率
+option.UW_FOG_DEEP_DENSITY.comment=全深处相对水面的浓度倍率（散射与场景衰减同步放大）。1.0 = 不增浓（只有光衰减带来的变暗），越大深水越浓。
+option.UW_VOLUMETRIC_LIGHT=水下体积光
+option.UW_VOLUMETRIC_LIGHT.comment=沿水下雾的每一步采样阴影贴图：桥下、洞顶、地形把阳光/月光光束切开，直接长在水雾上。水面本身不挡光；夜晚有月光光束。需开启水下体积雾。
 
 option.UW_SUN_OCCLUSION=水中太阳光晕遮挡
 option.UW_SUN_OCCLUSION.comment=水雾正对太阳方向的模糊光晕是否随"屏幕上太阳被遮挡"消失。太阳被地形挡/出屏/在相机背后 → 光晕隐藏，保留均匀多散射环境雾

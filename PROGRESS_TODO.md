@@ -186,6 +186,39 @@ Projection → DistortShadowSpace → 体素平铺 Shift → shadowtex1 硬件�
 采样数。天空 LUT（GenSkyMap）里的雾不含月光补项（那里在 shadow pass 之前，也没有阴影贴图），
 所以夜里夜空背景的雾与屏幕雾可能有轻微亮度差，需实测确认是否看得出来。
 
+## 水下体积雾 + 体积光（2026-09-21）——待实机确认
+
+相机入水后的雾从均匀分析式（`AnalyticWaterFog`，深度无关）升级为混合式
+`RaymarchWaterFog`（IntegrateScene/composite4，水下分支）：
+
+- **透射保持闭式** `exp2(-σ·d)`：σ 取相机深度定标的均匀值（深水整体更浓），与采样位置/
+  抖动无关 → 无噪声无条带（水下雾不需要噪声的正解落法）。
+- **散射 UW_FOG_SAMPLES 段步进**（默认 8）：段权重 = 段两端透射之差（均匀 σ 下精确段积分，
+  无抖动时望远镜回原闭式结果）；每段中点求逐点水深（相机深度 − 相对相机高度）→
+  阳光穿水柱指数衰减 + 深水增浓 → 浅水青绿亮、深水浓蓝黑。
+- **相机水深估计**：`EstimateCameraWaterDepth` 由 `eyeSkylightSmooth` 反解 —— 它是
+  `smooth(pow(eyeBrightness.y/240, 4), 5, 5)`（shaders.properties 自定义 uniform），水下天光
+  每格水约降 1 级（15 级制）→ 开 0.25 次方还原天光再线性反解 [0,15] 格。5 秒平滑 →
+  快速下潜时深度响应偏慢；洞顶下偏低（偏浓）。超过 15 格饱和。
+- **体积光**：`UW_VOLUMETRIC_LIGHT` 开启时每步 `SampleFogSunShadow`（复用 09-12 雾中光束的
+  单点采样，含 COLORED_VOLUMETRIC_FOG 染色分支）→ 桥/洞顶把光束切开；水面不进 shadowtex1
+  不挡光；夜晚有月光光束（lightEnergy 与雾中光束共用，已上提到分支外）。
+- **能量约定**：旧版的整体 skylight 门控改为逐点水下光衰减（物理等效，避免双重衰减）；
+  相位（DualLobe）/湿度/多散射项与 `AnalyticWaterFog` 逐项同源。
+- **GUI**（雾 → 体积雾页）：`UW_VOLUMETRIC_FOG`（悬空定义激活，关闭 = 逐位回退原分析式）、
+  `UW_FOG_SAMPLES` [4..24]、`UW_FOG_DEEP_RANGE` [4..32] 默认 12、`UW_FOG_DEEP_DENSITY`
+  [1..4] 默认 2.0、`UW_VOLUMETRIC_LIGHT`；两个开关已进 profile.Default。
+- **范围**：仅相机入水（isEyeInWater==1）时生效；水面上看水体（Translucent 的
+  AnalyticWaterFog）不动。
+
+**实测清单**：
+- F3+R 不报错；浅水（1~3 格）观感应与旧版接近（camDepth 小 → 增浓与衰减都弱）。
+- 深潜：整体变浓变暗、色相自然偏蓝（waterExtinction 物理吸收，无人工色）；调
+  `UW_FOG_DEEP_DENSITY` 1.0 / 2.0 / 4.0 对比。
+- 桥下/洞口潜水：光束被切开；对着太阳方向光晕明显（DualLobe 前向散射）；夜里月光光束。
+- 快速下潜/上浮：深度渐变有 ~5 秒滞后（eyeSkylightSmooth 平滑所致，属已知取舍）。
+- 性能：水下帧率 vs 水面（8 步 × 1 阴影采样/像素，仅水下生效）。
+
 ## 启动 Logo：改成矢量绘制 + 逐笔描画（2026-09-11）
 
 原来的做法是在 `program/post/Final.frag` 里采样 `shaders/texture/logo.png`（128×128、一共 3 种

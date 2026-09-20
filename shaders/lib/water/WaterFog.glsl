@@ -32,7 +32,39 @@ mat2x3 AnalyticWaterFog(in float skylight, in float waterDepth, in float LdotV, 
 }
 
 //================================================================================================//
-// 体积雾（体积焦散）分支已禁用，仅保留分析水体雾
-//#if defined PASS_VOLUMETRIC_FOG
-//	... (RaymarchWaterFog 已移除)
-//#endif
+// [2026-09-21 水下体积雾/体积光] 混合式水下雾的纯数学部分。循环本体在 IntegrateScene.frag，
+// 因为逐点阴影可见度（SampleFogSunShadow）及其阴影贴图 include 都在那边。
+
+// 相机水深估计：由 eyeSkylightSmooth 反解。它是 smooth(pow(eyeBrightness.y / 240, 4), 5, 5)
+//（shaders.properties 自定义 uniform），而水下天光随深度近似每格降 1 级（15 级制），
+// 即原始天光 sky ≈ 1 - d/15 → 先开 0.25 次方还原 sky，再线性反解深度 [0,15] 格。
+// 定标用的近似（5 秒平滑 → 快速下潜时深度响应偏慢；洞顶/遮蔽处偏低），只用于深度
+// 渐变与增浓，不参与透射精确计算。超过 15 格后该值饱和（天光已归零）。
+float EstimateCameraWaterDepth(in float skylight) {
+	return saturate(1.0 - pow(skylight, 0.25)) * 15.0;
+}
+
+// 逐点散射源强：给定该点有效水深，返回单位路径 in-scatter 能量（直接相位光晕项 +
+// 均匀多散射环境项）。与 AnalyticWaterFog 同一套相位/湿度/能量约定，差别仅在于：
+//   · 阳光穿水柱的衰减带逐点水深（浅水几乎不衰减、深水指数变暗；旧版是深度无关常数）；
+//   · 源强随深度增浓（UW_FOG_DEEP_DENSITY，深水浓蓝黑）。
+// vis 为该点阴影可见度（UW_VOLUMETRIC_LIGHT 逐点采样，关 = vec3(1.0)），lightEnergy 为
+// 白天太阳/夜晚月光补蓝的定向光能量（与雾中光束同一约定，调用方算好）。
+vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFactor, in vec3 vis, in vec3 lightEnergy) {
+	float phase = DualLobePhase(LdotV, 0.95, -0.6, 0.1);
+	#ifdef UW_SUN_OCCLUSION
+		phase *= sunVisFactor;   // 仅压前向散射相位（光晕），保留均匀多散射环境项
+	#endif
+
+	// 阳光/月光到达该点：穿过的水柱 = 该点水深 × 太阳高度路径系数（太阳越低路径越长）
+	vec3 sunTransmittance = exp2(-rLOG2 * waterExtinction * pointDepth * mix(4.0, 1.0, worldLightDir.y));
+
+	const vec3 msV = waterAlbedo * 0.99;
+	vec3 source = phase * vis + uniformPhase * msV / oms(msV);
+	source *= oms(wetnessCustom * 0.8) * lightEnergy * sunTransmittance;
+
+	// 深水增浓：散射源随深度增强（透射侧的增浓在 RaymarchWaterFog 里按相机深度定标）
+	source *= mix(1.0, UW_FOG_DEEP_DENSITY, saturate(pointDepth / UW_FOG_DEEP_RANGE));
+
+	return source * waterAlbedo;
+}

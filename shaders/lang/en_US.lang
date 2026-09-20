@@ -236,6 +236,15 @@ option.SUN_HALO_WIDTH=Sun Halo Width
 option.SUN_HALO_WIDTH.comment=Angular width of the halo (larger = wider and softer)
 
 option.UW_VOLUMETRIC_FOG=Underwater Volumetric Fog
+option.UW_VOLUMETRIC_FOG.comment=Upgrades the underwater fog to a hybrid: transmission stays closed-form (no noise, no banding) while the scattering is raymarched with a depth gradient - camera depth is derived from the underwater skylight, so shallow water is bright turquoise and deep water turns dense blue-black. Turn off to fall back to the original uniform analytic fog (bit-identical).
+option.UW_FOG_SAMPLES=Underwater Fog Steps
+option.UW_FOG_SAMPLES.comment=Number of segments the scattering raymarch uses. With volumetric light on, each step takes one shadow-map sample, so cost grows linearly with steps; more steps = smoother depth gradient and beams.
+option.UW_FOG_DEEP_RANGE=Depth Gradient Range
+option.UW_FOG_DEEP_RANGE.comment=Distance in blocks from the surface to full density. Smaller = gets dense just below the surface; larger = a gentler deep-sea feel. Depth is estimated from the underwater skylight (about 1 light level per block of water).
+option.UW_FOG_DEEP_DENSITY=Deep Water Density
+option.UW_FOG_DEEP_DENSITY.comment=Density multiplier at full depth relative to the surface (scales scattering and scene extinction together). 1.0 = no extra density (only the light-attenuation darkening); higher = denser deep water.
+option.UW_VOLUMETRIC_LIGHT=Underwater Volumetric Light
+option.UW_VOLUMETRIC_LIGHT.comment=Shadow-maps each underwater fog step: bridges, cave ceilings and terrain cut the sun/moon beams out of the water haze. The water surface itself never blocks light; moonlight beams appear at night. Requires Underwater Volumetric Fog.
 
 option.UW_SUN_OCCLUSION=Underwater Sun Halo Occlusion
 option.UW_SUN_OCCLUSION.comment=Whether the blurry halo toward the sun in underwater fog disappears when the sun is occluded on screen. If the sun is blocked/behind/off-screen the halo hides, keeping the uniform multi-scatter ambient fog

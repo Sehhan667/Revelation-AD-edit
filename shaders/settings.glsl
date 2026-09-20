@@ -110,7 +110,17 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define VF_RAYLEIGH_DENSITY 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 3.0 5.0 7.0 10.0]
 	#define VF_MIE_DENSITY_RAIN_MULT 3.0 // [0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0 8.5 9.0 9.5 10.0 10.5 11.0 11.5 12.0 12.5 13.0 13.5 14.0 14.5 15.0 15.5 16.0 16.5 17.0 17.5 18.0 18.5 19.0 19.5 20.0]
 
-	#define UW_VOLUMETRIC_FOG // Enables underwater volumetric fog
+	// [2026-09-21 水下体积雾 + 体积光] 混合式水下雾：透射闭式（无噪声无条带），散射按
+	// 深度渐变步进 —— 由 eyeSkylightSmooth 反解相机水深，浅水青绿亮、深水浓蓝黑；
+	// 开启 UW_VOLUMETRIC_LIGHT 后每步采样阴影贴图，桥/洞顶把光束切开（水面不挡光）。
+	// 关闭 UW_VOLUMETRIC_FOG = 回退原分析式水下雾（逐位一致）。步进位置带 BlueNoise
+	// 抖动防条带，噪声交 TAA。实现见 WaterFog.glsl + IntegrateScene.frag 的
+	// RaymarchWaterFog。仅在相机入水时生效，水面之上看水体（Translucent）不受影响。
+	#define UW_VOLUMETRIC_FOG // 水下体积雾（深度渐变 + 光束）
+	#define UW_FOG_SAMPLES 8 // 水下雾步进数（开光束时每步 1 次阴影采样）。 [4 6 8 12 16 24]
+	#define UW_FOG_DEEP_RANGE 12.0 // 深度渐变范围（格：从水面到全浓的距离）。 [4.0 6.0 8.0 10.0 12.0 16.0 20.0 24.0 32.0]
+	#define UW_FOG_DEEP_DENSITY 2.0 // 深水增浓倍率（散射与透射同步增浓）。 [1.0 1.25 1.5 1.75 2.0 2.5 3.0 4.0]
+	#define UW_VOLUMETRIC_LIGHT // 水下体积光（阴影切出的光束）
 
 	// [2026-08-20] 水雾太阳光晕受"屏幕上太阳是否被遮挡"影响（默认开）。太阳被地形挡/出屏/在背后 → 压掉水中正对太阳的模糊光晕。
 	#define UW_SUN_OCCLUSION // [OFF ON] 水中太阳光晕受太阳遮挡影响
