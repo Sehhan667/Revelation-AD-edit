@@ -1,6 +1,5 @@
 /*
 --------------------------------------------------------------------------------
-
 	Revelation Shaders
 
 	Copyright (C) 2026 HaringPro
@@ -13,6 +12,8 @@
 
 
 
+
+
 --------------------------------------------------------------------------------
 
 */
@@ -20,7 +21,9 @@
 //======// Input //===============================================================================//
 
 layout (local_size_x = 16, local_size_y = 16) in;
-const vec2 workGroupsRender = vec2(1.0, 1.0);
+// [2026-09-21 B5] 半分辨率：dispatch 覆盖 viewSize/2，每线程负责一个 2x2 全分辨率
+// 块（块共享一次采样循环，模糊计算与 colortex1 采样降至 1/4）。
+const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 //======// Utility //=============================================================================//
 
@@ -36,25 +39,38 @@ restrict writeonly uniform image2D colorimg0; // Motion blur output
 
 #include "/lib/universal/Random.glsl"
 
-vec3 MotionBlur(in ivec2 texelPos) {
-	vec2 motionVector = texelFetch(colortex3, texelPos, 0).xy;
-	float motionNorm = inversesqrt(sdot(motionVector));
+// [2026-09-21 B5] 块级运动模糊：以块内幅度最大的运动向量为块代表，从块中心
+// (blockOrigin + 1.0) 沿向量采样 MOTION_BLUR_SAMPLES 次。取最大幅度而非平均：
+// 运动物体的拖影轻微外溢到相邻静止像素（1px 拖尾观感），比模糊丢失更不显眼。
+// 返回 false 表示块静止（含无效运动向量），调用方走逐像素原图回写路径。
+bool MotionBlurBlock(in ivec2 blockOrigin, out vec3 blurredColor) {
+	vec2 motionVector;
+	float motionUVSq = -1.0;
+	{
+		const ivec2 quadOffsets[4] = ivec2[4](ivec2(0, 0), ivec2(1, 0), ivec2(0, 1), ivec2(1, 1));
+		for (uint i = 0u; i < 4u; ++i) {
+			vec2 candidate = texelFetch(colortex3, blockOrigin + quadOffsets[i], 0).xy;
+			float candidateSq = sdot(candidate);
+			if (candidateSq > motionUVSq) {
+				motionUVSq = candidateSq;
+				motionVector = candidate;
+			}
+		}
+	}
 
-	if (motionNorm > 1e6) return texelFetch(colortex1, texelPos, 0).rgb;
-	// [2026-09-02 静止早退] colortex3 的 motion 为 UV 空间单位。运动不足半像素时
-	// 视觉无模糊效果，直接返回原色，跳过下面 MOTION_BLUR_SAMPLES 次采样循环——
-	// 静帧/缓慢移动时绝大多数像素命中，显著削减全屏运动模糊算力。观感不变。
-	float motionUVSq = sdot(motionVector);
+	// [2026-09-02 静止早退] colortex3 的 motion 为 UV 空间单位。块内最大运动都
+	// 不足半像素时视觉无模糊效果，整块走逐像素原图路径。静止帧绝大多数块命中。
 	float subPixelSq = sqr(0.5 / min(viewWidth, viewHeight));
-	if (motionUVSq < subPixelSq) return texelFetch(colortex1, texelPos, 0).rgb;
-	motionVector *= saturate(motionNorm);
+	if (motionUVSq < subPixelSq) return false;
+
+	motionVector *= saturate(inversesqrt(motionUVSq));
 
 	const float strength = MOTION_BLUR_STRENGTH / float(MOTION_BLUR_SAMPLES) * 0.01;
 	motionVector *= strength / max(frameTime, 1e-3) * viewSize;
 
-	float dither = BlueNoise(texelPos, frameCounter);
+	float dither = BlueNoise(blockOrigin, frameCounter);
 
-    vec2 sampleCoord = vec2(texelPos) + 0.5 + motionVector * dither;
+	vec2 sampleCoord = vec2(blockOrigin) + 1.0 + motionVector * dither;
 	sampleCoord -= motionVector * MOTION_BLUR_SAMPLES * 0.5;
 
 	vec3 sum = vec3(0.0);
@@ -67,9 +83,10 @@ vec3 MotionBlur(in ivec2 texelPos) {
 		}
 	}
 
-	if (sumWeight < EPS) return texelFetch(colortex1, texelPos, 0).rgb;
+	if (sumWeight < EPS) return false;
 
-	return sum * rcp(sumWeight);
+	blurredColor = sum * rcp(sumWeight);
+	return true;
 }
 
 //======// Main //================================================================================//
@@ -77,5 +94,20 @@ void main() {
     uvec2 localPos = QuadLayout16x16(gl_LocalInvocationIndex);
     ivec2 texelPos = ivec2(localPos + gl_WorkGroupID.xy * gl_WorkGroupSize.xy);
 
-    imageStore(colorimg0, texelPos, vec4(MotionBlur(texelPos), texelFetch(colortex0, texelPos, 0).w));
+    ivec2 blockOrigin = texelPos << 1;
+    ivec2 imageEnd = ivec2(viewSize);
+    if (any(greaterThanEqual(blockOrigin, imageEnd))) return;
+
+    vec3 blurredColor;
+    bool blockBlurred = MotionBlurBlock(blockOrigin, blurredColor);
+
+    // 2x2 块内逐 texel 写出：静止块各写自己的原图，模糊块共享块代表色；
+    // w 通道（fogMask）始终逐像素透传。奇数分辨率时裁掉越界 texel。
+    for (uint i = 0u; i < 4u; ++i) {
+        ivec2 texel = blockOrigin + ivec2(int(i & 1u), int(i >> 1u));
+        if (any(greaterThanEqual(texel, imageEnd))) continue;
+
+        vec3 outColor = blockBlurred ? blurredColor : texelFetch(colortex1, texel, 0).rgb;
+        imageStore(colorimg0, texel, vec4(outColor, texelFetch(colortex0, texel, 0).w));
+    }
 }
