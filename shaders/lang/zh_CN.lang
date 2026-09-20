@@ -430,13 +430,19 @@ value.SUBSURFACE_SCATTERING_MODE.2=仅PBR
 option.SUBSURFACE_SCATTERING_STRENGTH=次表面散射强度
 option.SUBSURFACE_SCATTERING_BRIGHTNESS=次表面散射亮度
 option.SUBSURFACE_SCATTERING_FRONT_SUPPRESS=阳面抑制（仅旧版模型）
-option.SUBSURFACE_SCATTERING_FRONT_SUPPRESS.comment=旧式 SSS 公式里没有 N·L，PCF 模式下厚度项又恒为 1，所以它在受光面上等于白送一份光：次表面材质的方块（羊毛/冰/树叶/草等）被阳光直射的面会比普通方块亮。这一项按 (1 - N·L) 反向抑制：正对太阳的面降到 0、掠射（明暗交界处）保持原强度，SSS 因此变成"交界处的透光"。0 = 原版行为（用于 A/B 对比），1 = 完全抑制（默认）。
-option.SUBSURFACE_SCATTERING_EXTRA_GATES=附加门控（关掉 = 纯原版公式）
-option.SUBSURFACE_SCATTERING_EXTRA_GATES.comment=旧版 SSS 已按 vanilla Revelation 公式逐行移植，而原版没有任何阴影/朝向门控：SSS 只随太阳辐照变化，不看阴影、不看朝向。AD-edit 额外加了两项——阴影幂门控（让 SSS 随阴影可见性衰减，即"会根据阴影补强度"）与背光入射因子（修"阴影距离外朝太阳看异常发亮"）。关掉本项这两项都不生效；再配合把「阳面抑制」调到 0，就是 100% 原版行为。
+option.SUBSURFACE_SCATTERING_FRONT_SUPPRESS.comment=**原版 Revelation 没有任何 N·L 抑制**（SSS 是平加性项，受光面也有一份光）。这一项是 AD-edit 附加：按 (1 - N·L) 反向抑制，正对太阳的面（N·L = 1）降到 0、掠射（明暗交界处）保持原强度，SSS 因此变成"交界处的透光"。0 = 原版行为（默认），1 = 完全抑制（AD-edit 旧行为，用于压受光面偏亮）。仅旧版模型生效。
+option.SUBSURFACE_SCATTERING_EXTRA_GATES=附加门控（默认关 = 原版行为）
+option.SUBSURFACE_SCATTERING_EXTRA_GATES.comment=原版 SSS 没有任何阴影/朝向门控。AD-edit 额外加了两项——阴影幂门控（让 SSS 随阴影可见性衰减）与背光入射因子（修"阴影距离外朝太阳看异常发亮"）。默认关闭 = 原版行为；开启 = AD-edit 旧门控行为。注意「PCF 遮挡深度采样」开启时，阴影幂门控无论如何都会被停用（遮挡已由厚度项表达，双重遮蔽会把树冠内部树叶的 SSS 归零）。
 option.SUBSURFACE_SCATTERING_CROSS_THICKNESS=十字方块厚度（仅 PCF）
 option.SUBSURFACE_SCATTERING_CROSS_THICKNESS.comment=只对十字方块（materialID 1000-1003：草/花/树苗，含「植物判定补充」检出的 1003）生效的体积厚度。PCF 模式下没有 blocker 深度（sssBlockerDepth 恒 0 ⇒ 厚度项 exp2(0)=1），SSS 会退化成与厚度无关的平加项；这里给它一份厚度。0 = 退回纯平加（= 原版在 PCF 下的行为），越大越暗越"厚"。PCSS 模式下不生效，那里用真实 blocker 深度。
 option.SUBSURFACE_SCATTERING_NONCROSS_THICKNESS=非十字方块厚度（仅 PCF）
 option.SUBSURFACE_SCATTERING_NONCROSS_THICKNESS.comment=同上，但对其它所有 SSS 材质生效（树叶 13、藤 27/28、羊毛/干草 37、冰/雪/蜂窝 38、黏液 51 等）。默认 0 = 保持原版在 PCF 下的纯平加行为；想让羊毛/冰这类也有厚度感就往上调。仅 PCF 生效。
+option.SUBSURFACE_SCATTERING_PCF_BLOCKER=PCF 遮挡深度采样
+option.SUBSURFACE_SCATTERING_PCF_BLOCKER.comment=复刻原版 PCSS 的 SSS 厚度来源：原版 Revelation 是纯 PCSS，SSS 厚度 = 真实遮挡深度（blocker search）；PCF 模式没有这个深度，厚度退化为常量、树叶没有「越往树冠深处越暗」的深度感。开启后对 SSS 材质像素（树叶/草/藤/羊毛/冰等）做少量阴影贴图深度采样估计同样的遮挡深度，厚度 = 深度厚度倍率 × 遮挡深度，与原版 PCSS 同一公式、同一量纲（仅 PCF 生效；PCSS 模式本就用真实深度）。
+option.SUBSURFACE_SCATTERING_BLOCKER_SAMPLES=深度采样数
+option.SUBSURFACE_SCATTERING_BLOCKER_SAMPLES.comment=PCF 遮挡深度采样的采样次数（仅 SSS 材质像素执行）。2 = 最省，8 = 深度估计更平滑；4 = 默认（低配取舍；原版 PCSS 搜索用 8，期望值相同只影响噪点）。
+option.SUBSURFACE_SCATTERING_BLOCKER_SCALE=深度厚度倍率
+option.SUBSURFACE_SCATTERING_BLOCKER_SCALE.comment=遮挡深度 → SSS 厚度的换算倍率。1.0 = 与原版 PCSS 完全同标定（默认，原版 BlockerSearch 折算系数一致）；想让树叶的深度渐变更明显就往上调（如 2.0-4.0），调到 0 则厚度恒为 0（= 原版在无深度数据下的平加行为）。
 option.SUBSURFACE_SCATTERING_RADIUS=次表面散射半径
 option.SUBSURFACE_SCATTERING_RADIUS.comment=扩散平均自由程（= 该值 × 4 方块）。越大越"透"，体积衰减越弱；第 2 步的屏幕空间扩散也用它决定模糊半径。
 option.SUBSURFACE_SCATTERING_TRANSMISSION=背光透光强度（视角相关）

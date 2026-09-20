@@ -102,6 +102,40 @@ float BlockerSearch(in vec3 shadowScreenPos, in float dither, in float searchSca
     #endif
 }
 
+// 旧版 SSS 的 PCF 遮挡深度采样（SUBSURFACE_SCATTERING_PCF_BLOCKER）。
+// PCF 没有 blocker 深度可用，旧版 SSS 的厚度项退化为常量、树叶没有「越往深处越暗」的
+// 深度感；这里用少量 shadowtex0 采样估计同一像素的遮挡深度，量纲与 PCSS 的
+// sssBlockerDepth 完全一致（-5/N 折算 × shadowProjInv2z），可直接喂给旧版厚度项。
+// 阴影贴图沿光方向投影：遮挡物（哪怕很高）与被遮挡点落在同一 texel 上，搜索半径
+// 只影响平均、不影响能否找到，所以少样本也可靠。
+#ifndef SUBSURFACE_SCATTERING_BLOCKER_SAMPLES
+    #define SUBSURFACE_SCATTERING_BLOCKER_SAMPLES 4
+#endif
+const float sssBlockerSearchScale = 0.15;   // 与 PCSS 的 BlockerSearch 搜索半径一致
+
+float CalculateSSSBlockerDepth(in vec3 worldPos, in vec3 normalOffset, in float dither) {
+    float distortionFactor;
+    vec3 shadowScreenPos = WorldToShadowScreenSpace(worldPos + normalOffset * SHADOW_BIAS_STRENGTH, distortionFactor);
+    // 与 CalculatePCSS 同一套 bias：保证「PCF 判被挡」的采样在深度估计里也算作遮挡
+    shadowScreenPos.z -= 3e-8 * (1.0 + dither) * shadowProjInv1y * distortionFactor * SHADOW_BIAS_STRENGTH;
+
+    if (saturate(shadowScreenPos) != shadowScreenPos) return 0.0;
+
+    vec2 searchRadius = sssBlockerSearchScale * distortionFactor * diagonal2(shadowProjection);
+    vec2 baseTexel = shadowScreenPos.xy * realShadowMapRes;
+    vec2 radiusTexel = searchRadius * realShadowMapRes;
+
+    float blockerDepth = 0.0;
+    #pragma unroll
+    for (uint i = 0u; i < uint(SUBSURFACE_SCATTERING_BLOCKER_SAMPLES); ++i) {
+        vec2 sampleTexel = baseTexel + sampleVogelDisk(i, uint(SUBSURFACE_SCATTERING_BLOCKER_SAMPLES), dither * TAU) * radiusTexel;
+        float sampleDepth = texelFetch(shadowtex0, ivec2(sampleTexel), 0).x;
+        blockerDepth += saturate(shadowScreenPos.z - sampleDepth);
+    }
+    blockerDepth *= -5.0 / float(SUBSURFACE_SCATTERING_BLOCKER_SAMPLES);
+    return blockerDepth * shadowProjInv2z;
+}
+
 // 水底焦散计算（增强版：光斑更大，亮度翻倍）
 vec3 CalculateWaterCaustics(in vec3 worldPos, in float waterDepth, in float dither) {
     vec3 surfacePos = worldPos - vec3(0.0, 1.0, 0.0);

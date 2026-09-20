@@ -98,6 +98,8 @@
 // 判定来源：program/gbuffers/Terrain.vert —— 无标签(materialID < 1u) 且
 // maxOf(abs(法线)) < 0.99（十字模型这类非轴向面）→ materialID = 1003u；block.properties 的
 // block.11000-11003 也是同一族（草/花/树苗），所以"十字方块"= materialID 1000-1003。
+// PCF 遮挡深度采样的 GUI 宏（BLOCKER_SCALE/BLOCKER_SAMPLES/PCF_BLOCKER）在 settings.glsl，
+// 与 CROSS/NONCROSS_THICKNESS 同样经 Utility.glsl 先于本文件包含，不在此写兜底。
 
 //======// Utility //=============================================================================//
 
@@ -401,7 +403,14 @@ void main() {
         if (distanceFade < EPS) {
             rawShadow = CalculatePCSS(worldPos, geoNormal * normalOffsetBase, dither, surfaceDepth);
             sssBlockerDepth = surfaceDepth;   // 旧版 SSS 的厚度项（PCF 模式下为 0）
-            
+
+            #if defined SUBSURFACE_SCATTERING_PCF_BLOCKER && SHADOW_SOFT_TYPE == 1
+                // [2026-09] PCF 遮挡深度采样：PCF 没有 blocker 深度（上面恒 0），旧版 SSS 的厚度项
+                // 退化为常量、树叶没有「越往树冠深处越暗」的深度感。对 SSS 材质像素做少量 shadowtex0
+                // 采样估计遮挡深度（量纲与 PCSS 的 sssBlockerDepth 一致）。非 SSS 像素零开销。
+                if (sssAmount > EPS) sssBlockerDepth = CalculateSSSBlockerDepth(worldPos, geoNormal * normalOffsetBase, dither);
+            #endif
+
             #if SHADOW_SOFT_TYPE == 1
                 shadow *= pow(rawShadow, vec3(SHADOW_CONTRAST_STRENGTH));
                 shadow = smoothstep(-0.01, 1.01, shadow);
@@ -755,9 +764,16 @@ void main() {
                     // (materialID 1000-1003，含「植物判定补充」检出的 1003) 与非十字方块分开设置，
                     // 0 = 该类退回纯平加。PCSS 下不覆盖真实 blocker 深度（那份数据比常量准）。
                     #if SHADOW_SOFT_TYPE == 1
-                        float sssThickness = clamp(materialID, 1000u, 1003u) == materialID
-                                           ? SUBSURFACE_SCATTERING_CROSS_THICKNESS
-                                           : SUBSURFACE_SCATTERING_NONCROSS_THICKNESS;
+                        #ifdef SUBSURFACE_SCATTERING_PCF_BLOCKER
+                            // [2026-09] 遮挡深度采样开启：厚度 = SCALE × blocker 深度，
+                            // 与原版 PCSS 的 surfaceDepth 同一公式、同一量纲（BlockerSearch 的
+                            // 折算系数 ×10/8 与 ×5/4 相同）—— 不叠加类别常量，忠实复刻原版。
+                            float sssThickness = SUBSURFACE_SCATTERING_BLOCKER_SCALE * sssBlockerDepth;
+                        #else
+                            float sssThickness = clamp(materialID, 1000u, 1003u) == materialID
+                                               ? SUBSURFACE_SCATTERING_CROSS_THICKNESS
+                                               : SUBSURFACE_SCATTERING_NONCROSS_THICKNESS;
+                        #endif
                     #else
                         float sssThickness = sssBlockerDepth;
                     #endif
@@ -767,7 +783,12 @@ void main() {
                         // ---- AD-edit 附加项（原版没有）：阴影幂门控 ----
                         // 让 SSS 随阴影可见性衰减，即"旧 sss 会根据阴影自动补强度"。
                         // 关掉 EXTRA_GATES（并把「阳面抑制」调到 0）就是纯原版行为。
-                        #if SHADOW_SOFT_TYPE == 1
+                        // [2026-09] SUBSURFACE_SCATTERING_PCF_BLOCKER 开启时停用：遮挡已经由
+                        // 上面的 blocker 深度厚度项表达（被遮挡 ⇒ 厚度大 ⇒ 衰减强），再乘
+                        // pow(frontVisibility, ~4) 是双重遮蔽——树冠内部被外层树叶挡住的叶子
+                        // frontVisibility ≈ 0，会把深度渐变整个归零，深度感无从谈起。
+                        // 阴影距离外不受影响（那里 rawShadow 恒 1，门控本就是 1）。
+                        #if SHADOW_SOFT_TYPE == 1 && !defined SUBSURFACE_SCATTERING_PCF_BLOCKER
                             sss *= pow(sssFrontVisibility, SSS_CONTRAST_POW);
                         #endif
                     #endif

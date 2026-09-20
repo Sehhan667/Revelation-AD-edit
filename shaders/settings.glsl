@@ -341,21 +341,21 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define SUBSURFACE_SCATTERING_STRENGTH 1.0 // [0.0 0.01 0.02 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 3.0 4.0 5.0 7.0 10.0 15.0]
 	#define SUBSURFACE_SCATTERING_BRIGHTNESS 1.0 // [0.0 0.1 0.2 0.3 0.5 0.7 1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0 8.5 9.0 9.5 10.0]
 	// [2026-09] 阳面抑制（只对旧版模型 SUBSURFACE_SCATTERING_MODEL = 0 生效）。
-	// 旧式 SSS 公式里没有 N·L，而且 PCF 模式下厚度项 exp2(-rLOG2 * blockerDepth * (...))
-	// 恒为 1（blockerDepth ≡ 0），于是它在受光面上是一份**白送的光**：直接叠在漫反射之上，
-	// 让次表面材质的方块（羊毛/冰/树叶/草等）被阳光直射的面比普通方块亮。
-	// 这一项按 (1 - N·L) 反向抑制：正对太阳的面（N·L = 1）降到 0，掠射（N·L ≈ 0）
-	// 保持原强度 —— 即 SSS 退化成「明暗交界处的透光」，也就是薄片透光的经典形状。
-	//   0 = 旧行为（完全不抑制，A/B 对比用）；1 = 完全抑制（默认）。
-	#define SUBSURFACE_SCATTERING_FRONT_SUPPRESS 1.0 // [0.0 0.25 0.5 0.75 1.0]
-	// [2026-09 移植原版] 旧版 SSS 现在是 vanilla Revelation 公式的逐行移植（见
+	// **原版 Revelation 没有任何 N·L 抑制**（SSS 是平加性项，受光面也有一份）。
+	// 这一项是 AD-edit 附加：按 (1 - N·L) 反向抑制，正对太阳的面（N·L = 1）降到 0，
+	// 掠射（N·L ≈ 0）保持原强度 —— SSS 退化成「明暗交界处的透光」。
+	//   0 = 原版行为（默认）；1 = 完全抑制（AD-edit 旧行为，用于压受光面的白送光）。
+	#define SUBSURFACE_SCATTERING_FRONT_SUPPRESS 0.0 // [0.0 0.25 0.5 0.75 1.0]
+	// [2026-09 移植原版] 旧版 SSS 是 vanilla Revelation 公式的逐行移植（见
 	// DeferredLight.frag 的模型段来源说明）。**原版没有任何阴影/朝向门控**：SSS 只随
-	// 太阳辐照变化，不看阴影可见性、不看面的朝向。AD-edit 在它之上加了两项：
+	// 太阳辐照变化，不看阴影可见性、不看面的朝向。AD-edit 在它之上加了两项（默认关）：
 	//   ① 阴影幂门控 pow(sssFrontVisibility, 1.2 / SHADOW_CONTRAST_STRENGTH)
 	//      —— 让 SSS 随阴影可见性衰减（即"旧 sss 会根据阴影自动补强度"）；
 	//   ② 背光入射因子 saturate(N·L * 2.5 + 1) —— 修"阴影距离外朝太阳看时异常发亮"。
-	// 关掉本项 = ①②都不生效；再配合把「阳面抑制」调到 0，就是 100% 原版行为（用于 A/B）。
-	#define SUBSURFACE_SCATTERING_EXTRA_GATES // Enables the AD-edit only SSS gates (shadow power gate + back-face entry factor)
+	// 关闭（默认）= 两项都不生效 = 原版行为；开启 = AD-edit 旧门控行为。
+	// 注意：SUBSURFACE_SCATTERING_PCF_BLOCKER 开启时，①无论如何都会被停用（遮挡已由
+	// 厚度项表达，再乘阴影可见性是双重遮蔽）。
+	//#define SUBSURFACE_SCATTERING_EXTRA_GATES // Enables the AD-edit only SSS gates (shadow power gate + back-face entry factor)
 	// [2026-09] PCF 下的 SSS 厚度（**只在 PCF 生效**；PCSS 例外地继续用真实 blocker 深度）。
 	// PCF 没有 blocker 深度可用（sssBlockerDepth 恒为 0 ⇒ 厚度项 exp2(0) = 1），SSS 于是成了
 	// 与厚度无关的平加项。这里按"是不是十字方块"分两类各给一条厚度：
@@ -368,6 +368,20 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 与重写版的 SUBSURFACE_SCATTERING_RADIUS（方块单位）不是同一把尺子，以实测观感为准。
 	#define SUBSURFACE_SCATTERING_CROSS_THICKNESS 0.01 // [0.0 0.01 0.02 0.03 0.05 0.075 0.1 0.15 0.2 0.25 0.3 0.4 0.5 0.6 0.8 1.0 1.5 2.0]
 	#define SUBSURFACE_SCATTERING_NONCROSS_THICKNESS 0.05 // [0.0 0.01 0.02 0.03 0.05 0.075 0.1 0.15 0.2 0.25 0.3 0.4 0.5 0.6 0.8 1.0 1.5 2.0]
+	// [2026-09 复刻原版] PCF 遮挡深度采样：原版 Revelation 是纯 PCSS（CalculatePCSS 恒执行
+	// BlockerSearch），SSS 厚度 = 真实遮挡深度 surfaceDepth。AD-edit 的 PCF 没有 blocker 深度，
+	// 厚度只能退化为常量、树叶没有「越往深处越暗」的深度感。开启本项后，PCF 下对 SSS 材质
+	// 像素做少量 shadow map 深度采样（BLOCKER_SAMPLES 次 texelFetch，仅 SSS 像素）估计同样的
+	// 遮挡深度，厚度公式与原版一致：厚度 = BLOCKER_SCALE × 遮挡深度（无任何常量叠加）。
+	// 量纲核实：原版 BlockerSearch 折算系数 ×10/8 与 AD-edit ×5/4 相同（都是 ×1.25），
+	// SCALE = 1.0 即与原版 PCSS 同标定。仅 PCF（SHADOW_SOFT_TYPE = 1）生效。
+	// 注意：开启时会自动停用旧版模型的「阴影幂门控」（见 DeferredLight.frag SSS 段）——
+	// 原版本就没有该门控，遮挡已由厚度项表达，再乘阴影可见性是双重遮蔽。
+	// （默认开启是显式决策：用户要求不开 PCSS 也能复刻原版 PCSS 的 SSS 外观，
+	//   偏离 CODE_STYLE 的「新能力默认无视觉变化」约定。）
+	#define SUBSURFACE_SCATTERING_PCF_BLOCKER // Enables a few shadow-map depth samples for legacy SSS in PCF mode (replicates vanilla PCSS thickness)
+	#define SUBSURFACE_SCATTERING_BLOCKER_SAMPLES 4 // [2 4 6 8]
+	#define SUBSURFACE_SCATTERING_BLOCKER_SCALE 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0]
 	#define SUBSURFACE_SCATTERING_RADIUS 0.25 // [0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.11 0.12 0.13 0.14 0.15 0.16 0.17 0.18 0.19 0.2 0.21 0.22 0.23 0.24 0.25 0.26 0.27 0.28 0.29 0.3 0.31 0.32 0.33 0.34 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
 	// [2026-09 SSS 重构] 扩散平均自由程 = RADIUS × 4（方块）。RADIUS 此前是死选项（代码零引用），
 	// 现在同时决定体积衰减强度，并将在屏幕空间扩散 pass 里决定模糊半径。
