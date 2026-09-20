@@ -360,7 +360,12 @@ vec3 CalculatePCSS(in vec3 worldPos, in vec3 normalOffset, in float dither, out 
 }
 
 // 屏幕空间接触阴影 (SSS)
-float ScreenSpaceShadow(in vec3 rayPos, in vec3 viewPos, in float dither, in float sssAmount) {
+// [2026-09-21] 第四参数从 sssAmount 改为吸收系数 absorption（调用方算好传入）：
+// 重写版模型档（SUBSURFACE_SCATTERING_MODEL==1，非默认）调用方传常量 0.0，内联后
+// saturate(0.0 + 1.0 - float(hit)) 折叠为 1.0 - float(hit)，逐像素省 1 次
+// exp2 SFU（原 exp2(-0.125/(viewDistInv*0.0)) 编译器不敢折叠运行时除零）；
+// 默认旧版档（==0）由调用方等价重算 absorption 传入，行为逐位不变。
+float ScreenSpaceShadow(in vec3 rayPos, in vec3 viewPos, in float dither, in float absorption) {
     // 地下完全跳过 SSS 计算
     #ifdef SHADOW_CULL_UNDERGROUND
         if (eyeSkylightSmooth < 0.01) return 1.0;
@@ -383,7 +388,6 @@ float ScreenSpaceShadow(in vec3 rayPos, in vec3 viewPos, in float dither, in flo
 
     float viewDistInv = inversesqrt(sdot(viewPos));
     float diffTolerance = 5e-4 * viewDistInv;
-    float absorption = exp2(-0.125 / (viewDistInv * sssAmount));
 
     float result = 1.0;
     
