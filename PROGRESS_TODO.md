@@ -1,5 +1,104 @@
 # Revelation-AD-edit — GI 调试进度 & 待办（2026-09-04）
 
+## 低配性能优化批次（2026-09-20）——参数下调方案已全部回退，重新审计代码层优化
+
+**[2026-09-20 回退]** 第一轮实施的 6+1 项改动（接触阴影 10→8、DOF Gather 8→6、
+Bloom 核 17→9 tap、SSR 16→12、SSS 背面采样编译剔除、SKY_VIEW_RESOLUTION 死选项清理、
+SSS PCF 遮挡深度选项）已 `git restore` 全部回退（9 文件恢复 HEAD，未提交过）。
+
+**教训（用户裁定）**：降低采样数/调默认参数这类 GUI 滑条就能改的东西**不属于**
+"代码层面优化"，完全没必要做。用户要的是**代码结构层面**的性能优化：
+- 冗余纹理采样 / 白付的采样消除（编译期剔除、复用）
+- 每像素无效计算（算了不消费）
+- pass 合并（省全屏读写带宽）
+- 循环优化（不变量外提、共享内存复用）
+- 半分辨率 / 降规格的结构性改动
+- 死代码删除
+
+**流程规矩（用户裁定）**：子代理报告收集完 → 整理成计划呈报 → **等用户确认后**才能动手。
+
+### 第二轮审计结论（2026-09-20，已逐条核实，待用户批准后实施）
+
+三路子代理报告 + 主会话逐条核实后，成立的代码层优化项：
+
+**A 档（高置信，推荐）**
+1. **ENTITY_AREA_GLITCH 帧级门控**（Final.frag L152-219）：随机序列 7 次 sin + 撕裂层
+   循环（GLITCH_TEAR_LAYERS=10 层 × 2 sin）对全屏每像素**无条件执行**（无外层门控，
+   只有最终采样被 if 包），每像素约 27 次 SFU sin + ~40 ALU 全白付。方案：SSBO 帧标志
+   （某个已读 colortex7 的全屏 pass 检测 hurt 实体 atomicOr；begin/setup 清零），
+   final 按标志跳过整段。常态（无实体受伤）下该段归零。
+2. **SSS 背面透光采样编译剔除**（DeferredLight.frag L446-459）：sssBackVisibility 只被
+   重写版模型（L807 #else 分支，L813）消费；默认 MODEL=0（settings.glsl L335，
+   profile.Default 未覆盖）→ 默认档每 SSS 薄片像素白付 1 次 shadowtex1 采样 +
+   WorldToShadowScreenSpace。方案：整段 `#if SUBSURFACE_SCATTERING_MODEL == 1` 包裹
+   （顺带 L714 sssSunGate 同治）。观感零变化（旧模型不读该值）。
+3. **Grade + Final 合并**（composite31.fsh include Grade.frag → world0/final.fsh）：
+   两个相邻全屏 pass，Grade 写 colortex0、Final 再读，多一次全屏 colortex0 读写
+   （1080p RGBA16F ≈ 16MB/帧带宽）。方案：Grade 的色调映射/Bloom 混合/Purkinje/暗角
+   移入 final.fsh 的 CAS/色差之前，composite31 删除。需核对 colortex0 读写时序
+   （composite31 之后仅 final 消费）与 Grade 的 RENDERTARGETS:0 单输出——已确认可行。
+
+**B 档（结构改动，中风险，需实测）**
+4. DOF Gather+Postfilter 合并（composite6_a/6_b）：3×3 中值滤波移进 Gather 的 LDS，
+   省一个全分辨率 compute pass + colortex15 一次全屏往返。
+5. MotionBlur 半分辨率（composite10_a）：运动模糊低频，半分辨率 + upsample，
+   pass 成本减半；快速转头边缘需实测。
+6. DOF 半分辨率：同 5 思路，散景边缘需实测。
+
+**C 档（顺手清理，收益微小）**
+7. startupTex 死纹理声明删除（shaders.properties L349，Final.frag 已不再采样 logo.png）。
+8. Common.glsl RaySphereIntersectNearest 死函数删除（确认无引用后）。
+9. ScreenSpaceShadow 的 absorption 在 sssAmount==0 时跳过 1 次 exp2（Render.glsl L350-352）。
+
+**已核实的误报（不做）**：CAS 9-tap（CAS_ENABLED 关闭已编译剔除、开启时为算法必需）、
+色差/CAS 中心采样复用（色差是带偏移采样，无可复用）、HurtGlitch 门控（已有 is_hurt 运行时
+门控）、rayStep *= 1.08 常量折叠（编译器自动）、FOG_NOISE_ENABLED（已是 #ifdef 编译剔除）、
+Translucent 云阴影 #else 分支（一次乘减，无浪费）、CalcSunScreenVisibility / SSR
+rayTraceScene 去重（两 pass 各需其值，合并函数不省采样，纯重构）、sssBlockerDepth 赋值
+（寄存器写非采样）、SkyView 降频（192² LUT 成本微小、降频有天空阶梯风险）、
+GroundScattering airDensity 提外（每像素仅调一次，无处可提）。
+
+### 算法层审计（2026-09-20 第二轮补充，用户点名方向：算法级替换收益最大）
+
+三路子代理 + 主会话逐条核实后的成立项：
+
+**A' 档（数学严格等价/近等效，高置信，推荐）**
+1. **大气常量 LUT 首帧化**（Transmittance.comp + MultiScatter.comp）：
+   Transmittance LUT（256×64=16K 线程 × 4 步积分）与 MSLUT（32×32×64=65K 线程）
+   **每帧全量重建，但输入零运行时依赖**——参数空间 (viewHeight, viewZenithCos) 全覆盖、
+   sunDir 由 UV 硬编码、大气参数/sunIrradiance 全是 const（settings.glsl:40），
+   每帧结果逐位相同。方案：SSBO 初始化标志门控，首帧生成后永久跳过（LUT 已 clear=false
+   持久）。O(82K 线程/帧) → O(1)。**严格数学等价，非近似**。
+   风险：低（重编译时标志随 SSBO 重建而归零，天然正确）。
+2. **SkyView LUT 变化门控重建**（SkyView.comp，147K 线程 × 4 步/帧）：
+   依赖运行时 worldSunDir + eyeAltitude。按输入变化量门控——太阳角变化 >0.5°（MC 日周期
+   20 分钟、60fps 下每帧仅 ~0.008°，远小于单 texel ~1°）或高度变化超阈值才重建，prev 存
+   SSBO。子 texel 级误差 + 双线性查表 → 视觉无感；飞行/传送突变由阈值触发即时重建。
+   常态 O(147K) → O(1)。风险：中低。
+3. **Translucent 太阳可见性 9 点 → 5 点**（Translucent.comp:139-163）：
+   IntegrateScene.frag:115 的同款函数 2026-09-02 已优化为 5 点十字（注释"几乎无感"），
+   Translucent 还是旧 9 点——直接套用已验证模板，每像素省 4 次深度读取。风险：低。
+
+**B' 档（算法替换，需实测）**
+4. **水面法线 dFdx/dFdy**（WaterWave.glsl:95-104）：CalculateWaterNormal 前向差分
+   3 × CalculateWaterHeightFull = **12 fetch/像素**；改单次高度 + quad 内硬件导数 = 4 fetch，
+   水面像素 3 倍降。风险：中——屏幕空间导数在掠射角 quad 内世界距离不均匀，可能走样；
+   保留 fallback 开关，实测不行就回退。
+5. **Hi-Z SSR**（SSRT.glsl）：McGuire 线性步进 16 步 + 8 步二分 = 24 次深度采样/反射像素 →
+   分层深度 mip 追踪 4-6 步命中。需新增 Hi-Z mip 生成 pass（box-max 归约，~1.33 屏成本）
+   + SSRT 追踪重写；SSR 密集场景（大水面/金属）净收益大。工程量最大，中高风险。
+6. **Glitch hash 链统一**（Final.frag 三段重复）：r1-r7 sin 链（7 sin）+ 撕裂层循环
+   （10 层 × 2 sin）在实体/全屏/always 三段各写一遍；统一为单个 PCG hash 序列函数
+   （数学等效、ALU 减半），三段复用。与结构层 A1 帧级门控互补：门控管常态归零，
+   hash 统一管触发时成本。风险：低。
+
+**算法层剔除的误报（已做/不成立）**：MotionBlur 自适应早退（静止早退 2026-09-02 已加）、
+PCF 未用硬件比较（textureLod vec3 本身就是 sampler2DShadow 硬件比较 + 单侧早退已有）、
+CAS/色差合并采样（色差是偏移采样无重复、CAS 关闭时编译剔除）、Bloom 结构（已是最简单级）、
+GTAO 结构替换（已高度优化：正负方向一次 fetch、early-out、对角反投影）、接触阴影解析替代
+（高风险且现实现已有早退+几何递增步长）、视差锥步（需改纹理格式、工程量大）、色调映射多项式
+逼近（高风险低收益）、DOF Prepare CoC 复用 / Postfilter minmax（质量换性能，与画质目标冲突）。
+
 ## 体积光并入体积雾（2026-09-12）——待实机确认
 
 按「体积雾保持解析（闭式）渲染」的要求，把独立的一层体积光并进雾：雾的太阳 in-scatter 乘上
