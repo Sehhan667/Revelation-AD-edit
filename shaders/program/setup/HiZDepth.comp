@@ -1,0 +1,189 @@
+/*
+--------------------------------------------------------------------------------
+	Revelation Shaders
+	Copyright (C) 2026 HaringPro
+	Apache License 2.0
+
+	Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+	Modified by AnotherCream, 2026.
+
+--------------------------------------------------------------------------------
+	Pass: Hi-Z depth mip chain generation (SSR acceleration)
+
+	[2026-09-21 B'5] Mounted as deferred.csh: the un-numbered compute pass runs
+	first in the deferred stage (Iris/OptiFine rule: .csh runs before the same-
+	numbered program, and un-numbered before numbered ones), so the chain is
+	ready before deferred20/21 (opaque SSR) and composite4 (water SSR).
+
+	Storage: custom image hizImg / sampler hizTex (shaders.properties
+	image.hizImg = hizTex RED R32F FLOAT false true 1.0 1.0) - full-res R32F,
+	retained between frames (no per-frame clear; every read cell is rewritten
+	each dispatch). Full-res is split into 64x64-px tiles; each tile holds
+	6 levels of max-depth mips (cell size 2/4/8/16/32/64 px):
+	    mip m tile-local origin = (64 - (64 >> (m-1)), 0), size = 64 >> m
+	    mip1 (0,0) 32x32   mip2 (32,0) 16x16  mip3 (48,0) 8x8
+	    mip4 (56,0) 4x4    mip5 (60,0) 2x2    mip6 (62,0) 1x1
+	The reader (FetchHiZ in SSRT.glsl) must use the exact same layout.
+
+	Reduction: one 16x16 workgroup per tile. Each thread first fills a 2x2
+	block of mip1 cells (4x4 source pixels) into LDS, then the chain is halved
+	level by level after barriers, and finally written out. No cross-workgroup
+	dependency, single dispatch (workGroupsRender = 0.25 -> ceil(viewSize/64)).
+
+	Semantics:
+	  - max reduction (farthest depth in cell): a tracer may only skip a cell
+	    when rayZ >= hiZ.
+	  - off-screen source pixels contribute depth 0 (never chosen by max, so
+	    they cannot pollute in-screen cells).
+	  - LOD_MOD: depthtex2 sky markers (> 1 - EPS) are remapped through the DH
+	    depth texture before reduction, matching the per-texel logic of
+	    ScreenSpaceRaytrace.
+--------------------------------------------------------------------------------
+*/
+
+#define PASS_HIZ_DEPTH
+
+//======// Input //===============================================================================//
+
+layout (local_size_x = 16, local_size_y = 16) in;
+// 每 workgroup 一个 64x64 tile：dispatch 数 = ceil(viewSize / 64)
+const vec2 workGroupsRender = vec2(0.25, 0.25);
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+//======// Uniform //=============================================================================//
+
+writeonly restrict uniform image2D hizImg;
+
+#include "/lib/universal/Uniform.glsl"
+
+//======// Function //============================================================================//
+
+#include "/lib/universal/Transform.glsl"
+
+const int HIZ_TILE = 64;
+
+shared float smip1[32][32];
+shared float smip2[16][16];
+shared float smip3[8][8];
+shared float smip4[4][4];
+shared float smip5[2][2];
+shared float smip6[1][1];
+
+float HiZSourceDepth(ivec2 px) {
+	if (any(greaterThanEqual(px, ivec2(viewWidth, viewHeight)))) return 0.0;
+	float d = loadDepth2(px);
+	#if defined LOD_MOD
+		if (d > 1.0 - EPS) d = ViewToScreenDepth(ScreenToViewDepthLod(loadDepth1Lod(px)));
+	#endif
+	return d;
+}
+
+//======// Main //================================================================================//
+void main() {
+	ivec2 tileOrigin = ivec2(gl_WorkGroupID.xy) * HIZ_TILE;
+	ivec2 lid = ivec2(gl_LocalInvocationID.xy);
+
+	// Phase 1: mip1（cell 2px）。每线程 2x2 cell = 4x4 源像素
+	ivec2 cellBase = lid << 1;
+	for (int dy = 0; dy < 2; ++dy) {
+		for (int dx = 0; dx < 2; ++dx) {
+			ivec2 c = cellBase + ivec2(dx, dy);
+			ivec2 px = tileOrigin + (c << 1);
+			float d = HiZSourceDepth(px);
+			d = max(d, HiZSourceDepth(px + ivec2(1, 0)));
+			d = max(d, HiZSourceDepth(px + ivec2(0, 1)));
+			d = max(d, HiZSourceDepth(px + ivec2(1, 1)));
+			smip1[c.y][c.x] = d;
+		}
+	}
+
+	memoryBarrierShared();
+	barrier();
+
+	// Phase 2: mip2（cell 4px）。16x16 线程恰好一线程一 cell
+	{
+		ivec2 c = lid;
+		smip2[c.y][c.x] = max(max(smip1[c.y * 2][c.x * 2],         smip1[c.y * 2][c.x * 2 + 1]),
+		                      max(smip1[c.y * 2 + 1][c.x * 2],     smip1[c.y * 2 + 1][c.x * 2 + 1]));
+	}
+
+	memoryBarrierShared();
+	barrier();
+
+	// Phase 3: mip3（cell 8px），64 cell
+	{
+		uint idx = gl_LocalInvocationIndex;
+		if (idx < 64u) {
+			ivec2 c = ivec2(int(idx & 7u), int(idx >> 3u));
+			smip3[c.y][c.x] = max(max(smip2[c.y * 2][c.x * 2],         smip2[c.y * 2][c.x * 2 + 1]),
+			                      max(smip2[c.y * 2 + 1][c.x * 2],     smip2[c.y * 2 + 1][c.x * 2 + 1]));
+		}
+	}
+
+	memoryBarrierShared();
+	barrier();
+
+	// Phase 4: mip4（cell 16px），16 cell
+	{
+		uint idx = gl_LocalInvocationIndex;
+		if (idx < 16u) {
+			ivec2 c = ivec2(int(idx & 3u), int(idx >> 2u));
+			smip4[c.y][c.x] = max(max(smip3[c.y * 2][c.x * 2],         smip3[c.y * 2][c.x * 2 + 1]),
+			                      max(smip3[c.y * 2 + 1][c.x * 2],     smip3[c.y * 2 + 1][c.x * 2 + 1]));
+		}
+	}
+
+	memoryBarrierShared();
+	barrier();
+
+	// Phase 5: mip5（cell 32px），4 cell
+	{
+		uint idx = gl_LocalInvocationIndex;
+		if (idx < 4u) {
+			ivec2 c = ivec2(int(idx & 1u), int(idx >> 1u));
+			smip5[c.y][c.x] = max(max(smip4[c.y * 2][c.x * 2],         smip4[c.y * 2][c.x * 2 + 1]),
+			                      max(smip4[c.y * 2 + 1][c.x * 2],     smip4[c.y * 2 + 1][c.x * 2 + 1]));
+		}
+	}
+
+	memoryBarrierShared();
+	barrier();
+
+	// Phase 6: mip6（cell 64px），1 cell
+	{
+		if (gl_LocalInvocationIndex == 0u) {
+			smip6[0][0] = max(max(smip5[0][0], smip5[0][1]), max(smip5[1][0], smip5[1][1]));
+		}
+	}
+
+	memoryBarrierShared();
+	barrier();
+
+	// Phase 7: 写出。mip m 的 tile 内原点 = (64 - (64 >> (m-1)), 0)
+	for (uint i = gl_LocalInvocationIndex; i < 1024u; i += 256u) {
+		ivec2 c = ivec2(int(i & 31u), int(i >> 5u));
+		imageStore(hizImg, tileOrigin + c, vec4(smip1[c.y][c.x], 0.0, 0.0, 0.0));
+	}
+	for (uint i = gl_LocalInvocationIndex; i < 256u; i += 256u) {
+		ivec2 c = ivec2(int(i & 15u), int(i >> 4u));
+		imageStore(hizImg, tileOrigin + ivec2(32, 0) + c, vec4(smip2[c.y][c.x], 0.0, 0.0, 0.0));
+	}
+	for (uint i = gl_LocalInvocationIndex; i < 64u; i += 256u) {
+		ivec2 c = ivec2(int(i & 7u), int(i >> 3u));
+		imageStore(hizImg, tileOrigin + ivec2(48, 0) + c, vec4(smip3[c.y][c.x], 0.0, 0.0, 0.0));
+	}
+	for (uint i = gl_LocalInvocationIndex; i < 16u; i += 256u) {
+		ivec2 c = ivec2(int(i & 3u), int(i >> 2u));
+		imageStore(hizImg, tileOrigin + ivec2(56, 0) + c, vec4(smip4[c.y][c.x], 0.0, 0.0, 0.0));
+	}
+	for (uint i = gl_LocalInvocationIndex; i < 4u; i += 256u) {
+		ivec2 c = ivec2(int(i & 1u), int(i >> 1u));
+		imageStore(hizImg, tileOrigin + ivec2(60, 0) + c, vec4(smip5[c.y][c.x], 0.0, 0.0, 0.0));
+	}
+	for (uint i = gl_LocalInvocationIndex; i < 1u; i += 256u) {
+		imageStore(hizImg, tileOrigin + ivec2(62, 0), vec4(smip6[0][0], 0.0, 0.0, 0.0));
+	}
+}

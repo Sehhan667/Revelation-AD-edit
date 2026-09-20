@@ -47,17 +47,19 @@ SSS PCF 遮挡深度选项）已 `git restore` 全部回退（9 文件恢复 HEA
    cacfb1e4，2026-09-20）：sssBackVisibility 的声明 + 计算段 + sssSunGate 全部包进
    `#if SUBSURFACE_SCATTERING_MODEL == 1`，默认旧版档每 SSS 薄片像素省 1 次
    shadowtex1 采样 + WorldToShadowScreenSpace，观感零变化（旧模型不读该值）。
-3. **Grade + Final 合并**（composite31.fsh include Grade.frag → world0/final.fsh）：
-   两个相邻全屏 pass，Grade 写 colortex0、Final 再读，多一次全屏 colortex0 读写
-   （1080p RGBA16F ≈ 16MB/帧带宽）。方案：Grade 的色调映射/Bloom 混合/Purkinje/暗角
-   移入 final.fsh 的 CAS/色差之前，composite31 删除。需核对 colortex0 读写时序
-   （composite31 之后仅 final 消费）与 Grade 的 RENDERTARGETS:0 单输出——已确认可行。
+3. **Grade + Final 合并**（composite31.fsh include Grade.frag → world0/final.fsh）——✅ 已实施
+   （commit d3e478c1）：两个相邻全屏 pass，Grade 写 colortex0、Final 再读，多一次全屏
+   colortex0 读写（1080p RGBA16F ≈ 16MB/帧带宽）。Grade 的色调映射/Bloom 混合/Purkinje/
+   暗角移入 final.fsh 的 CAS/色差之前，composite31 删除（CAS 开启时恢复为独立 pass，
+   保留 CAS + logo 功能）。
 
 **B 档（结构改动，中风险，需实测）**
-4. DOF Gather+Postfilter 合并（composite6_a/6_b）：3×3 中值滤波移进 Gather 的 LDS，
-   省一个全分辨率 compute pass + colortex15 一次全屏往返。
-5. MotionBlur 半分辨率（composite10_a）：运动模糊低频，半分辨率 + upsample，
-   pass 成本减半；快速转头边缘需实测。
+4. **DOF Gather+Postfilter 合并**（composite6_a/6_b）——✅ 已实施（commit 7166845b，
+   2026-09-21）：3×3 中值滤波移进 Gather 的 LDS，省一个全分辨率 compute dispatch +
+   colortex15 Gather 结果的一次全屏往返（colortex15 现仅作 Prepare 阶段数据）。
+5. **MotionBlur 半分辨率**（composite10_a）——✅ 已实施（commit 51fb6dd8，2026-09-21）：
+   workGroupsRender=0.5，每线程 2×2 块共享运动向量，模糊采样与计算量降至 1/4；
+   静止块直接回写原图。快速转头边缘需实测。
 6. DOF 半分辨率：同 5 思路，散景边缘需实测。
 
 **C 档（顺手清理，收益微小）——2026-09-21 全部结案**
@@ -121,13 +123,28 @@ Pending 暂存；提交移到**下一帧 dispatch 开头**（此刻 LUT 必然�
    Translucent 还是旧 9 点——直接套用已验证模板，每像素省 4 次深度读取。风险：低。
 
 **B' 档（算法替换，需实测）**
-4. **水面法线 dFdx/dFdy**（WaterWave.glsl:95-104）：CalculateWaterNormal 前向差分
-   3 × CalculateWaterHeightFull = **12 fetch/像素**；改单次高度 + quad 内硬件导数 = 4 fetch，
-   水面像素 3 倍降。风险：中——屏幕空间导数在掠射角 quad 内世界距离不均匀，可能走样；
-   保留 fallback 开关，实测不行就回退。
-5. **Hi-Z SSR**（SSRT.glsl）：McGuire 线性步进 16 步 + 8 步二分 = 24 次深度采样/反射像素 →
-   分层深度 mip 追踪 4-6 步命中。需新增 Hi-Z mip 生成 pass（box-max 归约，~1.33 屏成本）
-   + SSRT 追踪重写；SSR 密集场景（大水面/金属）净收益大。工程量最大，中高风险。
+4. **水面法线 dFdx/dFdy**（WaterWave.glsl:95-104）——✅ 已实施（commit 4ca9a530，
+   2026-09-21）：CalculateWaterNormal 前向差分 3 × CalculateWaterHeightFull = 12 fetch/像素
+   → 单次高度 + quad 内硬件导数 = 4 fetch，水面像素 3 倍降。存在逐像素 discard 的 Pass
+   （Shadow/DH/Voxy）保留前向差分 fallback。风险：中——掠射角 quad 内世界距离不均匀
+   可能走样，实测不行就回退。
+5. **Hi-Z SSR**（SSRT.glsl）——✅ 已实施（2026-09-21，B'5 批次第 4 项）：
+   McGuire 线性步进 16 步 + 8 步二分 = 24 次深度采样/反射像素 → 分层深度 mip 追踪。
+   实现：新增 `program/setup/HiZDepth.comp`（挂 `world*/deferred.csh`，Iris 规则
+   无编号 compute pass 在整个 deferred 段最先跑），16×16 线程组处理 64×64 tile，
+   LDS 逐级 box-max 归约出 6 级 max-depth mip（cell 2/4/8/16/32/64px），写入自定义
+   image `hizTex`（`image.hizImg = hizTex RED R32F FLOAT false true 1.0 1.0`——
+   R32F 与 depthtex2 精度逐位一致、帧间保留无 clear 开销、不占 colortex 槽位，
+   dispatch = ceil(viewSize/64) 个 workgroup）。SSRT.glsl 新增
+   `ScreenSpaceRaytraceHiZ`：入口判定（p.z >= hiZ 或 cell 纯天空才可跳过——出口判定
+   会漏检 cell 内部穿越的几何；纯天空 cell 若不特判会退化成逐像素爬行）、升级跳跃/
+   降级细化、level 0 命中候选走与原版完全相同的厚度过滤、深度导引穿透步长（1.5~8px，
+   单位为 t 增量 = px/rayLenPx）、二分细化区间取命中步 [tPrev, t]。`steps >= 12` 的
+   常规反射走 Hi-Z，粗糙反射与快速 SSR 模式（= 2）不受影响。GUI 开关
+   `SSR_USE_HIZ`（反射页，默认开；关 = 回退原线性追踪），与
+   `program.world*/deferred.enabled` 联动避免空跑 dispatch。LOD_MOD 下深度重映射
+   （depthtex2 sky marker → lodDepthTex1）在 mip 生成端与 level-0 读取端双端一致。
+   风险：中——需实测水面/金属长距离反射的命中密度与漏检率。
 6. **Glitch hash 链统一**（Final.frag 三段重复）——✅ 已实施（commit 70c86f80，
    2026-09-20）：r1-r7 sin 链 + 撕裂层循环在实体/全屏/always 三段各写一遍；统一为
    ComputeGlitchField(uv, out offsetAccum, out r6, out r7) 单函数三段复用（数学逐位

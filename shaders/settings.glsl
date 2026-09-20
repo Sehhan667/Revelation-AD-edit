@@ -314,6 +314,14 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define ROUGH_REFLECTIONS // Enables rough reflections
 	#define ROUGH_REFLECTIONS_THRESHOLD 0.005 // Threshold for rough reflections. [0.0001 0.0002 0.0005 0.0007 0.001 0.002 0.005 0.007 0.01 0.02 0.05 0.07 0.1 0.2 0.5]
 
+	// [2026-09-21 B'5] Hi-Z SSR：deferred.csh（HiZDepth.comp）把 depthtex2 归约成
+	// 64px tile 的 6 级 max-depth mip 链（自定义 image hizTex，R32F），常规反射（步数 >= 12）的追踪
+	// 改为分层步进——空旷区域按 cell 尺寸跳跃（最大 64px）、接近几何时逐级降到逐像素，
+	// 命中判定/厚度过滤/二分细化与原线性版一致。关闭 = 回退原线性追踪。
+	// 仅作用于 SSRT 路径（METAL_SSR_MODE = 1 / TRANSLUCENT_SSR_MODE = 1）；
+	// 粗糙反射（低步数预算）始终走线性追踪，两个快速 SSR 模式（= 2）不受影响。
+	#define SSR_USE_HIZ
+
 	#define REFLECTION_FILTER // Enables reflection filter
 
 	#if RENDER_MODE == 0
