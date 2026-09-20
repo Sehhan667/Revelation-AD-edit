@@ -15,6 +15,7 @@
     "composite31.fsh::RRT_PARAMS",
     "dh_terrain.vsh::DH_BLOCK_LEAVES",
     "dh_water.vsh::DH_BLOCK_WATER",
+    "final.fsh::RRT_PARAMS",
     "gbuffers_block.fsh::COLORS"
   ]
 }

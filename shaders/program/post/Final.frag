@@ -33,8 +33,20 @@ out vec3 finalOut;
 //======// Function //============================================================================//
 #include "/lib/universal/Random.glsl"
 
+#include "/lib/post/GradeCore.glsl"
 #include "/lib/post/KillRipple.glsl"
 #include "/lib/post/StartupLogo.glsl"
+
+// [2026-09-21 Grade+Final 合并] CAS 关闭档（默认）下 composite31 不调度，本 pass
+// 内联执行完整调色管线（GradeCore.glsl，与原 Grade pass 同一份函数与选项）；
+// CAS 开启档 composite31 照旧运行、colortex0 已是 graded 图，直接采样。
+#ifdef CAS_ENABLED
+    vec3 LoadGradedTexel(in ivec2 texel) { return texelFetch(colortex0, texel, 0).rgb; }
+    vec3 LoadGradedUV(in vec2 uv) { return texture(colortex0, uv).rgb; }
+#else
+    vec3 LoadGradedTexel(in ivec2 texel) { return GradeSceneTexel(texel); }
+    vec3 LoadGradedUV(in vec2 uv) { return GradeSceneUV(uv); }
+#endif
 
 // [2026-09] 启动 logo 改为矢量绘制：形状与绘制动画都在 lib/post/StartupLogo.glsl 里，
 // 原来是采样 shaders/texture/logo.png（128x128 位图放大 5 倍，边缘全是方块）。
@@ -62,7 +74,7 @@ out vec3 finalOut;
 uniform bool is_hurt;
 
 vec3 FFXCasFilter(in ivec2 texel, in float sharpness) {
-    #define CasLoad(offset) texelFetchOffset(colortex0, texel, 0, offset).rgb
+    #define CasLoad(offset) LoadGradedTexel(texel + (offset))
     #ifndef CAS_ENABLED
         return CasLoad(ivec2(0, 0));
     #endif
@@ -108,9 +120,9 @@ vec3 LoadChromaticScene(in ivec2 texel) {
     vec2 dir = c * rcp(maxEps(dist));
     vec2 off = dir * (CHROMATIC_ABERRATION_STRENGTH * distNorm) * viewPixelSize;
     return vec3(
-        texture(colortex0, uv + off).r,
+        LoadGradedUV(uv + off).r,
         e.g,
-        texture(colortex0, uv - off).b
+        LoadGradedUV(uv - off).b
     );
 #else
     return e;
@@ -213,9 +225,9 @@ void main() {
                 float uvB = loop(uv.x - (shiftUv - r7 * 0.1));
 
                 vec3 glitchColor;
-                glitchColor.r = texture(colortex0, vec2(uvR, uv.y)).r;
-                glitchColor.g = texture(colortex0, vec2(uvG, uv.y)).g;
-                glitchColor.b = texture(colortex0, vec2(uvB, uv.y)).b;
+                glitchColor.r = LoadGradedUV(vec2(uvR, uv.y)).r;
+                glitchColor.g = LoadGradedUV(vec2(uvG, uv.y)).g;
+                glitchColor.b = LoadGradedUV(vec2(uvB, uv.y)).b;
 
                 finalOut = glitchColor;
             }
@@ -227,9 +239,9 @@ void main() {
                 float uvB = loop(uv.x + (offsetAccum + r7 * 0.1) * intensity);
 
                 vec3 glitchColor;
-                glitchColor.r = texture(colortex0, vec2(uvR, uv.y)).r;
-                glitchColor.g = texture(colortex0, vec2(uvG, uv.y)).g;
-                glitchColor.b = texture(colortex0, vec2(uvB, uv.y)).b;
+                glitchColor.r = LoadGradedUV(vec2(uvR, uv.y)).r;
+                glitchColor.g = LoadGradedUV(vec2(uvG, uv.y)).g;
+                glitchColor.b = LoadGradedUV(vec2(uvB, uv.y)).b;
 
                 finalOut = mix(finalOut, glitchColor, intensity);
             }
@@ -251,9 +263,9 @@ void main() {
             float uvB = loop(uv.x + (offsetAccum + r7 * 0.1) * intensity);
 
             vec3 glitchColor;
-            glitchColor.r = texture(colortex0, vec2(uvR, uv.y)).r;
-            glitchColor.g = texture(colortex0, vec2(uvG, uv.y)).g;
-            glitchColor.b = texture(colortex0, vec2(uvB, uv.y)).b;
+            glitchColor.r = LoadGradedUV(vec2(uvR, uv.y)).r;
+            glitchColor.g = LoadGradedUV(vec2(uvG, uv.y)).g;
+            glitchColor.b = LoadGradedUV(vec2(uvB, uv.y)).b;
 
             finalOut = mix(finalOut, glitchColor, intensity);
         #else
@@ -268,9 +280,9 @@ void main() {
                 float uvB = loop(uv.x + (offsetAccum + r7 * 0.1) * intensity);
 
                 vec3 glitchColor;
-                glitchColor.r = texture(colortex0, vec2(uvR, uv.y)).r;
-                glitchColor.g = texture(colortex0, vec2(uvG, uv.y)).g;
-                glitchColor.b = texture(colortex0, vec2(uvB, uv.y)).b;
+                glitchColor.r = LoadGradedUV(vec2(uvR, uv.y)).r;
+                glitchColor.g = LoadGradedUV(vec2(uvG, uv.y)).g;
+                glitchColor.b = LoadGradedUV(vec2(uvB, uv.y)).b;
 
                 finalOut = mix(finalOut, glitchColor, intensity);
             }
