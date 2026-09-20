@@ -63,19 +63,26 @@ GroundScattering airDensity 提外（每像素仅调一次，无处可提）。
 三路子代理 + 主会话逐条核实后的成立项：
 
 **A' 档（数学严格等价/近等效，高置信，推荐）**
-1. **大气常量 LUT 首帧化**（Transmittance.comp + MultiScatter.comp）：
+1. **大气常量 LUT 首帧化**（Transmittance.comp + MultiScatter.comp）——✅ 已实施
+   （commit e8e7828a，2026-09-20）：
    Transmittance LUT（256×64=16K 线程 × 4 步积分）与 MSLUT（32×32×64=65K 线程）
    **每帧全量重建，但输入零运行时依赖**——参数空间 (viewHeight, viewZenithCos) 全覆盖、
    sunDir 由 UV 硬编码、大气参数/sunIrradiance 全是 const（settings.glsl:40），
    每帧结果逐位相同。方案：SSBO 初始化标志门控，首帧生成后永久跳过（LUT 已 clear=false
    持久）。O(82K 线程/帧) → O(1)。**严格数学等价，非近似**。
    风险：低（重编译时标志随 SSBO 重建而归零，天然正确）。
-2. **SkyView LUT 变化门控重建**（SkyView.comp，147K 线程 × 4 步/帧）：
+   实施细节：SSBO 参数指纹（Common.glsl 分层组装 TLUT⊂MSLUT⊂SkyView）；重建帧清零
+   skyViewVersion 做依赖失效（SkyView 在 begin 帧首跑、读上一帧 LUT，防缓存首帧垃圾）。
+2. **SkyView LUT 变化门控重建**（SkyView.comp，147K 线程 × 4 步/帧）——✅ 已实施
+   （commit 66983c5c，2026-09-20）：
    依赖运行时 worldSunDir + eyeAltitude。按输入变化量门控——太阳角变化 >0.5°（MC 日周期
    20 分钟、60fps 下每帧仅 ~0.008°，远小于单 texel ~1°）或高度变化超阈值才重建，prev 存
    SSBO。子 texel 级误差 + 双线性查表 → 视觉无感；飞行/传送突变由阈值触发即时重建。
    常态 O(147K) → O(1)。风险：中低。
-3. **Translucent 太阳可见性 9 点 → 5 点**（Translucent.comp:139-163）：
+   实施细节：太阳 cos0.5° 阈值（~1.7s 一次）、高度 64m、wetness 0.01；Hosek 模型（非默认）
+   额外跟踪 moonlightMult（运行时 uniform）。
+3. **Translucent 太阳可见性 9 点 → 5 点**（Translucent.comp:139-163）——✅ 已实施
+   （commit 14736d86，2026-09-20）：
    IntegrateScene.frag:115 的同款函数 2026-09-02 已优化为 5 点十字（注释"几乎无感"），
    Translucent 还是旧 9 点——直接套用已验证模板，每像素省 4 次深度读取。风险：低。
 
