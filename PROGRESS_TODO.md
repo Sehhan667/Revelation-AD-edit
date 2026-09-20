@@ -22,16 +22,15 @@ SSS PCF 遮挡深度选项）已 `git restore` 全部回退（9 文件恢复 HEA
 三路子代理报告 + 主会话逐条核实后，成立的代码层优化项：
 
 **A 档（高置信，推荐）**
-1. **ENTITY_AREA_GLITCH 帧级门控**（Final.frag L152-219）：随机序列 7 次 sin + 撕裂层
-   循环（GLITCH_TEAR_LAYERS=10 层 × 2 sin）对全屏每像素**无条件执行**（无外层门控，
-   只有最终采样被 if 包），每像素约 27 次 SFU sin + ~40 ALU 全白付。方案：SSBO 帧标志
-   （某个已读 colortex7 的全屏 pass 检测 hurt 实体 atomicOr；begin/setup 清零），
-   final 按标志跳过整段。常态（无实体受伤）下该段归零。
-2. **SSS 背面透光采样编译剔除**（DeferredLight.frag L446-459）：sssBackVisibility 只被
-   重写版模型（L807 #else 分支，L813）消费；默认 MODEL=0（settings.glsl L335，
-   profile.Default 未覆盖）→ 默认档每 SSS 薄片像素白付 1 次 shadowtex1 采样 +
-   WorldToShadowScreenSpace。方案：整段 `#if SUBSURFACE_SCATTERING_MODEL == 1` 包裹
-   （顺带 L714 sssSunGate 同治）。观感零变化（旧模型不读该值）。
+1. **ENTITY_AREA_GLITCH 帧级门控**（Final.frag L152-219）——✅ 已实施（commit ddd28690，
+   2026-09-20）：colortex10 升 RGBA16F，HurtTimer（composite5，已逐像素读 colortex7）在
+   (0,0) 每帧对 R 做稀疏采样聚合「上一帧存在受伤实体」写入 B（与击杀脉冲触发复用同一
+   循环，触发行为逐位不变）；Final 据 B 跳过整段 sin 链 + 撕裂循环。标志晚一帧 +
+   稀疏网格对小实体有漏检可能（氛围特效可接受）；KILL_RIPPLE 关闭时 B 恒 1（不门控）。
+2. **SSS 背面透光采样编译剔除**（DeferredLight.frag L446-459）——✅ 已实施（commit
+   cacfb1e4，2026-09-20）：sssBackVisibility 的声明 + 计算段 + sssSunGate 全部包进
+   `#if SUBSURFACE_SCATTERING_MODEL == 1`，默认旧版档每 SSS 薄片像素省 1 次
+   shadowtex1 采样 + WorldToShadowScreenSpace，观感零变化（旧模型不读该值）。
 3. **Grade + Final 合并**（composite31.fsh include Grade.frag → world0/final.fsh）：
    两个相邻全屏 pass，Grade 写 colortex0、Final 再读，多一次全屏 colortex0 读写
    （1080p RGBA16F ≈ 16MB/帧带宽）。方案：Grade 的色调映射/Bloom 混合/Purkinje/暗角
@@ -106,10 +105,10 @@ Pending 暂存；提交移到**下一帧 dispatch 开头**（此刻 LUT 必然�
 5. **Hi-Z SSR**（SSRT.glsl）：McGuire 线性步进 16 步 + 8 步二分 = 24 次深度采样/反射像素 →
    分层深度 mip 追踪 4-6 步命中。需新增 Hi-Z mip 生成 pass（box-max 归约，~1.33 屏成本）
    + SSRT 追踪重写；SSR 密集场景（大水面/金属）净收益大。工程量最大，中高风险。
-6. **Glitch hash 链统一**（Final.frag 三段重复）：r1-r7 sin 链（7 sin）+ 撕裂层循环
-   （10 层 × 2 sin）在实体/全屏/always 三段各写一遍；统一为单个 PCG hash 序列函数
-   （数学等效、ALU 减半），三段复用。与结构层 A1 帧级门控互补：门控管常态归零，
-   hash 统一管触发时成本。风险：低。
+6. **Glitch hash 链统一**（Final.frag 三段重复）——✅ 已实施（commit 70c86f80，
+   2026-09-20）：r1-r7 sin 链 + 撕裂层循环在实体/全屏/always 三段各写一遍；统一为
+   ComputeGlitchField(uv, out offsetAccum, out r6, out r7) 单函数三段复用（数学逐位
+   等价），与 A1 帧级门控互补：门控管常态归零，hash 统一管触发时成本与维护性。
 
 **算法层剔除的误报（已做/不成立）**：MotionBlur 自适应早退（静止早退 2026-09-02 已加）、
 PCF 未用硬件比较（textureLod vec3 本身就是 sampler2DShadow 硬件比较 + 单侧早退已有）、
