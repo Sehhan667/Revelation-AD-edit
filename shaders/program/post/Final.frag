@@ -123,6 +123,36 @@ float loop(float x) {
     return x;
 }
 
+// [2026-09-20 hash 统一] 三段故障特效（实体区域 / 全屏 ALWAYS / 全屏 is_hurt）共用同一份
+// 随机序列 + 多层撕裂偏移场——原先三段各抄一遍完整 sin 链（触发时每像素 27+ 次 sin）。
+// 抽出为函数后数学逐位等价（同一 sin 链、同一撕裂循环、同一求和顺序）。
+// r1..r7 由帧种子（frameTimeCounter * 16 取整）驱动，为帧内常数；撕裂循环按 uv.y 分层
+// 采样出条带位移 offsetAccum ∈ [-0.15, 0.15]；r6/r7 供 RGB 三通道的色散微偏移。
+// 各消费段只需要 offsetAccum / r6 / r7 三个输出（r1-r5 仅在链内部使用）。
+void ComputeGlitchField(in vec2 uv, out float offsetAccum, out float r6, out float r7) {
+    float seed = floor(frameTimeCounter * 16.0);
+    float r1 = fract(sin(seed * 0.012989) * 43758.5453123);
+    float r2 = fract(sin(r1 * 2.0 * 0.012989) * 43758.5453123);
+    float r3 = fract(sin(r2 * 3.0 * 0.012989) * 43758.5453123);
+    float r4 = fract(sin(r3 * 4.0 * 0.012989) * 43758.5453123);
+    float r5 = fract(sin(r4 * 5.0 * 0.012989) * 43758.5453123);
+    r6 = fract(sin(r5 * 6.0 * 0.012989) * 43758.5453123);
+    r7 = fract(sin(r6 * 7.0 * 0.012989) * 43758.5453123);
+
+    // 多层撕裂
+    const int layers = GLITCH_TEAR_LAYERS;
+    offsetAccum = 0.0;
+    for (int i = 0; i < layers; i++) {
+        float fi = float(i);
+        float threshold = fract(sin(r1 * (12.9898 + fi) + r2 * (78.233 - fi)) * 43758.5453);
+        threshold = threshold * 0.6 + 0.2;
+        float seg = mix(r3, mix(r4, r5, step(threshold, uv.y)), step(1.0 - threshold, uv.y));
+        offsetAccum += seg;
+    }
+    offsetAccum /= float(layers);
+    offsetAccum = (offsetAccum * 2.0 - 1.0) * 0.15;
+}
+
 void main() {
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
     if (texelPos == ivec2(0)) { global.prevWorldTime = worldTime; }
@@ -163,27 +193,8 @@ void main() {
 
         float intensity = ENTITY_AREA_GLITCH_INTENSITY;
         vec2 uv = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
-        float seed = floor(frameTimeCounter * 16.0);
-        float r1 = fract(sin(seed * 0.012989) * 43758.5453123);
-        float r2 = fract(sin(r1 * 2.0 * 0.012989) * 43758.5453123);
-        float r3 = fract(sin(r2 * 3.0 * 0.012989) * 43758.5453123);
-        float r4 = fract(sin(r3 * 4.0 * 0.012989) * 43758.5453123);
-        float r5 = fract(sin(r4 * 5.0 * 0.012989) * 43758.5453123);
-        float r6 = fract(sin(r5 * 6.0 * 0.012989) * 43758.5453123);
-        float r7 = fract(sin(r6 * 7.0 * 0.012989) * 43758.5453123);
-
-        // 多层撕裂
-        const int layers = GLITCH_TEAR_LAYERS;
-        float offsetAccum = 0.0;
-        for (int i = 0; i < layers; i++) {
-            float fi = float(i);
-            float threshold = fract(sin(r1 * (12.9898 + fi) + r2 * (78.233 - fi)) * 43758.5453);
-            threshold = threshold * 0.6 + 0.2;
-            float seg = mix(r3, mix(r4, r5, step(threshold, uv.y)), step(1.0 - threshold, uv.y));
-            offsetAccum += seg;
-        }
-        offsetAccum /= float(layers);
-        offsetAccum = (offsetAccum * 2.0 - 1.0) * 0.15;
+        float offsetAccum, r6, r7;
+        ComputeGlitchField(uv, offsetAccum, r6, r7);
 
         #ifdef ENTITY_GLITCH_OUTLINE_TEAR
             // ===== 新撕裂：实体轮廓随条带一起水平位移，缺口用邻近背景近似填充 =====
@@ -232,27 +243,8 @@ void main() {
         #ifdef ALWAYS_GLITCH
             const float intensity = HURT_GLITCH_INTENSITY;
             vec2 uv = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
-            float seed = floor(frameTimeCounter * 16.0);
-            float r1 = fract(sin(seed * 0.012989) * 43758.5453123);
-            float r2 = fract(sin(r1 * 2.0 * 0.012989) * 43758.5453123);
-            float r3 = fract(sin(r2 * 3.0 * 0.012989) * 43758.5453123);
-            float r4 = fract(sin(r3 * 4.0 * 0.012989) * 43758.5453123);
-            float r5 = fract(sin(r4 * 5.0 * 0.012989) * 43758.5453123);
-            float r6 = fract(sin(r5 * 6.0 * 0.012989) * 43758.5453123);
-            float r7 = fract(sin(r6 * 7.0 * 0.012989) * 43758.5453123);
-
-            // 多层撕裂
-            const int layers = GLITCH_TEAR_LAYERS;
-            float offsetAccum = 0.0;
-            for (int i = 0; i < layers; i++) {
-                float fi = float(i);
-                float threshold = fract(sin(r1 * (12.9898 + fi) + r2 * (78.233 - fi)) * 43758.5453);
-                threshold = threshold * 0.6 + 0.2;
-                float seg = mix(r3, mix(r4, r5, step(threshold, uv.y)), step(1.0 - threshold, uv.y));
-                offsetAccum += seg;
-            }
-            offsetAccum /= float(layers);
-            offsetAccum = (offsetAccum * 2.0 - 1.0) * 0.15;
+            float offsetAccum, r6, r7;
+            ComputeGlitchField(uv, offsetAccum, r6, r7);
 
             float uvR = loop(uv.x + (offsetAccum - r6 * 0.1) * intensity);
             float uvG = loop(uv.x + offsetAccum * intensity);
@@ -268,27 +260,8 @@ void main() {
             if (is_hurt) {
                 const float intensity = HURT_GLITCH_INTENSITY;
                 vec2 uv = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
-                float seed = floor(frameTimeCounter * 16.0);
-                float r1 = fract(sin(seed * 0.012989) * 43758.5453123);
-                float r2 = fract(sin(r1 * 2.0 * 0.012989) * 43758.5453123);
-                float r3 = fract(sin(r2 * 3.0 * 0.012989) * 43758.5453123);
-                float r4 = fract(sin(r3 * 4.0 * 0.012989) * 43758.5453123);
-                float r5 = fract(sin(r4 * 5.0 * 0.012989) * 43758.5453123);
-                float r6 = fract(sin(r5 * 6.0 * 0.012989) * 43758.5453123);
-                float r7 = fract(sin(r6 * 7.0 * 0.012989) * 43758.5453123);
-
-                // 多层撕裂
-                const int layers = GLITCH_TEAR_LAYERS;
-                float offsetAccum = 0.0;
-                for (int i = 0; i < layers; i++) {
-                    float fi = float(i);
-                    float threshold = fract(sin(r1 * (12.9898 + fi) + r2 * (78.233 - fi)) * 43758.5453);
-                    threshold = threshold * 0.6 + 0.2;
-                    float seg = mix(r3, mix(r4, r5, step(threshold, uv.y)), step(1.0 - threshold, uv.y));
-                    offsetAccum += seg;
-                }
-                offsetAccum /= float(layers);
-                offsetAccum = (offsetAccum * 2.0 - 1.0) * 0.15;
+                float offsetAccum, r6, r7;
+                ComputeGlitchField(uv, offsetAccum, r6, r7);
 
                 float uvR = loop(uv.x + (offsetAccum - r6 * 0.1) * intensity);
                 float uvG = loop(uv.x + offsetAccum * intensity);
