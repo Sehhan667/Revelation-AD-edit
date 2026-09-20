@@ -60,10 +60,17 @@ SSS PCF 遮挡深度选项）已 `git restore` 全部回退（9 文件恢复 HEA
    pass 成本减半；快速转头边缘需实测。
 6. DOF 半分辨率：同 5 思路，散景边缘需实测。
 
-**C 档（顺手清理，收益微小）**
-7. startupTex 死纹理声明删除（shaders.properties L349，Final.frag 已不再采样 logo.png）。
-8. Common.glsl RaySphereIntersectNearest 死函数删除（确认无引用后）。
-9. ScreenSpaceShadow 的 absorption 在 sssAmount==0 时跳过 1 次 exp2（Render.glsl L350-352）。
+**C 档（顺手清理，收益微小）——2026-09-21 全部结案**
+7. **startupTex 死纹理声明删除**——✅ 已实施（commit 72214545，2026-09-21）：logo 自 2026-09
+   起矢量绘制、位图不再被采样，绑定纯属白付的纹理上传；texture/logo.png 文件保留仅作
+   形状对照。
+8. **Common.glsl RaySphereIntersectNearest 死函数删除**——❌ 不成立（2026-09-21 复核）：
+   该函数被 Common.glsl 的 AtmosphereSetupRay 调用，而 AtmosphereSetupRay 又被
+   SkyView.comp / MultiScatter.comp 使用——是活代码，保留。
+9. **ScreenSpaceShadow 吸收系数上提调用方**——✅ 已实施（commit 4478ae6a，2026-09-21）：
+   函数第四参数从 sssAmount 改为 absorption；重写版档（MODEL==1）传常量 0.0 →
+   编译器常量折叠，逐像素省 1 次 exp2 SFU；默认旧版档（MODEL==0，settings.glsl 默认值）
+   调用方等价重算，行为逐位不变。注意：exp2 消除的收益属于重写版档，默认档仅等价重构。
 
 **已核实的误报（不做）**：CAS 9-tap（CAS_ENABLED 关闭已编译剔除、开启时为算法必需）、
 色差/CAS 中心采样复用（色差是带偏移采样，无可复用）、HurtGlitch 门控（已有 is_hurt 运行时
