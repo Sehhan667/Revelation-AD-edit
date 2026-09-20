@@ -423,12 +423,27 @@ void main() {
     ivec2 lutSize = imageSize(skyViewImg);
     if (any(greaterThanEqual(tid, lutSize))) return;
 
-    // [2026-09-20 LUT 生命周期] 越界裁剪后 LUT 内 36K 线程每帧各跑两趟 raymarch（太阳 +
-    // 月亮），但输入里只有三（Hosek 为四）样随时间缓变：太阳方向 / 相机绝对高度 / wetness
-    //（/ moonlightMult）。指纹与全部缓变量都在阈值内 → 整段跳过，常态零成本；
-    // 任一超阈值（或 TLUT/MSLUT 刚重建清零了版本，见 Transmittance/MultiScatter.comp）
-    // → 本帧全量重建一次并写回状态。首帧 skyViewVersion 为垃圾/0 时 == 判断为假，
-    // 不会误跳过（比较链在版本不匹配处短路，垃圾 prevState 不参与判定）。
+    // [2026-09-20 LUT 生命周期 v2——两阶段提交] 越界裁剪后 LUT 内 36K 线程每帧各跑两趟
+    // raymarch（太阳 + 月亮），但输入里只有三（Hosek 为四）样随时间缓变：太阳方向 /
+    // 相机绝对高度 / wetness（/ moonlightMult）。指纹与全部缓变量都在阈值内 → 整段跳过，
+    // 常态零成本；任一超阈值（或 TLUT/MSLUT 刚重建清零了版本）→ 本帧全量重建一次。
+    //
+    // 提交步骤【dispatch 开头、只提交上一帧暂存的状态】：v1 在重建帧末尾由 (0,0) 直接写
+    // version + prevState，同 dispatch 内晚调度的工作组看到"新鲜"状态而提前 return，
+    // texel 永不写入 → LUT 带永久黑洞（地平线下黑色块事故）。v2 中重建帧只写 *Pending
+    // 暂存字段（下方门控不读它们）；提交发生在下一帧 dispatch 开头，此刻 LUT 已在上一帧
+    // 由全部工作组完整写好——同帧竞态下无论读到提交前/后都安全（提交后 → 跳过且 LUT
+    // 完整；提交前 → 重做一遍逐位相同的值）。本 pass 无 barrier()，门控即使在工作组内
+    // 发散也无 UB。首帧 version 为垃圾/0 时 == 判断为假，不会误跳过。
+    if (tid == ivec2(0) && global.skyViewPending == skyViewLutVersion) {
+        global.skyViewVersion = skyViewLutVersion;
+        global.skyViewPrevState = global.skyViewStatePending;
+        global.skyViewPrevWetness = global.skyViewWetnessPending;
+        #if SKY_MODEL == 1
+            global.skyViewPrevMoonMult = global.skyViewMoonMultPending;
+        #endif
+    }
+
     bool fresh = global.skyViewVersion == skyViewLutVersion
         && dot(global.skyViewPrevState.xyz, worldSunDir) >= SKYVIEW_SUN_DOT_EPS
         && abs(global.skyViewPrevState.w - atmosphereViewHeight) <= SKYVIEW_HEIGHT_EPS
@@ -446,15 +461,15 @@ void main() {
         imageStore(skyViewImg, tid, vec4(RenderSkyView_Hosek(uv), 1.0));
     #endif
 
-    // (0,0) 线程收尾写回重建时的输入状态（含指纹）；下一帧起据此判定是否需要重建。
-    // 首帧读到空 TLUT/MSLUT 的结果会在 LUT 重建帧被 skyViewVersion=0 依赖失效机制覆盖，
-    // 不会把首帧垃圾缓存住（时序详见 Transmittance.comp main 注释）。
+    // (0,0) 线程收尾只写 *暂存* 字段（指纹 + 重建时输入状态），下一帧 dispatch 开头提交。
+    // 首帧读到空 TLUT/MSLUT 的结果会被 TLUT/MSLUT 重建帧的清零（version+pending）作废，
+    // 下一帧用就绪的 LUT 重算，不会把首帧垃圾缓存住。
     if (tid == ivec2(0)) {
-        global.skyViewVersion = skyViewLutVersion;
-        global.skyViewPrevState = vec4(worldSunDir, atmosphereViewHeight);
-        global.skyViewPrevWetness = wetness;
+        global.skyViewPending = skyViewLutVersion;
+        global.skyViewStatePending = vec4(worldSunDir, atmosphereViewHeight);
+        global.skyViewWetnessPending = wetness;
         #if SKY_MODEL == 1
-            global.skyViewPrevMoonMult = moonlightMult;
+            global.skyViewMoonMultPending = moonlightMult;
         #endif
     }
 }

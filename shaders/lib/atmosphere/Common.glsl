@@ -114,13 +114,16 @@ const mat2x3 atmosphereScattering = mat2x3(
 #endif
 vec3 atmosphereViewPos = vec3(0.0, atmosphereViewHeight, 0.0);
 
-// [2026-09-20 LUT 生命周期] 大气 LUT 参数指纹。TLUT/MSLUT 的输入全部是编译期常量
+// [2026-09-20 LUT 生命周期 v2] 大气 LUT 参数指纹。TLUT/MSLUT 的输入全部是编译期常量
 //（参数空间 (r, mu) 由 UV 全覆盖、sunDir 由 UV 硬编码、sunIrradiance 为 settings.glsl 的
 // const vec3、大气系数全 const），指纹匹配时每帧重建的结果逐位相同 → 版本号门控跳过
-//（见 Transmittance.comp / MultiScatter.comp / SkyView.comp 的 main）。
+//（见 Transmittance.comp / MultiScatter.comp / SkyView.comp 的 main，两阶段提交方案）。
 // 指纹输入集分层包含：TLUT ⊂ MSLUT ⊂ SkyView（SkyView 采样前两者且输入更多，其指纹
 // 在 SkyView.comp 内部组装）。瑞利/臭氧/地面反照率按维度硬编码，由 DIM_TAG 覆盖。
-// 0x9E3779B9 兜底保证指纹非零（0 用作"未初始化/依赖失效"哨兵）。
+// ^ 2u 是 v2 方案标记：v1（有同帧竞态、LUT 可能带黑洞的版本）写进 SSBO 的指纹是
+// fp_v1 = expr ^ salt；v2 的 fp_v2 = expr ^ salt ^ 2u = fp_v1 ^ 2u ≠ fp_v1（对任意参数
+// 恒成立），保证从 v1 升级时指纹必然不匹配 → 全量重建一次，把 v1 可能留下的 LUT 洞补上。
+// 非零兜底：全零是"未初始化 SSBO"最常见的垃圾值，指纹必须永不为 0（0 也用作清零哨兵）。
 #if defined(DIMENSION_THE_END)
     #define ATMOS_DIM_TAG 1
 #elif defined(DIMENSION_NETHER)
@@ -129,13 +132,15 @@ vec3 atmosphereViewPos = vec3(0.0, atmosphereViewHeight, 0.0);
     #define ATMOS_DIM_TAG 0
 #endif
 
-const uint atmosTlutVersion = (uint(ATMOS_DIM_TAG * 101 + ATMOSPHERE_TLUT_SAMPLES) * 7919u
+const uint atmosTlutVersionRaw = (uint(ATMOS_DIM_TAG * 101 + ATMOSPHERE_TLUT_SAMPLES) * 7919u
     ^ uint(ATMOSPHERE_THICKNESS) ^ uint(ATMOSPHERE_TURBIDITY * 100.0 + 0.5) * 104729u)
-    ^ 0x9E3779B9u;
-const uint atmosMsVersion = (atmosTlutVersion * 31u
+    ^ 0x9E3779B9u ^ 2u;
+const uint atmosTlutVersion = atmosTlutVersionRaw == 0u ? 0x9E3779B9u : atmosTlutVersionRaw;
+const uint atmosMsVersionRaw = (atmosTlutVersion * 31u
     ^ uint(ATMOSPHERE_MSLUT_SAMPLES) * 15485863u
     ^ uint(sunIrradiance.x * 1e6) ^ uint(sunIrradiance.z * 1e8))
-    ^ 0x85EBCA6Bu;
+    ^ 0x85EBCA6Bu ^ 2u;
+const uint atmosMsVersion = atmosMsVersionRaw == 0u ? 0x85EBCA6Bu : atmosMsVersionRaw;
 
 //================================================================================================//
 

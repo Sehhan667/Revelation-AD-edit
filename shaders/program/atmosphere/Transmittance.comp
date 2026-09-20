@@ -102,12 +102,26 @@ vec3 RaymarchSunTransmittance(vec3 rayPos, vec3 rayDir) {
 void main() {
     ivec2 tid = ivec2(gl_GlobalInvocationID.xy);
 
-    // [2026-09-20 LUT 生命周期] TLUT 输入全部是编译期常量（参数空间 (viewHeight, viewZenithCos)
-    // 由 UV 全覆盖、sunDir 由 UV 硬编码、大气系数全 const），指纹匹配时每帧重建的结果逐位
-    // 相同。首帧 / SSBO 刚分配 / 改 GUI 参数重编译 / 切换维度 → 本帧重建一次并写回指纹，
-    // 此后本 dispatch（16K 线程 × TLUT_SAMPLES 步积分）常态零成本，严格数学等价、非近似。
-    // 重编译清不清 SSBO 两种情形都正确：清了 → 指纹归零不匹配；没清 → 旧指纹（不同参数）
-    // 或相同指纹（参数没变，LUT 内容本就逐位相同）。
+    // [2026-09-20 LUT 生命周期 v2——两阶段提交] TLUT 输入全部是编译期常量（参数空间
+    // (viewHeight, viewZenithCos) 由 UV 全覆盖、sunDir 由 UV 硬编码、大气系数全 const），
+    // 指纹匹配时每帧重建结果逐位相同 → 跳过，本 dispatch（16K 线程 × TLUT_SAMPLES 步）
+    // 常态零成本，严格数学等价。
+    //
+    // 提交步骤【必须放在 dispatch 开头、且只提交上一帧暂存的指纹】：v1 在工作帧末尾由
+    // (0,0) 直接写 version，同 dispatch 内晚调度的工作组读到"已完成"提前 return，texel
+    // 永不写入 → LUT 带永久黑洞（地平线下黑色块事故）。v2 中，提交时刻 LUT 已在上一帧
+    // 由全部工作组完整写好——同帧竞态下读到已提交 → 跳过（正确）；读到未提交 → 重做
+    // （写逐位相同的值，无害，最多白做一帧）。
+    // MSLUT 的提交也由本 dispatch 代劳（而非 MultiScatter 自己）：MSLUT 内部有 barrier()
+    // 共享内存归约，若提交写与其自身 dispatch 的门控读并发，同一工作组内的线程可能观察
+    // 到不一致的版本值 → 发散分支 + barrier = UB（可能挂死）。本 dispatch（setup10）严格
+    // 先于 MSLUT（setup11）完成（Iris 顺序提交 + dispatch 间内存屏障），在这里提交可保证
+    // MSLUT 整个 dispatch 读到一致的版本号，门控均匀。
+    if (tid == ivec2(0)) {
+        if (global.atmosTlutPending == atmosTlutVersion) global.atmosTlutVersion = atmosTlutVersion;
+        if (global.atmosMsPending == atmosMsVersion) global.atmosMsVersion = atmosMsVersion;
+    }
+
     if (global.atmosTlutVersion == atmosTlutVersion) return;
 
     vec2 uv = (vec2(tid) + 0.5) * rcp(imageSize(tLutImg));
@@ -120,12 +134,13 @@ void main() {
 
     imageStore(tLutImg, tid, vec4(RaymarchSunTransmittance(rayPos, sunDir), 1.0));
 
-    // (0,0) 线程收尾写回指纹 + 依赖失效：SkyView（begin.csh，帧首）跑在本 dispatch 之前，
-    // 读到的是上一帧 LUT；LUT 刚重建的帧必须让下一帧 SkyView 重算，清零其版本即可。
-    // 写回对本 dispatch 内其他线程不可见也不需要——各线程的 imageStore 早已发射，
-    // 后续 MSLUT dispatch（Iris 顺序提交）读到的是本帧 LUT 值而非指纹。
+    // (0,0) 收尾只写 *暂存* 字段（门控不读它们，无同帧竞态），下一帧 dispatch 开头提交。
+    // 首帧 / SSBO 刚分配 / 改 GUI 参数重编译 / 切维度 → 指纹不匹配 → 重建一次。
+    // 依赖失效：SkyView（begin.csh，帧首）跑在本 dispatch 之前，本帧 LUT 内容已变，
+    // 下一帧 SkyView 必须重算 → 清零其 version 与 pending（清 pending 防旧暂存被误提交）。
     if (tid == ivec2(0)) {
-        global.atmosTlutVersion = atmosTlutVersion;
+        global.atmosTlutPending = atmosTlutVersion;
         global.skyViewVersion = 0u;
+        global.skyViewPending = 0u;
     }
 }
