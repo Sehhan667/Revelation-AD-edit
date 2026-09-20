@@ -1,5 +1,21 @@
 # Revelation-AD-edit — GI 调试进度 & 待办（2026-09-04）
 
+## 性能自测工具（2026-09-21）—— RenderDoc 抓帧解析 + A/B diff
+
+[2026-09-21] 落地 scripts/perf/ 一套"自动测性能"工具（用户要求 MCP 自测的可达折中——
+TRAE 侧无挂载本地 MCP server 的工具，改用脚本达成同样目的）：
+- rdc_export.py：RenderDoc 内置 Python（qrenderdoc 交互 console 或 `--python`）遍历
+  action 树，按 pass 聚合 GPU 耗时，导出 JSON 基线（total_us + passes[us]）。
+  优先 try action.GetDuration()；不可用则退化为 count 视角并置 us=-1。
+  **待实机跑通**：第一次在 qrenderdoc 里跑后把"走哪条 API / 有无 -1"反馈回来固化。
+- compare.js：Node 无依赖，读两份 JSON 出 markdown diff 表（帧总耗时 + 逐 pass
+  |Δus| 降序，标新增/移除，--top N / -j），本地实验例已跑通（test_baseline/
+  test_optimized.json）。
+- 流程：抓帧(.rdc) → rdc_export.py 导 JSON → compare.js 对比旧/新 → 汇报。
+- 已知边界：OpenGL 程序只能在启动时注入 RenderDoc（全自动抓取需从 HMCL 重建启动
+  cmdline，属于"下一步自动化"，未做）；GPU 时序依赖 timing replay 稳定性，需多帧
+  取中位数抑制噪声。
+
 ## 低配性能优化批次（2026-09-20）——参数下调方案已全部回退，重新审计代码层优化
 
 **[2026-09-20 回退]** 第一轮实施的 6+1 项改动（接触阴影 10→8、DOF Gather 8→6、
