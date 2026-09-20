@@ -116,7 +116,7 @@
 	|	colortex12	|   rg16          	|	Full res	|	Water data
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)
-	|	colortex15	|   rgba16f		    |	Full res  	|	DoF gather scratch (Prepare CoC data -> Gather filtered color); old voxel GI use was dead
+	|	colortex15	|   rgba16f		    |	Full res  	|	DoF Prepare CoC data (written by Prepare, read by Gather; Postfilter merged into Gather 2026-09-21, filtered color no longer staged here)
 	|	colortex18	|   rgba16f			|	Half res	|	SSS source (rgb = source x mask, a = mask), written by DeferredLight
 	|	colortex19	|   rgba16f			|	Half res	|	SSS horizontal blur result
 	|	colortex20	|   rgba16f			|	Half res	|	SSS vertical blur result (consumed by IntegrateScene)
