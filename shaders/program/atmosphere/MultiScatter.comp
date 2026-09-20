@@ -38,6 +38,12 @@ writeonly uniform image2D msLutImg;
 
 #include "/lib/universal/Uniform.glsl"
 
+//======// SSBO //================================================================================//
+
+// [2026-09-20 LUT 生命周期] 版本号门控需要写 global.atmosMsVersion（restrict 可写）
+#define SSBO_DECLARED_TPYE restrict
+#include "/lib/universal/SSBO.glsl"
+
 //======// Function //============================================================================//
 
 #include "/lib/atmosphere/Common.glsl"
@@ -107,6 +113,13 @@ shared vec3 sharedFms[64];
 //======// Main //================================================================================//
 void main() {
     ivec2 tid = ivec2(gl_WorkGroupID.xy);
+
+    // [2026-09-20 LUT 生命周期] MSLUT 输入 = TLUT（参数未变时逐位相同）+ 全 const
+    //（sunIrradiance 为 const vec3、sunDir 由 UV 硬编码、R2 序列确定性），指纹匹配时每帧
+    // 结果逐位相同 → 跳过重建。首帧重建时读的 TLUT 是本帧刚写入的（Iris dispatch 顺序
+    // 提交：setup10 在 setup11 之前）。65K 线程 × MSLUT_SAMPLES 步常态零成本。
+    if (global.atmosMsVersion == atmosMsVersion) return;
+
     vec2 uv = (vec2(tid) + 0.5) * rcp(imageSize(msLutImg));
 
     float cosTheta = uv.x * 2.0 - 1.0;
@@ -170,4 +183,11 @@ void main() {
 
     // [优化] 分母增加安全偏移量，绝对避免 LUT 中心像素黑洞
     imageStore(msLutImg, tid, vec4(lum, 1.0));
+
+    // [2026-09-20 LUT 生命周期] (0,0) 线程收尾写回指纹 + 依赖失效（同 Transmittance.comp
+    // 的论证：LUT 重建的帧让下一帧 SkyView 重算）
+    if (tid == ivec2(0)) {
+        global.atmosMsVersion = atmosMsVersion;
+        global.skyViewVersion = 0u;
+    }
 }

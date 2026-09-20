@@ -38,6 +38,13 @@ writeonly uniform image2D tLutImg;
 
 #include "/lib/universal/Uniform.glsl"
 
+//======// SSBO //================================================================================//
+
+// [2026-09-20 LUT 生命周期] 版本号门控需要写 global.atmosTlutVersion（restrict 可写；
+// DOF Gather.comp 写 global.dofFocusDistance 是同款先例）
+#define SSBO_DECLARED_TPYE restrict
+#include "/lib/universal/SSBO.glsl"
+
 //======// Function //============================================================================//
 
 #include "/lib/atmosphere/Common.glsl"
@@ -94,6 +101,15 @@ vec3 RaymarchSunTransmittance(vec3 rayPos, vec3 rayDir) {
 //======// Main //================================================================================//
 void main() {
     ivec2 tid = ivec2(gl_GlobalInvocationID.xy);
+
+    // [2026-09-20 LUT 生命周期] TLUT 输入全部是编译期常量（参数空间 (viewHeight, viewZenithCos)
+    // 由 UV 全覆盖、sunDir 由 UV 硬编码、大气系数全 const），指纹匹配时每帧重建的结果逐位
+    // 相同。首帧 / SSBO 刚分配 / 改 GUI 参数重编译 / 切换维度 → 本帧重建一次并写回指纹，
+    // 此后本 dispatch（16K 线程 × TLUT_SAMPLES 步积分）常态零成本，严格数学等价、非近似。
+    // 重编译清不清 SSBO 两种情形都正确：清了 → 指纹归零不匹配；没清 → 旧指纹（不同参数）
+    // 或相同指纹（参数没变，LUT 内容本就逐位相同）。
+    if (global.atmosTlutVersion == atmosTlutVersion) return;
+
     vec2 uv = (vec2(tid) + 0.5) * rcp(imageSize(tLutImg));
 
     float viewHeight, viewZenithCos;
@@ -103,4 +119,13 @@ void main() {
     vec3 sunDir = vec3(0.0, viewZenithCos, sqrt(1.0 - viewZenithCos * viewZenithCos));
 
     imageStore(tLutImg, tid, vec4(RaymarchSunTransmittance(rayPos, sunDir), 1.0));
+
+    // (0,0) 线程收尾写回指纹 + 依赖失效：SkyView（begin.csh，帧首）跑在本 dispatch 之前，
+    // 读到的是上一帧 LUT；LUT 刚重建的帧必须让下一帧 SkyView 重算，清零其版本即可。
+    // 写回对本 dispatch 内其他线程不可见也不需要——各线程的 imageStore 早已发射，
+    // 后续 MSLUT dispatch（Iris 顺序提交）读到的是本帧 LUT 值而非指纹。
+    if (tid == ivec2(0)) {
+        global.atmosTlutVersion = atmosTlutVersion;
+        global.skyViewVersion = 0u;
+    }
 }
