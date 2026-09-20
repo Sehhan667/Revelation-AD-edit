@@ -62,10 +62,12 @@ void voxy_emitFragment(in VoxyFragmentParameters parameters) {
 		mat3 tbnMatrix = BuildOrthonormalBasis(geoNormal);
 
 		vec3 minecraftPos = worldPos + cameraPosition;
+		// [2026-09-21 B'4] 固定前向差分版：Voxy patch 编译环境特殊，且远处
+		// LOD 一个 quad 跨数十米世界距离，导数版在该尺度无收益可言
 		#ifdef WATER_PARALLAX
-			vec3 worldNormal = CalculateWaterNormal(minecraftPos, worldDir * tbnMatrix);
+			vec3 worldNormal = CalculateWaterNormalForward(minecraftPos, worldDir * tbnMatrix);
 		#else
-			vec3 worldNormal = CalculateWaterNormal(minecraftPos);
+			vec3 worldNormal = CalculateWaterNormalForward(minecraftPos);
 		#endif
 
 		worldNormal = tbnMatrix * worldNormal;

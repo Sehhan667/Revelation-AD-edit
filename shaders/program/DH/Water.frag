@@ -86,10 +86,13 @@ void main() {
 			mat3 tbnMatrix = BuildOrthonormalBasis(geoNormal);
 
 			vec3 minecraftPos = worldPos + cameraPosition;
+			// [2026-09-21 B'4] 固定前向差分版：本 pass 入口有逐像素蓝噪声 dither
+			// discard（L71），远处 quad 内 4 像素几乎必然混合被丢弃线程，
+			// dFdx 拿到未定义值，导数版在此不可用
 			#ifdef WATER_PARALLAX
-				vec3 worldNormal = CalculateWaterNormal(minecraftPos, worldDir * tbnMatrix);
+				vec3 worldNormal = CalculateWaterNormalForward(minecraftPos, worldDir * tbnMatrix);
 			#else
-				vec3 worldNormal = CalculateWaterNormal(minecraftPos);
+				vec3 worldNormal = CalculateWaterNormalForward(minecraftPos);
 			#endif
 
 			worldNormal = tbnMatrix * worldNormal;

@@ -167,6 +167,11 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 	#define WATER_PARALLAX_SAMPLES 2 // [2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32 34 36 38 40 42 44 46 48 50 52 54 56 58 60 62 64 66 68 70 72 74 76 78 80 82 84 86 88 90 92 94 96 98 100 102 104 106 108 110 112 114 116 118 120 122 124 126 128]
 
+	// [2026-09-21 B'4] 水面法线屏幕导数版：单次高度采样 + dFdx/dFdy quad 导数
+	// （12 次 noisetex 采样/像素 -> 4 次）。仅主水面 pass 生效；DH/Shadow/Voxy
+	// 因逐像素 discard 破坏 quad 完整性固定用前向差分版。走样（掠射角）时关闭回退。
+	#define WATER_NORMAL_SCREEN_DERIV
+
 	#define TRANSLUCENT_ROUGHNESS 0.1 // [0.0 0.0005 0.001 0.002 0.003 0.004 0.005 0.006 0.007 0.008 0.009 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 
 	const vec3 waterAbsorption = vec3(WATER_ABSORPTION_R, WATER_ABSORPTION_G, WATER_ABSORPTION_B) * WATER_FOG_DENSITY;
