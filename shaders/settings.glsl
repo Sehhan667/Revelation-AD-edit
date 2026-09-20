@@ -83,6 +83,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define LAVA_FOG // Enables lava fog
 	#define POWDERED_SNOW_FOG // Enables powdered snow fog
 	#define BLINDNESS_DARKNESS_FOG // Enables blindness & darkness fog
+	#define BLINDNESS_STRENGTH 1.0 // 失明总强度（1.0 = 原版，0 = 关闭失明压黑，越大黑得越快）。 [0.0 0.25 0.5 0.75 1.0 1.25 1.5 2.0 3.0]
 
 	#define VOLUMETRIC_FOG // Enables volumetric fog
 	#define COLORED_VOLUMETRIC_FOG // Enables volumetric fog stained glass tint

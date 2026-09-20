@@ -272,6 +272,9 @@ option.PER_BIOME_FOG=群系雾
 option.LAVA_FOG=岩浆雾
 option.POWDERED_SNOW_FOG=细雪雾
 option.BLINDNESS_DARKNESS_FOG=失明&黑暗雾
+option.BLINDNESS_STRENGTH=失明强度
+option.BLINDNESS_STRENGTH.comment=失明药水效果的压黑总强度，直接乘进指数衰减率：1.0 = 原版观感（1 格剩约 37%、2 格约 14%、5 格基本全黑）；0 = 完全关闭失明压黑；调大则黑得更快、可视距离更近。只影响失明，不影响黑暗效果（监守者）的雾。需要开启「失明&黑暗雾」。
+value.BLINDNESS_STRENGTH.0.0=关闭
 
 # Weather
 option.RAIN_PUDDLES=雨水坑

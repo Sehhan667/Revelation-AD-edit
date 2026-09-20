@@ -260,6 +260,9 @@ option.PER_BIOME_FOG=Per-Biome Fog
 option.LAVA_FOG=Lava Fog
 option.POWDERED_SNOW_FOG=Powdered Snow Fog
 option.BLINDNESS_DARKNESS_FOG=Blindness & Darkness Fog
+option.BLINDNESS_STRENGTH=Blindness Strength
+option.BLINDNESS_STRENGTH.comment=Total darkening strength of the blindness effect, multiplied into the exponential falloff rate. 1.0 = vanilla look (about 37% left at 1 block, 14% at 2, near-black at 5); 0 = blindness darkening fully off; higher values fade to black faster with shorter visible range. Only affects blindness, not the darkness effect fog. Requires Blindness & Darkness Fog.
+value.BLINDNESS_STRENGTH.0.0=OFF
 
 # Weather
 option.RAIN_PUDDLES=Rain Puddles
