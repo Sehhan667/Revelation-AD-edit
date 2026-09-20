@@ -379,8 +379,13 @@ void main() {
     //   sssBackVisibility  = 沿光线方向跨过物体后的可见性（新版薄片背光透光用）
     //   sssContactShadow   = 屏幕空间接触阴影（只给旧版模型用；新版已与它解耦）
     //   sssBlockerDepth    = PCSS 的 blocker 深度（只给旧版模型的厚度项用；PCF 模式下恒为 0）
+    // [2026-09-20 性能] sssBackVisibility 只被重写版（SUBSURFACE_SCATTERING_MODEL == 1）
+    // 消费，其声明与下方背面透光采样段一并按模型编译剔除——默认 MODEL=0 下旧版模型
+    // 不再白付 1 次 shadowtex1 采样 + WorldToShadowScreenSpace，观感零变化（旧模型不读它）。
     float sssFrontVisibility = 0.0;
-    float sssBackVisibility = 0.0;
+    #if SUBSURFACE_SCATTERING_MODEL == 1
+        float sssBackVisibility = 0.0;
+    #endif
     float sssContactShadow = 1.0;
     float sssBlockerDepth = 0.0;
 
@@ -443,6 +448,10 @@ void main() {
         // 保持 PCF 会成倍放大阴影开销。
         // [2026-09] 只有背光透光项打开时才需要它（该项默认 0 = 关），所以用宏条件直接编译掉，
         // 关掉时这里零开销。
+        // [2026-09-20 性能] 本段产出 sssBackVisibility，只被重写版模型（MODEL == 1）消费；
+        // 按模型编译剔除后，默认旧版档每个 SSS 薄片像素省 1 次 shadowtex1 采样 +
+        // WorldToShadowScreenSpace（矩阵乘），观感零变化（旧模型不读该值）。
+        #if SUBSURFACE_SCATTERING_MODEL == 1
         float sssThickness = GetSubsurfaceThickness(materialID);
         if (SUBSURFACE_SCATTERING_TRANSMISSION > EPS && sssThickness > 0.0 && sssThickness < SSS_THIN_CUTOFF) {
             vec3 backPos = worldPos + worldLightDir * GetSubsurfaceBackSampleOffset(materialID);
@@ -457,6 +466,7 @@ void main() {
                 sssBackVisibility = textureLod(shadowtex1, vec3(backScreenPos.xy, backScreenPos.z), 0).x;
             }
         }
+        #endif
 
         if (dot(shadow, vec3(1.0)) > EPS) {
             // ---------- 夜间阴影增强 ----------
@@ -711,7 +721,9 @@ void main() {
         #else
             bool sssAllowed = true;
         #endif
-        float sssSunGate = 1.0 - distanceFade;   // 只被重写版使用
+        #if SUBSURFACE_SCATTERING_MODEL == 1
+            float sssSunGate = 1.0 - distanceFade;   // 只被重写版使用（2026-09-20 随背面采样一并编译剔除）
+        #endif
 
         if (sssAllowed && sssAmount > EPS) {
             #if SUBSURFACE_SCATTERING_MODEL == 0
