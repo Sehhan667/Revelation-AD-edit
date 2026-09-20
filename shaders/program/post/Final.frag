@@ -150,6 +150,12 @@ void main() {
 
     // ========== 实体区域故障 ==========
     #ifdef ENTITY_AREA_GLITCH
+        // [2026-09-20 帧级门控] colortex10 的 (0,0).B = HurtTimer（composite5）每帧聚合的
+        // 「上一帧稀疏网格上存在受伤实体」标志（R > 0 ⟺ 受伤实体 mask）。常态（无受伤
+        // 实体）下整段跳过——否则全屏每像素无条件白付 7 次 sin 链 + GLITCH_TEAR_LAYERS
+        // 层撕裂循环（约 27 次 SFU sin + ~40 ALU）。标志晚一帧（受击首帧故障延迟一帧
+        // 显示，无感）；KILL_RIPPLE 关闭时 B 恒 1，本特效保持无门控的原行为。
+        if (texelFetch(colortex10, ivec2(0, 0), 0).b > 0.5) {
         uvec4 matPack = texelFetch(colortex7, texelPos, 0);
         uint matW = matPack.w;
         bool isEntity = ((matW & 1u) != 0u);          // bit0
@@ -217,6 +223,7 @@ void main() {
                 finalOut = mix(finalOut, glitchColor, intensity);
             }
         #endif
+        } // [2026-09-20 帧级门控] hurtEntityOnScreen 结束
     #endif
 
     // ========== 全屏受伤故障（支持始终显示） ==========

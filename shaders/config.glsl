@@ -28,7 +28,10 @@
 	const int 	colortex7Format 			= RGBA16UI;
 	const int 	colortex8Format 			= RGBA16_SNORM;
 	const int 	colortex9Format 			= RGBA16F;
-	const int 	colortex10Format 			= RG16F;
+	// [2026-09-20 实体故障门控] RG16F -> RGBA16F：新增 B 通道 = (0,0) 处的「上一帧屏幕上
+	// 存在受伤实体」标志（HurtTimer 稀疏采样聚合），Final 的 ENTITY_AREA_GLITCH 段据此
+	// 帧级跳过整段 sin 链 + 撕裂循环。代价 = 该全屏缓冲每像素 +2 字节读写。
+	const int 	colortex10Format 			= RGBA16F;
 	const int 	colortex12Format 			= RG16;
 	const int 	colortex13Format 			= R8I;
 	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
