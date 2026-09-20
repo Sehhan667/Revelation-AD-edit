@@ -146,7 +146,9 @@ float CalcSunScreenVisibility() {
     float edgeFade = smoothstep(0.0, 0.08, min(edge.x, edge.y));
     if (edgeFade <= 0.0) return 0.0;
 
-    // 地形遮挡：太阳屏幕位置周边 9 点软采样，跨轮廓 0→1 渐变
+    // 地形遮挡：太阳屏幕位置周边软采样，跨轮廓 0→1 渐变
+    // [P2 2026-09-20] 9 点 -> 5 点（十字，去掉对角线采样）：与 IntegrateScene.frag 的
+    // CalcSunScreenVisibility 对齐（那边 2026-09-02 已验证"几乎无感"），每像素省 4 次深度读取。
     const float r = 0.02;
     vec2 uvMax = vec2(1.0) - viewPixelSize;
     float occ  = step(1.0 - 1e-4, loadDepth1(uvToTexel(sunUv)));
@@ -154,12 +156,7 @@ float CalcSunScreenVisibility() {
     occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-r, 0.0), vec2(0.0), uvMax))));
     occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0,  r), vec2(0.0), uvMax))));
     occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0, -r), vec2(0.0), uvMax))));
-    const float d = r * 0.70710678;
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( d,  d), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-d,  d), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( d, -d), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-d, -d), vec2(0.0), uvMax))));
-    return edgeFade * occ * (1.0 / 9.0);
+    return edgeFade * occ * (1.0 / 5.0);
 }
 
 vec4 CalculateSpecularReflections(in vec3 screenPos, in vec3 viewPos, in vec3 worldNormal, in vec3 worldDir, in float dither, in float skylight, in bool waterMask) {
