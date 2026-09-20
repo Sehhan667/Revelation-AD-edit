@@ -53,6 +53,12 @@ const vec2 workGroupsRender = vec2(1.0, 1.0);
 writeonly restrict uniform image2D skyViewImg;
 #include "/lib/universal/Uniform.glsl"
 
+//======// SSBO //================================================================================//
+
+// [2026-09-20 LUT 生命周期] 变化门控需要读写 global.skyViewVersion / skyViewPrevState
+#define SSBO_DECLARED_TPYE restrict
+#include "/lib/universal/SSBO.glsl"
+
 //======// 大气公共参数（两种模型都需要）=========================================================//
 #include "/lib/atmosphere/Common.glsl"
 
@@ -375,6 +381,35 @@ writeonly restrict uniform image2D skyViewImg;
     }
 #endif
 
+//======// LUT 生命周期（SkyView 指纹与阈值） //==================================================//
+
+// [2026-09-20] SkyView 的输入 = TLUT/MSLUT（指纹分层包含于 atmosMsVersion，Common.glsl）
+// + 下列编译期参数 + 缓变运行时量。编译期参数改动（含切换 SKY_MODEL）→ 指纹变 → 首帧
+// 全量重建一次；运行时量在 main 里按阈值门控。
+const uint skyViewLutVersion = (atmosMsVersion * 13u
+    ^ uint(SKY_MODEL * 101 + ATMOSPHERE_SKY_SAMPLES) * 32452843u
+    ^ uint(VIEWER_BASE_ALTITUDE) ^ uint(END_VIEWER_ALTITUDE)
+    ^ uint(NIGHT_BRIGHTNESS * 100.0 + 0.5) * 193u
+    ^ uint(MOON_SKY_BRIGHTNESS) * 577u
+    ^ uint(MOON_SKY_TINT.x * 100.0 + 0.5) * 719u
+    ^ uint(MOON_SKY_TINT.z * 100.0 + 0.5) * 839u
+    #if SKY_MODEL == 1
+    ^ uint(SKY_LIGHT_STRENGTH * 100.0 + 0.5) * 1151u
+    ^ uint(HAZE_STRENGTH * 100.0 + 0.5) * 1783u
+    ^ uint(COLOR_DEPTH_DAY * 100.0 + 0.5) * 3571u
+    ^ uint(COLOR_DEPTH_SUNSET * 100.0 + 0.5) * 7919u
+    ^ uint(COLOR_DEPTH_NIGHT * 100.0 + 0.5) * 104729u
+    #endif
+    ) ^ 0xC2B2AE35u;
+
+// 太阳方向阈值 cos(0.5°)：MC 日周期 20 分钟 ≈ 0.3°/s，单 texel 覆盖角 ~1°，
+// 重建间隔约 1.7s；误差为子 texel 级，查表双线性插值下视觉无感。
+const float SKYVIEW_SUN_DOT_EPS = 0.99996;
+// 相机绝对高度阈值（米）：跳跃/楼梯不触发，鞘翅飞行（~30m/s）约 2s 一次。
+const float SKYVIEW_HEIGHT_EPS = 64.0;
+// wetness 阈值：雨天渐变期触发频率约为逐帧重建的 1/6。
+const float SKYVIEW_WETNESS_EPS = 0.01;
+
 //======// 主入口 ================================================================================//
 void main() {
     ivec2 tid = ivec2(gl_GlobalInvocationID.xy);
@@ -388,6 +423,21 @@ void main() {
     ivec2 lutSize = imageSize(skyViewImg);
     if (any(greaterThanEqual(tid, lutSize))) return;
 
+    // [2026-09-20 LUT 生命周期] 越界裁剪后 LUT 内 36K 线程每帧各跑两趟 raymarch（太阳 +
+    // 月亮），但输入里只有三（Hosek 为四）样随时间缓变：太阳方向 / 相机绝对高度 / wetness
+    //（/ moonlightMult）。指纹与全部缓变量都在阈值内 → 整段跳过，常态零成本；
+    // 任一超阈值（或 TLUT/MSLUT 刚重建清零了版本，见 Transmittance/MultiScatter.comp）
+    // → 本帧全量重建一次并写回状态。首帧 skyViewVersion 为垃圾/0 时 == 判断为假，
+    // 不会误跳过（比较链在版本不匹配处短路，垃圾 prevState 不参与判定）。
+    bool fresh = global.skyViewVersion == skyViewLutVersion
+        && dot(global.skyViewPrevState.xyz, worldSunDir) >= SKYVIEW_SUN_DOT_EPS
+        && abs(global.skyViewPrevState.w - atmosphereViewHeight) <= SKYVIEW_HEIGHT_EPS
+        && abs(global.skyViewPrevWetness - wetness) <= SKYVIEW_WETNESS_EPS;
+    #if SKY_MODEL == 1
+        fresh = fresh && abs(global.skyViewPrevMoonMult - moonlightMult) <= 1e-4;
+    #endif
+    if (fresh) return;
+
     vec2 uv = (vec2(tid) + 0.5) * rcp(vec2(lutSize));
 
     #if SKY_MODEL == 0
@@ -395,4 +445,16 @@ void main() {
     #else
         imageStore(skyViewImg, tid, vec4(RenderSkyView_Hosek(uv), 1.0));
     #endif
+
+    // (0,0) 线程收尾写回重建时的输入状态（含指纹）；下一帧起据此判定是否需要重建。
+    // 首帧读到空 TLUT/MSLUT 的结果会在 LUT 重建帧被 skyViewVersion=0 依赖失效机制覆盖，
+    // 不会把首帧垃圾缓存住（时序详见 Transmittance.comp main 注释）。
+    if (tid == ivec2(0)) {
+        global.skyViewVersion = skyViewLutVersion;
+        global.skyViewPrevState = vec4(worldSunDir, atmosphereViewHeight);
+        global.skyViewPrevWetness = wetness;
+        #if SKY_MODEL == 1
+            global.skyViewPrevMoonMult = moonlightMult;
+        #endif
+    }
 }
