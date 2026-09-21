@@ -765,8 +765,6 @@ option.ENTITY_GLITCH_OUTLINE_TEAR=实体轮廓撕裂
 option.ENTITY_GLITCH_OUTLINE_TEAR.comment=开启后实体轮廓随条带一起水平位移，缺口用邻近背景近似填充；关闭时使用旧版仅内部颜色错位
 option.GLITCH_TEAR_LAYERS=故障特效切片数
 option.GLITCH_TEAR_LAYERS.comment=数值越高画面撕的越碎，细细的切成臊子
-option.GLITCH_GLOW=故障发光强度
-option.GLITCH_GLOW.comment=线性增益：故障像素颜色 ×(1+该值)，0 = 关闭发光。泛光里的光晕由同一份增益驱动；源本身很亮时提亮会被夹住，只剩光晕
 screen.R!G!B!.comment=一些有关故障效果的神秘特效（闪烁注意！）
 
 
