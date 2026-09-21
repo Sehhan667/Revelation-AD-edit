@@ -330,7 +330,7 @@ void main() {
         lightingOut = CalculateSpecularReflections(screenPos, viewPos, worldNormal, worldDir, dither, lightmap.y, waterMask);
         NdotL = dot(worldNormal, worldLightDir);
     } else {
-        lightingOut.rgb = global.skyUpIlluminance * cube(lightmap.y);
+        lightingOut.rgb = global.skyUpIlluminance * AmbientSkyGate(lightmap.y);
         lightingOut.rgb += CalculateBlocklightFalloff(lightmap.x) * blocklightColor;
     }
 

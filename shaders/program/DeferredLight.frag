@@ -187,25 +187,6 @@ uniform sampler2D atlas2D;
 
 
 //======// Main //================================================================================//
-// [2026-09-21 **水下环境光豁免**] 见 settings.glsl 的 UW_AMBIENT_* 说明。
-// 兜底（与 settings.glsl 的默认值一致）：settings.glsl 有 include guard，本文件也可能先于它被展开。
-#ifndef UW_AMBIENT_STRENGTH
-    #define UW_AMBIENT_STRENGTH 0.35
-#endif
-#ifndef UW_AMBIENT_DEPTH_MULT
-    #define UW_AMBIENT_DEPTH_MULT 1.0
-#endif
-// 非水下：原样返回 lightmap。水下：返回一个"等效天光"——按**水的消光**随相机水深衰减，
-// 而不是用游戏那套被压到 0 的 lightmap（游戏水下每格降 1 级、约 15 格归零）。
-// 相机水深与 lib/water/WaterFog.glsl 的 EstimateCameraWaterDepth 同一套近似：
-// eyeSkylightSmooth = ((eyeBrightness.y/240)^4) 的时域平滑 ⇒ 开四次方还原亮度，再线性反解 [0,15] 格。
-float UnderwaterAmbientSkylight(in float lm) {
-    if (isEyeInWater != 1) return lm;
-    float depth = saturate(1.0 - pow(max(eyeSkylightSmooth, 1e-4), 0.25)) * 15.0;
-    float skyThru = exp2(-rLOG2 * waterExtinction.g * depth * UW_AMBIENT_DEPTH_MULT);
-    return max(lm, UW_AMBIENT_STRENGTH * skyThru);
-}
-
 void main() {
     
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
@@ -607,7 +588,8 @@ void main() {
     // 环境光累积
     vec3 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
     // [2026-09-21 水下环境光豁免] 下面所有**环境光**的天光门控都用这个，而不是 lightmap.y
-    float lmAmb = UnderwaterAmbientSkylight(lightmap.y);
+    float lmAmb = AmbientSkyLinear(lightmap.y);   // 线性场合用它
+    float lmGate = AmbientSkyGate(lightmap.y);    // 替代原 cube(lightmap.y) 的场合用它
     // [2026-09-03 SH 缓存复用] 网格内(L528)与网格外(L561)两处均以相同参数
     // (global.skySH, worldNormal) 调用 ConvolvedReconstructSH3。网格边缘像素
     // (voxelEdgeBlend>0 且 ambInVoxelGrid) 会同时命中两处 → 同像素重复重建 9 项 SH。
@@ -704,7 +686,7 @@ void main() {
         // [2026-08-18] 边缘过渡：ambientInVoxelGrid 内的边缘区域（voxelEdgeBlend>0）
         // 也混入网格外同款 SH 环境光，权重随边缘距离渐隐——新方块进网格不再暗→亮跳变。
         if (lmAmb > EPS && (!ambientInVoxelGrid || voxelEdgeBlend > 0.0)) {
-            float lm3 = cube(lmAmb);
+            float lm3 = lmGate;   // 原为 cube(lightmap.y)：水下走线性，不立方
             ambientAccum += skySHIrradiance * lm3 * voxelEdgeBlend;
             ambientAccum += CalculateFakeBouncedLight(worldNormal) * lm3 * (lmAmb * lmAmb) * sunlightBase * voxelEdgeBlend;
         }

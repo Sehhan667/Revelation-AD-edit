@@ -9,6 +9,32 @@
 
 #include "/lib/surface/BRDF.glsl"
 
+// [2026-09-21 **水下环境项豁免**（修"深水里背光面死黑"）] 见 settings.glsl 的 UW_AMBIENT_* 说明。
+// 游戏在水下把天光 lightmap 每格降 1 级（15 级制）、约 15 格归零；**直射光早已豁免**
+//（DeferredLight 的 sunlightFactor 里有 + float(isEyeInWater)），环境光原来没有 ⇒ 背光面死黑。
+// 这里给环境项一个"等效天光"：按**水的消光**随相机水深衰减。相机水深与
+// lib/water/WaterFog.glsl 的 EstimateCameraWaterDepth 同一套近似。
+// **非水下时两个函数都原样返回入参** ⇒ 水面上行为逐位不变（这是本改动的硬约束）。
+//
+// 水下光柱透射：绿通道最易穿透，用它定标；UW_AMBIENT_DEPTH_MULT = 路径倍率。
+float AmbientSkyThru() {
+    float depth = saturate(1.0 - pow(max(eyeSkylightSmooth, 1e-4), 0.25)) * 15.0;
+    return exp2(-rLOG2 * waterExtinction.g * depth * UW_AMBIENT_DEPTH_MULT);
+}
+
+// **线性版**：用于原本就用 lightmap.y 一次方的场合（skyPresence / localDarkness 等）。
+float AmbientSkyLinear(in float lm) {
+    if (isEyeInWater != 1) return lm;
+    return max(lm, UW_AMBIENT_STRENGTH * AmbientSkyThru());
+}
+
+// **门控版**：替代原来的 cube(lightmap.y)。水下**不能立方** ——
+// 深度 10 格时等效天光≈0.15，0.15³=0.0034 仍然等于黑（这正是"把强度调到 1 还是黑"的原因）。
+float AmbientSkyGate(in float lm) {
+    if (isEyeInWater != 1) return cube(lm);
+    return max(cube(lm), UW_AMBIENT_STRENGTH * AmbientSkyThru());
+}
+
 //================================================================================================//
 
 float CalculateFakeBouncedLight(in vec3 normal) {
