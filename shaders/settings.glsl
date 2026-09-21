@@ -485,6 +485,17 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define MOTION_BLUR_SAMPLES 4 // Sample count of motion blur. [2 3 4 5 6 7 8 9 10 12 14 16 18 20 22 24]
 	#define MOTION_BLUR_STRENGTH 1.0 // Strength of the motion blur. [0.0 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.5 1.7 2.0 2.5 3.0 3.5 4.0 4.5 5.0 7.0 10.0 12.0 14.0 16.0 18.0 20.0]
 
+/* A/B Check Fallbacks — 临时检查脚手架，实测确认后整块连同改动检查页删除 */
+	// [2026-09-21 检查回退] 本批待实测优化的回退开关，集中在「改动检查」页
+	//（shaders.properties 的 screen.ABCheck，从 Debug 菜单进入）做 A/B 对比。
+	// B4 回退：DOF 后置滤波分离（默认关 = 合并版）。开启恢复 composite6_b
+	//（Postfilter.comp）的三段式旧链路；pass 文件存在即多一次着色器编译（仅加载期）。
+	//#define DOF_SPLIT_POSTFILTER
+	// B5 回退：运动模糊全分辨率（默认关 = 半分辨率块处理版）。
+	//#define MOTION_BLUR_FULL_RES
+	// 实体故障帧级门控（默认开 = ddd28690 行为）。关闭 = 之前的无条件执行原行为。
+	#define HURT_GLITCH_FRAME_GATE
+
 /* Bloom */
 	#define BLOOM
 	#define BLOOMY_FOG

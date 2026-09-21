@@ -595,6 +595,18 @@ option.MOTION_BLUR=动态模糊
 option.MOTION_BLUR_SAMPLES=动态模糊采样数
 option.MOTION_BLUR_STRENGTH=动态模糊强度
 
+# [2026-09-21 改动检查页] 临时 A/B 回退开关，集中在 调试 → 改动检查
+screen.ABCheck=改动检查（临时）
+screen.ABCheck.comment=本批待实测改动的开关集中页：逐项开关做改动前/后 A/B 对比。全部确认后此页与开关会随脚手架一起删除。
+option.MOTION_BLUR_FULL_RES=运动模糊全分辨率（回退）
+option.MOTION_BLUR_FULL_RES.comment=回退半分辨率优化：恢复逐像素全分辨率运动模糊（每像素独立运动向量与采样循环）。仅在快速转头边缘出现破碎/拖影异常时开启对比；默认关闭 = 半分辨率块处理版。
+option.DOF_SPLIT_POSTFILTER=景深分离后置滤波（回退）
+option.DOF_SPLIT_POSTFILTER.comment=回退 Postfilter 合并优化：恢复独立的后置滤波 pass（composite6_b，3x3 同层中值），景深走 Gather→colortex15→Postfilter 旧链路。仅在散景出现异常时开启对比；默认关闭 = 合并版（少一个全屏 pass）。开启会多一次着色器编译（仅加载期）。
+option.HURT_GLITCH_FRAME_GATE=实体故障帧级门控
+option.HURT_GLITCH_FRAME_GATE.comment=关闭后实体受击特效不再做帧级门控（每帧无条件执行 sin 链与撕裂循环，回到门控优化前的行为）。仅当攻击生物时特效不触发或异常时关闭对比。
+value.HURT_GLITCH_FRAME_GATE.true=开启
+value.HURT_GLITCH_FRAME_GATE.false=关闭
+
 option.BLOOM=泛光
 option.BLOOM.comment=[3帧]泛光效果
 option.BLOOM_BLENDING_MODE=泛光混合模式

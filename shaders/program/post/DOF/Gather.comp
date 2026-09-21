@@ -44,7 +44,14 @@ const vec2 workGroupsRender = vec2(1.0, 1.0);
 // [2026-09-21 B4] 原 Postfilter pass（composite6_b）合并进本 pass：colortex15 只剩
 // Prepare 数据的只读消费，最终 DOF 结果直接写 colortex0，省一个全分辨率 compute
 // dispatch 与 colortex15 一次全屏读 + colortex0 一次全屏写的往返。
-layout(rgba16f) readonly restrict uniform image2D colorimg15;
+// [2026-09-21 检查回退] DOF_SPLIT_POSTFILTER（改动检查页，默认关）：恢复 B4 合并前的
+// 三段式 —— Gather 把原始结果写回 colortex15（可写），composite6_b（Postfilter.comp）
+// 做同层中值再写 colortex0，供实测 A/B 对比。
+#ifdef DOF_SPLIT_POSTFILTER
+	layout(rgba16f) restrict uniform image2D colorimg15;
+#else
+	layout(rgba16f) readonly restrict uniform image2D colorimg15;
+#endif
 writeonly restrict uniform image2D colorimg0;
 
 //======// Uniform //==============================================================================//
@@ -60,11 +67,15 @@ writeonly restrict uniform image2D colorimg0;
 
 // [2026-09-21 B4] 18x18 tile = workgroup 16x16 + 1 圈 pad，与原 Postfilter 相同的
 // LDS 预算；pad 槽由 stageCount 循环分摊给全部线程（越界源坐标 clamp 到图像边缘）。
+// [2026-09-21 检查回退] DOF_SPLIT_POSTFILTER（分离后置滤波）时不用 LDS——中值在
+// composite6_b 里做，LDS 与相关函数整块剔除（LDS 是静态分配，不剔就白占）。
+#ifndef DOF_SPLIT_POSTFILTER
 const uint padRadius = 1u;
 const uvec2 sharedSize = gl_WorkGroupSize.xy + (padRadius << 1u);
 
 shared vec4 sharedTile[sharedSize.y][sharedSize.x];
 shared float sharedCoc[sharedSize.y][sharedSize.x];
+#endif
 
 //======// Function //============================================================================//
 
@@ -277,6 +288,8 @@ void DofUpdateFocus() {
 }
 
 // [2026-09-21 B4] 以下三段自原 Postfilter.comp 平移，LDS 访问函数换名对齐本文件。
+// [2026-09-21 检查回退] DOF_SPLIT_POSTFILTER 时中值在 composite6_b 做，整块剔除。
+#ifndef DOF_SPLIT_POSTFILTER
 vec4 DofPostfilterLoad(uvec2 localTexel) {
 	return sharedTile[localTexel.y][localTexel.x];
 }
@@ -319,42 +332,59 @@ vec3 DofMedian3x3(uvec2 localCenter, float centerCoc) {
 	DofSort3(lowMax, medianMid, highMin, resultLow, resultMedian, resultHigh);
 	return resultMedian;
 }
+#endif // !DOF_SPLIT_POSTFILTER
 
 //======// Main //================================================================================//
 void main() {
-	// [2026-09-21 B4] 越界线程不提前 return：LDS tile 必须填满（中值要读邻域），
-	// 源坐标 clamp 到图像边缘即可；输出阶段再按 texelPos 边界剔除。
-	ivec2 imageEnd = ivec2(viewSize) - 1;
-	ivec2 groupBase = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy) - ivec2(padRadius);
+	#ifdef DOF_SPLIT_POSTFILTER
+		// [2026-09-21 检查回退] B4 合并前的原版 main：原始 gather 结果写 colortex15，
+		// 中值交给 composite6_b（Postfilter.comp，enabled = DEPTH_OF_FIELD &&
+		// DOF_SPLIT_POSTFILTER）。
+		ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+		if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
 
-	const uint sharedArea = sharedSize.x * sharedSize.y;
-	const uint groupArea = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
-	const uint stageCount = (sharedArea + groupArea - 1u) / groupArea;
+		imageStore(colorimg15, texelPos, DofFilter(texelPos));
 
-	for (uint stage = 0u; stage < stageCount; ++stage) {
-		uint loadIndex = gl_LocalInvocationIndex + stage * groupArea;
-		if (loadIndex < sharedArea) {
-			uvec2 localTexel = uvec2(loadIndex % sharedSize.x, loadIndex / sharedSize.x);
-			ivec2 sourceTexel = clamp(groupBase + ivec2(localTexel), ivec2(0), imageEnd);
-			sharedTile[localTexel.y][localTexel.x] = DofFilter(sourceTexel);
-			sharedCoc[localTexel.y][localTexel.x] = texelFetch(colortex3, sourceTexel, 0).a;
+		#if CAMERA_FOCUS_MODE == 0
+			if (all(equal(texelPos, ivec2(0)))) {
+				DofUpdateFocus();
+			}
+		#endif
+	#else
+		// [2026-09-21 B4] 越界线程不提前 return：LDS tile 必须填满（中值要读邻域），
+		// 源坐标 clamp 到图像边缘即可；输出阶段再按 texelPos 边界剔除。
+		ivec2 imageEnd = ivec2(viewSize) - 1;
+		ivec2 groupBase = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy) - ivec2(padRadius);
+
+		const uint sharedArea = sharedSize.x * sharedSize.y;
+		const uint groupArea = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
+		const uint stageCount = (sharedArea + groupArea - 1u) / groupArea;
+
+		for (uint stage = 0u; stage < stageCount; ++stage) {
+			uint loadIndex = gl_LocalInvocationIndex + stage * groupArea;
+			if (loadIndex < sharedArea) {
+				uvec2 localTexel = uvec2(loadIndex % sharedSize.x, loadIndex / sharedSize.x);
+				ivec2 sourceTexel = clamp(groupBase + ivec2(localTexel), ivec2(0), imageEnd);
+				sharedTile[localTexel.y][localTexel.x] = DofFilter(sourceTexel);
+				sharedCoc[localTexel.y][localTexel.x] = texelFetch(colortex3, sourceTexel, 0).a;
+			}
 		}
-	}
 
-	memoryBarrierShared();
-	barrier();
+		memoryBarrierShared();
+		barrier();
 
-	ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
-	if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+		ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+		if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
 
-	uvec2 localCenter = gl_LocalInvocationID.xy + padRadius;
-	vec4 centerData = DofPostfilterLoad(localCenter);
-	vec3 medianColor = DofMedian3x3(localCenter, DofPostfilterLoadCoc(localCenter));
-	imageStore(colorimg0, texelPos, vec4(medianColor, centerData.a));
+		uvec2 localCenter = gl_LocalInvocationID.xy + padRadius;
+		vec4 centerData = DofPostfilterLoad(localCenter);
+		vec3 medianColor = DofMedian3x3(localCenter, DofPostfilterLoadCoc(localCenter));
+		imageStore(colorimg0, texelPos, vec4(medianColor, centerData.a));
 
-	#if CAMERA_FOCUS_MODE == 0
-		if (all(equal(texelPos, ivec2(0)))) {
-			DofUpdateFocus();
-		}
+		#if CAMERA_FOCUS_MODE == 0
+			if (all(equal(texelPos, ivec2(0)))) {
+				DofUpdateFocus();
+			}
+		#endif
 	#endif
 }
