@@ -187,6 +187,25 @@ uniform sampler2D atlas2D;
 
 
 //======// Main //================================================================================//
+// [2026-09-21 **水下环境光豁免**] 见 settings.glsl 的 UW_AMBIENT_* 说明。
+// 兜底（与 settings.glsl 的默认值一致）：settings.glsl 有 include guard，本文件也可能先于它被展开。
+#ifndef UW_AMBIENT_STRENGTH
+    #define UW_AMBIENT_STRENGTH 0.35
+#endif
+#ifndef UW_AMBIENT_DEPTH_MULT
+    #define UW_AMBIENT_DEPTH_MULT 1.0
+#endif
+// 非水下：原样返回 lightmap。水下：返回一个"等效天光"——按**水的消光**随相机水深衰减，
+// 而不是用游戏那套被压到 0 的 lightmap（游戏水下每格降 1 级、约 15 格归零）。
+// 相机水深与 lib/water/WaterFog.glsl 的 EstimateCameraWaterDepth 同一套近似：
+// eyeSkylightSmooth = ((eyeBrightness.y/240)^4) 的时域平滑 ⇒ 开四次方还原亮度，再线性反解 [0,15] 格。
+float UnderwaterAmbientSkylight(in float lm) {
+    if (isEyeInWater != 1) return lm;
+    float depth = saturate(1.0 - pow(max(eyeSkylightSmooth, 1e-4), 0.25)) * 15.0;
+    float skyThru = exp2(-rLOG2 * waterExtinction.g * depth * UW_AMBIENT_DEPTH_MULT);
+    return max(lm, UW_AMBIENT_STRENGTH * skyThru);
+}
+
 void main() {
     
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
@@ -587,6 +606,8 @@ void main() {
 
     // 环境光累积
     vec3 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
+    // [2026-09-21 水下环境光豁免] 下面所有**环境光**的天光门控都用这个，而不是 lightmap.y
+    float lmAmb = UnderwaterAmbientSkylight(lightmap.y);
     // [2026-09-03 SH 缓存复用] 网格内(L528)与网格外(L561)两处均以相同参数
     // (global.skySH, worldNormal) 调用 ConvolvedReconstructSH3。网格边缘像素
     // (voxelEdgeBlend>0 且 ambInVoxelGrid) 会同时命中两处 → 同像素重复重建 9 项 SH。
@@ -603,7 +624,7 @@ void main() {
     // [2026-09-04 修"夜晚朝下很暗"] skyPresence 原只用 lightmap.y——夜里月光(≥0.2)也判成"有天空"
     // → downFade 把朝下环境光乘 0，叠加夜里天空 SH 对下方向≈0 → 朝下几乎黑。加阳光门控：
     // 仅白天(太阳在地平线附近/之上)才算"有天空"触发下向抹除；深夜 sun<0.1 → 0 → 朝下保留底光。
-    float skyPresence = saturate(lightmap.y * 5.0) * saturate(worldSunDir.y * 10.0 + 1.0);
+    float skyPresence = saturate(lmAmb * 5.0) * saturate(worldSunDir.y * 10.0 + 1.0);
     ambientAccum *= mix(1.0, downFade, skyPresence);
 
     // [2026-08-18 网格边缘过渡] 网格外环境光平滑过渡进网格内几格：
@@ -682,10 +703,10 @@ void main() {
         // 计算保留但不消费（供后续天光方案复用）。
         // [2026-08-18] 边缘过渡：ambientInVoxelGrid 内的边缘区域（voxelEdgeBlend>0）
         // 也混入网格外同款 SH 环境光，权重随边缘距离渐隐——新方块进网格不再暗→亮跳变。
-        if (lightmap.y > EPS && (!ambientInVoxelGrid || voxelEdgeBlend > 0.0)) {
-            float lm3 = cube(lightmap.y);
+        if (lmAmb > EPS && (!ambientInVoxelGrid || voxelEdgeBlend > 0.0)) {
+            float lm3 = cube(lmAmb);
             ambientAccum += skySHIrradiance * lm3 * voxelEdgeBlend;
-            ambientAccum += CalculateFakeBouncedLight(worldNormal) * lm3 * (lightmap.y * lightmap.y) * sunlightBase * voxelEdgeBlend;
+            ambientAccum += CalculateFakeBouncedLight(worldNormal) * lm3 * (lmAmb * lmAmb) * sunlightBase * voxelEdgeBlend;
         }
     #endif
 
@@ -698,7 +719,7 @@ void main() {
 
     vec3 finalAo = ao;
     #ifdef COMPENSATION_ENABLED
-        float localDarkness = 1.0 - saturate(lightmap.y * 5.0);
+        float localDarkness = 1.0 - saturate(lmAmb * 5.0);
         float aoEnhanceWeight = compensationAlpha * localDarkness;
         finalAo = pow(finalAo, vec3(1.0 + COMPENSATION_AO_BOOST * aoEnhanceWeight));
     #endif

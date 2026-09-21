@@ -781,3 +781,10 @@ option.RSM_BRIGHTNESS=RSM Brightness (not wired)
 option.RSM_BRIGHTNESS.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
 option.RSM_MAX_ACCUM_FRAMES=RSM Max Accumulation Frames (not wired)
 option.RSM_MAX_ACCUM_FRAMES.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
+
+option.UW_AMBIENT_STRENGTH=Underwater Ambient Strength
+option.UW_AMBIENT_STRENGTH.comment=Ambient light strength for underwater surfaces that are NOT in direct sunlight. The game attenuates the sky lightmap by one level per block underwater (reaching zero around 15 blocks), and direct sunlight is already exempted from that attenuation while ambient light was not - so deep underwater, faces turned away from the sun went almost black. This option gives the ambient term an equivalent sky light based on the WATER extinction at the camera depth, instead of the crushed lightmap. 0 = disable the exemption (old behaviour); default 0.35.
+option.UW_AMBIENT_DEPTH_MULT=Underwater Ambient Path Length
+option.UW_AMBIENT_DEPTH_MULT.comment=Effective path-length multiplier for sky light travelling through the water column. 1.0 = vertical path; higher means faster falloff and darker deep water. Default 1.0.
+option.UW_VOXEL_SKY_WATER_FLOOR=Voxel Sky Light: Underwater Floor
+option.UW_VOXEL_SKY_WATER_FLOOR.comment=Underwater value of the analytic sky-light floor used by voxel GI (previously hard-coded at 0.003, which effectively removed all indirect light underwater). Raise it for brighter GI inside underwater shadows. 0.003 = old behaviour; default 0.05.

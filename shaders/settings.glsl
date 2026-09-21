@@ -131,6 +131,23 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// [2026-08-20] 水雾太阳光晕受"屏幕上太阳是否被遮挡"影响（默认开）。太阳被地形挡/出屏/在背后 → 压掉水中正对太阳的模糊光晕。
 	#define UW_SUN_OCCLUSION // [OFF ON] 水中太阳光晕受太阳遮挡影响
 
+	// [2026-09-21 **水下环境光豁免**（修"深水里背光面死黑"）]
+	// 病因：游戏在水下把天光 lightmap 每格降 1 级（15 级制）、约 15 格归零。
+	// **直射光早已豁免**（DeferredLight 的 sunlightFactor 里有 `+ float(isEyeInWater)`），
+	// 而环境光没有：天空 SH 被 `lightmap.y > EPS` 整段跳过、体素天光下限只有 0.003、
+	// 假反弹光被 lightmap³ 压没 ⇒ 深水里只剩 MINIMUM_AMBIENT_BRIGHTNESS 底光
+	// ⇒ **没被直射的面接近死黑**（用户实测：直射面正常、背光面特别黑）。
+	// 修法：给环境光算一个"等效天光"——按**水的消光**随相机水深衰减，而不是用被压死的 lightmap。
+	// 相机水深用与 lib/water/WaterFog.glsl 的 EstimateCameraWaterDepth 同一套近似
+	//（eyeSkylightSmooth 开四次方还原天光亮度，再线性反解 [0,15] 格）。
+	// UW_AMBIENT_STRENGTH = 水下环境光整体强度（0 = 完全关掉本豁免，回到旧行为）
+	#define UW_AMBIENT_STRENGTH 0.35 // [0.0 0.1 0.2 0.35 0.5 0.7 1.0]
+	// 天空半球的光穿水柱的等效路径倍率（1.0 = 垂直路径；越大衰减越快）
+	#define UW_AMBIENT_DEPTH_MULT 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
+	// 体素天光（SimpleSkyLighting）在水下的门控下限——原来是硬编码的 0.003（千分之三），
+	// 等于把水下 GI 的间接光整个掐掉。0.003 = 旧行为。
+	#define UW_VOXEL_SKY_WATER_FLOOR 0.05 // [0.003 0.01 0.02 0.05 0.08 0.12 0.2]
+
 	// [2026-09-12 雾中光束] 体积光不再是独立一层，而是「让雾的太阳散射吃阴影贴图」：
 	// 沿视线分层取 VF_VOLUME_SHADOW_SAMPLES 个抖动采样点估计这条射线的阴影可见度，
 	// 乘在雾的太阳 in-scatter 上 —— 被树叶/窗缝/洞口切开的明暗直接长在雾上。

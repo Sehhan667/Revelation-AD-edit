@@ -46,8 +46,14 @@ vec3 SimpleSkyLighting(vec3 skylightColor, vec3 shadowlightColor, float NdotU, f
     vec3 skySunLight = direct * (NdotU * 0.015 + 0.02);
     skylight += skySunLight;
     skylight = mix(skylight, direct * (NdotU * 0.003 + 0.005), wetness * 0.6);
-    // 纯净线性 lightmap*0.22 门控（对齐参考实现，不放大写入下限）
-    return skylight * max(float(isEyeInWater == 1) * 0.003, lightmap * 0.22);
+// [2026-09-21 水下环境光豁免] 这个下限原来是硬编码的 0.003（千分之三）—— 水下时它
+// 等于把 GI 的间接光整个掐掉（游戏在水下还会把 lightmap 每格降 1 级），于是"没被直射的
+// 面"死黑。改成可调（默认 0.05）。0.003 = 旧行为。见 settings.glsl 的 UW_AMBIENT_* 说明。
+#ifndef UW_VOXEL_SKY_WATER_FLOOR
+    #define UW_VOXEL_SKY_WATER_FLOOR 0.05
+#endif
+// 纯净线性 lightmap*0.22 门控（对齐参考实现，不放大写入下限）
+return skylight * max(float(isEyeInWater == 1) * UW_VOXEL_SKY_WATER_FLOOR, lightmap * 0.22);
 }
 
 // 地平线衰减：上半球全开，略低于地平线即截止（与通用光追天空采样一致）
