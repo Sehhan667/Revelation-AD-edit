@@ -38,11 +38,19 @@ SSS PCF 遮挡深度选项）已 `git restore` 全部回退（9 文件恢复 HEA
 三路子代理报告 + 主会话逐条核实后，成立的代码层优化项：
 
 **A 档（高置信，推荐）**
-1. **ENTITY_AREA_GLITCH 帧级门控**（Final.frag L152-219）——✅ 已实施（commit ddd28690，
-   2026-09-20）：colortex10 升 RGBA16F，HurtTimer（composite5，已逐像素读 colortex7）在
-   (0,0) 每帧对 R 做稀疏采样聚合「上一帧存在受伤实体」写入 B（与击杀脉冲触发复用同一
-   循环，触发行为逐位不变）；Final 据 B 跳过整段 sin 链 + 撕裂循环。标志晚一帧 +
-   稀疏网格对小实体有漏检可能（氛围特效可接受）；KILL_RIPPLE 关闭时 B 恒 1（不门控）。
+1. **ENTITY_AREA_GLITCH 帧级门控**（Final.frag）——❌ **已撤销**（2026-09-21）。
+   原实现（commit ddd28690）：colortex10 升 RGBA16F，HurtTimer（composite5，逐像素读
+   colortex7）在 (0,0) 每帧对 R 做稀疏采样聚合「上一帧存在受伤实体」写入 B，Final 据 B
+   跳过整段 sin 链 + 撕裂循环。
+   **撤销原因**：该门控的假设「KILL_RIPPLE 关闭时 B 恒 1」是错的 —— composite5 本身在
+   properties 里被 `composite5.enabled = KILL_RIPPLE` 门控，KILL_RIPPLE 默认关闭
+   ⇒ pass 根本不调度 ⇒ B 读到未初始化值（colortex10Clear = false）⇒ 门控恒假
+   ⇒ **实体受伤特效整个消失**（用户报障）。
+   **处理**：按用户要求**整体移除 KILL_RIPPLE**（HurtTimer.frag / KillRipple.glsl /
+   world*/composite5.* / colortex10 / 全部 GUI 与 lang 条目），门控随之移除，
+   ENTITY_AREA_GLITCH 回到 ddd28690 之前的无条件执行。
+   教训：**门控的启用条件必须与「写该标志的 pass」的启用条件完全一致**；
+   pass 被 `*.enabled` 禁用时，它的 `#else`/兜底分支不会执行。
 2. **SSS 背面透光采样编译剔除**（DeferredLight.frag L446-459）——✅ 已实施（commit
    cacfb1e4，2026-09-20）：sssBackVisibility 的声明 + 计算段 + sssSunGate 全部包进
    `#if SUBSURFACE_SCATTERING_MODEL == 1`，默认旧版档每 SSS 薄片像素省 1 次

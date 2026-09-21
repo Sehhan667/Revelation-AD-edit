@@ -34,7 +34,6 @@ out vec3 finalOut;
 #include "/lib/universal/Random.glsl"
 
 #include "/lib/post/GradeCore.glsl"
-#include "/lib/post/KillRipple.glsl"
 #include "/lib/post/StartupLogo.glsl"
 
 // [2026-09-21 Grade+Final 合并] CAS 关闭档（默认）下 composite31 不调度，本 pass
@@ -192,12 +191,14 @@ void main() {
 
     // ========== 实体区域故障 ==========
     #ifdef ENTITY_AREA_GLITCH
-        // [2026-09-20 帧级门控] colortex10 的 (0,0).B = HurtTimer（composite5）每帧聚合的
-        // 「上一帧稀疏网格上存在受伤实体」标志（R > 0 ⟺ 受伤实体 mask）。常态（无受伤
-        // 实体）下整段跳过——否则全屏每像素无条件白付 7 次 sin 链 + GLITCH_TEAR_LAYERS
-        // 层撕裂循环（约 27 次 SFU sin + ~40 ALU）。标志晚一帧（受击首帧故障延迟一帧
-        // 显示，无感）；KILL_RIPPLE 关闭时 B 恒 1，本特效保持无门控的原行为。
-        if (texelFetch(colortex10, ivec2(0, 0), 0).b > 0.5) {
+        // [2026-09-21] 帧级门控已移除（随 KILL_RIPPLE 一起删除）。
+        // 该门控读 colortex10.b = HurtTimer（composite5）写入的「屏幕上存在受伤实体」标志，
+        // 而 composite5 在 properties 里被 `composite5.enabled = KILL_RIPPLE` 门控、
+        // KILL_RIPPLE 默认关闭（profile.Default 是 !KILL_RIPPLE）⇒ 该 pass 根本不调度、
+        // colortex10 既不写也不清（colortex10Clear = false）⇒ B 恒为未初始化值（实测 0）
+        // ⇒ 门控恒假 ⇒ **实体受伤特效整个消失**（这就是本轮报的 bug）。
+        // 现在 KILL_RIPPLE 已整体移除、colortex10 随之废弃 ⇒ 本段回到 ddd28690 之前的
+        // 无条件执行。代价：常态下全屏每像素白付 7 次 sin 链 + GLITCH_TEAR_LAYERS 层撕裂循环。
         uvec4 matPack = texelFetch(colortex7, texelPos, 0);
         uint matW = matPack.w;
         bool isEntity = ((matW & 1u) != 0u);          // bit0
@@ -246,7 +247,6 @@ void main() {
                 finalOut = mix(finalOut, glitchColor, intensity);
             }
         #endif
-        } // [2026-09-20 帧级门控] hurtEntityOnScreen 结束
     #endif
 
     // ========== 全屏受伤故障（支持始终显示） ==========
@@ -308,57 +308,6 @@ void main() {
     #ifdef DEBUG_CLOUD_NOISE
         if (all(lessThan(texelPos, textureSize(baseNoiseTex, 0).xy))) {
             finalOut = vec3(texelFetch(baseNoiseTex, ivec3(texelPos, 0), 0).x);
-        }
-    #endif
-
-    // ========== 击杀特效：实体持续变红超时 → 手部物品脉冲 ==========
-    #ifdef KILL_RIPPLE
-    float killPulse = texelFetch(colortex10, ivec2(0, 0), 0).g;
-    if (killPulse > 0.0) {
-        // 手部识别：materialID==1u（手）且深度足够近（排除近处雨雪）
-        uvec4 handPack = texelFetch(colortex7, texelPos, 0);
-        bool isHand = (handPack.y == 1u) && (loadDepth0(texelPos) < KILL_RIPPLE_HAND_DEPTH);
-
-        // 脉冲进度 0→1，fade 用二次曲线让末尾快速消失
-        float killProgress = 1.0 - clamp(killPulse / KILL_RIPPLE_DURATION, 0.0, 1.0);
-        float killFade = (1.0 - killProgress) * (1.0 - killProgress);
-
-        // 1) 手部物品整体泛白提亮
-        if (isHand) {
-            finalOut = mix(finalOut, vec3(1.0), KILL_RIPPLE_HIGHLIGHT * killFade);
-        }
-
-        // 2) 扩散涟漪：以当前半径为距离向 8 个方向采样手部 mask，命中即为环上的点
-        int ringR = int(round(killProgress * KILL_RIPPLE_RANGE));
-        if (ringR > 0) {
-            const ivec2 ringDir[8] = ivec2[8](
-                ivec2( 1,  0), ivec2(-1,  0), ivec2( 0,  1), ivec2( 0, -1),
-                ivec2( 1,  1), ivec2( 1, -1), ivec2(-1,  1), ivec2(-1, -1)
-            );
-            for (int i = 0; i < 8; ++i) {
-                ivec2 ringTexel = texelPos + ringDir[i] * ringR;
-                if (clamp(ringTexel, ivec2(0), ivec2(int(viewWidth), int(viewHeight)) - 1) == ringTexel) {
-                    uvec4 rp = texelFetch(colortex7, ringTexel, 0);
-                    if (rp.y == 1u && loadDepth0(ringTexel) < KILL_RIPPLE_HAND_DEPTH) {
-                        finalOut = mix(finalOut, vec3(1.0), killFade);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    #endif
-
-    // ========== 调试：显示击杀特效稀疏采样点 ==========
-    #ifdef DEBUG_KILL_RIPPLE_GRID
-        const int debugGrid = KILL_RIPPLE_GRID;
-        int dgx = clamp(int(floor(float(texelPos.x) * float(debugGrid) / viewWidth)), 0, debugGrid - 1);
-        int dgy = clamp(int(floor(float(texelPos.y) * float(debugGrid) / viewHeight)), 0, debugGrid - 1);
-        int dsx = min(int((dgx + 0.5) * viewWidth / float(debugGrid)), int(viewWidth) - 1);
-        int dsy = min(int((dgy + 0.5) * viewHeight / float(debugGrid)), int(viewHeight) - 1);
-        if (all(lessThanEqual(abs(texelPos - ivec2(dsx, dsy)), ivec2(1)))) {
-            float debugT = clamp(texelFetch(colortex10, texelPos, 0).r / KILL_RIPPLE_TRIGGER_TIME, 0.0, 1.0);
-            finalOut = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), smoothstep(0.5, 1.0, debugT));
         }
     #endif
 

@@ -77,4 +77,8 @@ void main() {
 	#if defined PARALLAX && defined PARALLAX_SHADOW && !defined PARALLAX_DEPTH_WRITE
 		parallaxShadowOut = 0.0;
 	#endif
+
+	// [2026-09-22] 清除 colortex7.w 的低 2 位（实体/受伤标志），防止打包的 specular
+	// 泄露成标志位。与 Block.frag / Terrain.frag 已有的处理一致。
+	materialOut.w &= 0xFCu;
 }
