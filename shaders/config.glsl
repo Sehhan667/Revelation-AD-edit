@@ -28,10 +28,13 @@
 	const int 	colortex7Format 			= RGBA16UI;
 	const int 	colortex8Format 			= RGBA16_SNORM;
 	const int 	colortex9Format 			= RGBA16F;
-	// [2026-09-20 实体故障门控] RG16F -> RGBA16F：新增 B 通道 = (0,0) 处的「上一帧屏幕上
-	// 存在受伤实体」标志（HurtTimer 稀疏采样聚合），Final 的 ENTITY_AREA_GLITCH 段据此
-	// 帧级跳过整段 sin 链 + 撕裂循环。代价 = 该全屏缓冲每像素 +2 字节读写。
+	// [2026-09-22 单变量测试] KILL_RIPPLE 已移除、此缓冲无任何读写者，
+	// 但**保留声明** —— 用来验证「删掉这条声明」是否是环境光变暗的原因。
 	const int 	colortex10Format 			= RGBA16F;
+	// [2026-09-21] colortex10 原为 KILL_RIPPLE 的 HurtTimer 缓冲（R=受伤时长、G=击杀脉冲、
+	// B=实体故障帧级门控标志）。KILL_RIPPLE 已整体删除 ⇒ 本缓冲已无任何读写者。
+	// ⚠ 注意：a3d617f7 当时把这条声明一并删掉了，但用户实测那样会让**环境光变暗**，
+	// 所以这里保留声明。代价 = 多占一个全屏 RGBA16F 缓冲（约 16 MB @1080p）。
 	const int 	colortex12Format 			= RG16;
 	const int 	colortex13Format 			= R8I;
 	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
@@ -112,7 +115,6 @@
 	|	colortex7	|   rgba16ui        |	Full res  	|	Material data
 	|	colortex8	|   rgba16_snorm    |	Full res  	|	Normal data
 	|	colortex9	|   rgba16f     	|	Full res	|	Cloud history
-	|	colortex10	|   RG16F           |	Full res	|	Hurt timer/ripple phase
 	|	colortex12	|   rg16          	|	Full res	|	Water data
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)

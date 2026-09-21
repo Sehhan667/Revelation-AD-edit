@@ -661,8 +661,6 @@ option.DEBUG_BLOOM_TILES=DEBUG_BLOOM_TILES
 option.DEBUG_CLOUD_SHADOWS=DEBUG_CLOUD_SHADOWS
 option.DEBUG_CLOUD_MAP=DEBUG_CLOUD_MAP
 option.DEBUG_NORMALS=DEBUG_NORMALS
-option.DEBUG_KILL_RIPPLE_GRID=显示击杀特效采样点
-option.DEBUG_KILL_RIPPLE_GRID.comment=在屏幕上以颜色显示击杀特效的 16x16 稀疏采样点：绿色=受伤时长低，越接近/超过触发阈值越红
 option.DEBUG_RESHADING=DEBUG_RESHADING
 option.DEBUG_SKY_MAP=DEBUG_SKY_MAP
 option.DEBUG_VOXEL_GI=体素 GI 调试可视化
@@ -767,16 +765,6 @@ option.ENTITY_GLITCH_OUTLINE_TEAR=实体轮廓撕裂
 option.ENTITY_GLITCH_OUTLINE_TEAR.comment=开启后实体轮廓随条带一起水平位移，缺口用邻近背景近似填充；关闭时使用旧版仅内部颜色错位
 option.GLITCH_TEAR_LAYERS=故障特效切片数
 option.GLITCH_TEAR_LAYERS.comment=数值越高画面撕的越碎，细细的切成臊子
-option.KILL_RIPPLE=击杀特效
-option.KILL_RIPPLE.comment=实体被杀死倒地期间会持续变红，超过触发阈值后手部物品出现泛白提亮与扩散涟漪，模拟击杀反馈
-option.KILL_RIPPLE_TRIGGER_TIME=击杀触发阈值
-option.KILL_RIPPLE_TRIGGER_TIME.comment=实体持续变红达到该秒数判定为击杀（普通受击约 0.3~0.5 秒）
-option.KILL_RIPPLE_DURATION=特效脉冲时长
-option.KILL_RIPPLE_DURATION.comment=击杀特效单次脉冲的持续时间（秒）
-option.KILL_RIPPLE_RANGE=涟漪扩散距离
-option.KILL_RIPPLE_RANGE.comment=白色涟漪从手部轮廓向外扩散的最大像素距离
-option.KILL_RIPPLE_HIGHLIGHT=泛白提亮强度
-option.KILL_RIPPLE_HIGHLIGHT.comment=脉冲期间手部物品整体泛白的强度
 screen.R!G!B!.comment=一些有关故障效果的神秘特效（闪烁注意！）
 
 
