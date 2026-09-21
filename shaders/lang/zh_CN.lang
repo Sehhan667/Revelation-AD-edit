@@ -971,3 +971,9 @@ option.UW_VOXEL_SKY_WATER_FLOOR.comment=体素 GI 的解析天光下限在水下
 
 option.UW_VOLUMETRIC_LIGHT_STRENGTH=水下光束亮度倍率
 option.UW_VOLUMETRIC_LIGHT_STRENGTH.comment=水下体积光（阴影切出的光束）的亮度倍率。光束项被水的消光按"该点到水面的水深 × 太阳路径倍率"衰减——水消光约每 5 格衰减到 1/e，所以 10 格深只剩约 15%、太阳低时更几乎为零。原来没有旋钮能提这一项（UW_WAVE_SHAFTS_BRIGHTNESS 只调制波纹图案，不碰基准能量）。本项乘在定向相位项上，均匀多散射环境项不受影响。默认 2.0。
+
+option.UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN=水下光束相位压平
+option.UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN.comment=真实水的散射相位极其尖锐（g=0.95 时：正对太阳 62、偏 15° 掉到 0.45、偏 30° 只剩 0.06）——只有太阳 ±5° 锥内才看得见光柱，稍微偏一点就被均匀环境项淹掉。本项把相位与均匀相位混合，等效于把各向异性降到 g≈0.3~0.6，侧视也能看见光柱（业界的标准做法）。0 = 保持物理相位。
+option.UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF=水下光束深度衰减倍率
+option.UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF.comment=光束的衰减相对水消光的倍率。水消光约每 5 格衰减到 1/e，10 格深处只剩 15% —— 这是"倍率调到 20 也看不见"的原因。本项给光柱单开一个更小的系数（业界惯例）：0.2 时 10 格处从 0.15 提到 0.68。只作用于定向光束项，均匀多散射环境项仍用全量水消光。1.0 = 物理衰减。
+
