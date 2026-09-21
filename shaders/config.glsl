@@ -28,13 +28,9 @@
 	const int 	colortex7Format 			= RGBA16UI;
 	const int 	colortex8Format 			= RGBA16_SNORM;
 	const int 	colortex9Format 			= RGBA16F;
-	// [2026-09-22 单变量测试] KILL_RIPPLE 已移除、此缓冲无任何读写者，
-	// 但**保留声明** —— 用来验证「删掉这条声明」是否是环境光变暗的原因。
-	const int 	colortex10Format 			= RGBA16F;
-	// [2026-09-21] colortex10 原为 KILL_RIPPLE 的 HurtTimer 缓冲（R=受伤时长、G=击杀脉冲、
-	// B=实体故障帧级门控标志）。KILL_RIPPLE 已整体删除 ⇒ 本缓冲已无任何读写者。
-	// ⚠ 注意：a3d617f7 当时把这条声明一并删掉了，但用户实测那样会让**环境光变暗**，
-	// 所以这里保留声明。代价 = 多占一个全屏 RGBA16F 缓冲（约 16 MB @1080p）。
+	// [2026-09-21] colortex10 已废弃：原为 KILL_RIPPLE 的 HurtTimer 缓冲（R=受伤时长、
+	// G=击杀脉冲、B=实体故障帧级门控标志）。KILL_RIPPLE 整体删除后无任何读写者，
+	// 声明一并移除 ⇒ Iris 不再分配该全屏 RGBA16F 缓冲（省 ~16 MB @1080p）。
 	const int 	colortex12Format 			= RG16;
 	const int 	colortex13Format 			= R8I;
 	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
@@ -77,7 +73,6 @@
 	const bool	colortex7Clear				= true;
 	const bool	colortex8Clear				= false;
 	const bool	colortex9Clear				= false;
-	const bool 	colortex10Clear				= false;
 	const bool 	colortex12Clear				= true;
 	const bool 	colortex13Clear				= false;
 	const bool 	colortex14Clear				= false;
