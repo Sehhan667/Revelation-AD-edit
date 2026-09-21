@@ -74,8 +74,4 @@ void main() {
 	#else
 		normalOut.zw = normalOut.xy;
 	#endif
-
-	// [2026-09-22] 清除 colortex7.w 的低 2 位（实体/受伤标志），防止打包的 albedo
-	// 泄露成标志位。与 Block.frag / Terrain.frag 已有的处理一致。
-	materialOut.w &= 0xFCu;
 }
