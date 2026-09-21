@@ -48,7 +48,8 @@ float EstimateCameraWaterDepth(in float skylight) {
 // 均匀多散射环境项）。与 AnalyticWaterFog 同一套相位/湿度/能量约定，差别仅在于：
 //   · 阳光穿水柱的衰减带逐点水深（浅水几乎不衰减、深水指数变暗；旧版是深度无关常数）；
 //   · 源强随深度增浓（UW_FOG_DEEP_DENSITY，深水浓蓝黑）。
-// vis 为该点阴影可见度（UW_VOLUMETRIC_LIGHT 逐点采样，关 = vec3(1.0)），lightEnergy 为
+// vis 为该点阴影可见度（UW_VOLUMETRIC_LIGHT 逐点采样，关 = vec3(1.0)；开启
+// UW_WAVE_SHAFTS 时 vis 还乘入波面焦散调制 —— 只影响直射光束项），lightEnergy 为
 // 白天太阳/夜晚月光补蓝的定向光能量（与雾中光束同一约定，调用方算好）。
 vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFactor, in vec3 vis, in vec3 lightEnergy) {
 	float phase = DualLobePhase(LdotV, 0.95, -0.6, 0.1);

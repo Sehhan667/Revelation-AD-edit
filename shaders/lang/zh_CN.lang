@@ -257,6 +257,10 @@ option.UW_FOG_DEEP_DENSITY=深水增浓倍率
 option.UW_FOG_DEEP_DENSITY.comment=全深处相对水面的浓度倍率（散射与场景衰减同步放大）。1.0 = 不增浓（只有光衰减带来的变暗），越大深水越浓。
 option.UW_VOLUMETRIC_LIGHT=水下体积光
 option.UW_VOLUMETRIC_LIGHT.comment=沿水下雾的每一步采样阴影贴图：桥下、洞顶、地形把阳光/月光光束切开，直接长在水雾上。水面本身不挡光；夜晚有月光光束。需开启水下体积雾。
+option.UW_WAVE_SHAFTS=水下波纹焦散光柱
+option.UW_WAVE_SHAFTS.comment=水面波纹把直射光聚焦成水下摇摆的光柱：沿水下雾每步读取阴影贴图里存的水面波法线做折射汇聚，与水底焦散同一套公式与数据 —— 光柱正好落在水底舞动的光斑上，图案随太阳角度移动，夜晚月光同款。只调制直射光束，漫射环境光不受影响。需开启水下体积雾与水下体积光。
+option.UW_WAVE_SHAFTS_BRIGHTNESS=焦散光柱亮度
+option.UW_WAVE_SHAFTS_BRIGHTNESS.comment=波纹聚焦光柱的亮度倍率，同时控制图案对比度（与水底焦散的亮度增强同源，默认 2.0）。调高光柱更亮更明显；1.0 = 无增益，只有聚焦/发散的明暗图案。
 
 option.UW_SUN_OCCLUSION=水中太阳光晕遮挡
 option.UW_SUN_OCCLUSION.comment=水雾正对太阳方向的模糊光晕是否随"屏幕上太阳被遮挡"消失。太阳被地形挡/出屏/在相机背后 → 光晕隐藏，保留均匀多散射环境雾

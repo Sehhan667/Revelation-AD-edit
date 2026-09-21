@@ -203,6 +203,14 @@ Projection → DistortShadowSpace → 体素平铺 Shift → shadowtex1 硬件�
 - **体积光**：`UW_VOLUMETRIC_LIGHT` 开启时每步 `SampleFogSunShadow`（复用 09-12 雾中光束的
   单点采样，含 COLORED_VOLUMETRIC_FOG 染色分支）→ 桥/洞顶把光束切开；水面不进 shadowtex1
   不挡光；夜晚有月光光束（lightEnergy 与雾中光束共用，已上提到分支外）。
+- **波纹焦散光柱**（09-21 追加）：`UW_WAVE_SHAFTS` 开启时每步再读 `shadowcolor1` 的水面波法线
+  （Shadow.frag 写入的 oct 编码 + 水掩码），折射汇聚公式与水底焦散 `CalculateWaterCaustics`
+  逐项同源（单 tap 无抗锯齿盘 —— BlueNoise + TAA 负责；无深度衰减项 —— sunTransmittance 已有）
+  → 波纹把直射光束聚焦成摇摆光柱，正好落在水底舞动的光斑上（同公式同数据源），图案随太阳
+  角度移动，夜晚月光同款。只乘进 vis（vis 只乘直射相位项），多散射环境项不受影响。
+  平滑下限 0.1 + 亮度倍率与水底焦散同款；`UW_WAVE_SHAFTS_BRIGHTNESS` 默认 2.0。
+  已知取舍：静水（平波面）读作全亮 → 光柱整体 ×2（均匀变亮无图案）；波面倾角 >~55° 的
+  折射终点偏无穷远 → 该步变暗（无 NaN，eta<1 无全反射）。
 - **能量约定**：旧版的整体 skylight 门控改为逐点水下光衰减（物理等效，避免双重衰减）；
   相位（DualLobe）/湿度/多散射项与 `AnalyticWaterFog` 逐项同源。
 - **GUI**（雾 → 体积雾页）：`UW_VOLUMETRIC_FOG`（悬空定义激活，关闭 = 逐位回退原分析式）、
@@ -216,6 +224,8 @@ Projection → DistortShadowSpace → 体素平铺 Shift → shadowtex1 硬件�
 - 深潜：整体变浓变暗、色相自然偏蓝（waterExtinction 物理吸收，无人工色）；调
   `UW_FOG_DEEP_DENSITY` 1.0 / 2.0 / 4.0 对比。
 - 桥下/洞口潜水：光束被切开；对着太阳方向光晕明显（DualLobe 前向散射）；夜里月光光束。
+- 波纹焦散光柱：晴天有波纹的水下，光柱随波纹摇摆且落点与水底光斑对齐；静水整体变亮无
+  图案（已知取舍）；`UW_WAVE_SHAFTS_BRIGHTNESS` 1.0 / 2.0 / 4.0 对比；夜里月光光柱同款。
 - 快速下潜/上浮：深度渐变有 ~5 秒滞后（eyeSkylightSmooth 平滑所致，属已知取舍）。
 - 性能：水下帧率 vs 水面（8 步 × 1 阴影采样/像素，仅水下生效）。
 

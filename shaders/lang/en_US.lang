@@ -245,6 +245,10 @@ option.UW_FOG_DEEP_DENSITY=Deep Water Density
 option.UW_FOG_DEEP_DENSITY.comment=Density multiplier at full depth relative to the surface (scales scattering and scene extinction together). 1.0 = no extra density (only the light-attenuation darkening); higher = denser deep water.
 option.UW_VOLUMETRIC_LIGHT=Underwater Volumetric Light
 option.UW_VOLUMETRIC_LIGHT.comment=Shadow-maps each underwater fog step: bridges, cave ceilings and terrain cut the sun/moon beams out of the water haze. The water surface itself never blocks light; moonlight beams appear at night. Requires Underwater Volumetric Fog.
+option.UW_WAVE_SHAFTS=Underwater Wave Caustic Shafts
+option.UW_WAVE_SHAFTS.comment=Wave ripples focus direct light into dancing columns underwater: each fog step reads the wave normal stored in the shadow map and refracts through it with the exact same formula and data as the floor caustics - the shafts land right on the dancing floor light spots, the pattern follows the sun angle, and moonlight gets the same treatment at night. Only modulates the direct beam, not the diffuse ambient. Requires underwater volumetric fog and light.
+option.UW_WAVE_SHAFTS_BRIGHTNESS=Caustic Shaft Brightness
+option.UW_WAVE_SHAFTS_BRIGHTNESS.comment=Brightness multiplier of the focused shafts, also controls the pattern contrast (same origin as the floor caustics boost, default 2.0). Higher = brighter, more visible shafts; 1.0 = no boost, only the focus/defocus light-and-dark pattern.
 
 option.UW_SUN_OCCLUSION=Underwater Sun Halo Occlusion
 option.UW_SUN_OCCLUSION.comment=Whether the blurry halo toward the sun in underwater fog disappears when the sun is occluded on screen. If the sun is blocked/behind/off-screen the halo hides, keeping the uniform multi-scatter ambient fog

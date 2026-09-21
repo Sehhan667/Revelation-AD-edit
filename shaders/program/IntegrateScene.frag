@@ -81,6 +81,8 @@ layout (location = 0) out vec4 sceneOut;
 uniform sampler2DShadow shadowtex1;
 uniform sampler2D shadowtex0;
 uniform sampler2D shadowcolor0;
+// 水面波法线（oct 编码 + 水掩码，Shadow.frag 写入）—— 波纹焦散光柱读取
+uniform sampler2D shadowcolor1;
 
 vec2 CalculateRefractedCoord(in ivec2 texelPos, in vec3 viewPos, in vec3 screenPos, in bool waterMask) {
     vec3 viewNormal = mat3(gbufferModelView) * FetchSurfaceNormal(texelPos);
@@ -174,6 +176,47 @@ vec3 SampleFogSunShadow(in vec3 camRelPos, in float viewDist) {
     return result;
 }
 
+// [2026-09-21 波纹焦散光柱] 水面波纹对水下直射光束的聚焦调制：与 SampleFogSunShadow
+// 同一投影（阴影形变 + 体素平铺 Shift，超阴影距离返回 1 不调制），读 shadowcolor1 的
+// 水面波法线，折射汇聚公式与水底焦散 CalculateWaterCaustics 逐项同源 —— 因此光柱
+// 正好落在水底舞动的光斑上，图案随太阳角度移动，夜晚月光同款（阴影贴图光源自动切月）。
+// 与水底版的差异：单 tap 无 4 点抗锯齿盘（体积步进的 BlueNoise + TAA 负责时域平均）；
+// 无水体深度衰减项（WaterFogPointSource 的 sunTransmittance 已按逐点水深衰减，避免
+// 双重变暗）。返回值乘进 vis，而 vis 在 WaterFogPointSource 里只乘直射相位项 ——
+// 均匀多散射环境项不受影响（焦散是聚焦的直射光，环境光是已散开的）。
+// 非水面（掩码 0，如正上方有船/桥挡住阳光路径）返回 1 不调制——那类遮挡由
+// SampleFogSunShadow 的实心判定负责。eta < 1 无全反射；极端波面倾角只会让
+// 折射终点偏到无穷远 → saturate 归 0（变暗），不产生 NaN。
+#ifdef UW_WAVE_SHAFTS
+float SampleWaterSurfaceCaustics(in vec3 camRelPos, in float viewDist) {
+    float rangeFade = linearstep(shadowDistance - 8.0, shadowDistance, viewDist);
+    if (rangeFade >= 1.0) return 1.0;
+
+    vec3 shadowClipPos = (shadowModelView * vec4(camRelPos, 1.0)).xyz;
+    shadowClipPos = (shadowProjection * vec4(shadowClipPos, 1.0)).xyz;
+    vec3 ssp = DistortShadowSpace(shadowClipPos) * 0.5 + 0.5;
+    #ifdef ENABLE_VOXELIZATION
+        ShiftShadowScreenPos(ssp.xy);
+    #endif
+
+    if (all(equal(ssp, saturate(ssp)))) {
+        vec4 surfaceData = textureLod(shadowcolor1, ssp.xy, 0.0);
+        if (surfaceData.w > EPS) {
+            vec3 waveNormal = OctDecodeUnorm(surfaceData.xy);
+            vec3 refractDir = refract(vec3(0.0, 1.0, 0.0), waveNormal, 1.0 / WATER_IOR);
+            // 折射方向朝下：除以 y 归一成「垂直下降 1 格」的位移，波面倾角把折射
+            // 终点横向偏移，偏移越小越亮 —— 与水底焦散同一启发式
+            vec3 refractedPos = camRelPos - refractDir / refractDir.y;
+            vec3 surfacePos = camRelPos - vec3(0.0, 1.0, 0.0);
+            float caustics = saturate(1.0 - 12.0 * distance(surfacePos, refractedPos));
+            // 平滑下限 0.1 + 亮度倍率 = 水底焦散同款（倍率进 GUI，默认 2.0）
+            return UW_WAVE_SHAFTS_BRIGHTNESS * (-smin(-caustics, -0.1, 0.15));
+        }
+    }
+    return 1.0;
+}
+#endif
+
 // [2026-09-12 雾中光束] 估计"这条视线上的平均阴影可见度"：沿射线分层取
 // VF_VOLUME_SHADOW_SAMPLES 个点，每点采样阴影贴图；采样点带逐像素/逐帧抖动
 // （dither 来自 BlueNoise），噪声交给 TAA 时域平均（与旧体积光 pass 同一套路，
@@ -234,6 +277,11 @@ mat2x3 RaymarchWaterFog(in float skylight, in float waterDepth, in vec3 worldDir
         vec3 vis = vec3(1.0);
         #ifdef UW_VOLUMETRIC_LIGHT
             vis = SampleFogSunShadow(worldDir * tMid, tMid);
+            // [2026-09-21 波纹焦散光柱] vis 在 WaterFogPointSource 里只乘直射相位项，
+            // 波面聚焦调制乘进 vis 即只影响光束，不碰均匀多散射环境项
+            #ifdef UW_WAVE_SHAFTS
+                vis *= SampleWaterSurfaceCaustics(worldDir * tMid, tMid);
+            #endif
         #endif
 
         scattering += (T0 - T1) * WaterFogPointSource(pointDepth, LdotV, sunVisFactor, vis, lightEnergy);
