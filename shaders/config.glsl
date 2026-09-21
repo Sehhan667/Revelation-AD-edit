@@ -28,9 +28,10 @@
 	const int 	colortex7Format 			= RGBA16UI;
 	const int 	colortex8Format 			= RGBA16_SNORM;
 	const int 	colortex9Format 			= RGBA16F;
-	// [2026-09-21] colortex10 已废弃：原为 KILL_RIPPLE 的 HurtTimer 缓冲（R=受伤时长、
-	// G=击杀脉冲、B=实体故障帧级门控标志）。KILL_RIPPLE 整体删除后无任何读写者，
-	// 声明一并移除 ⇒ Iris 不再分配该全屏 RGBA16F 缓冲（省 ~16 MB @1080p）。
+	// [2026-09-20 实体故障门控] RG16F -> RGBA16F：新增 B 通道 = (0,0) 处的「上一帧屏幕上
+	// 存在受伤实体」标志（HurtTimer 稀疏采样聚合），Final 的 ENTITY_AREA_GLITCH 段据此
+	// 帧级跳过整段 sin 链 + 撕裂循环。代价 = 该全屏缓冲每像素 +2 字节读写。
+	const int 	colortex10Format 			= RGBA16F;
 	const int 	colortex12Format 			= RG16;
 	const int 	colortex13Format 			= R8I;
 	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
@@ -73,6 +74,7 @@
 	const bool	colortex7Clear				= true;
 	const bool	colortex8Clear				= false;
 	const bool	colortex9Clear				= false;
+	const bool 	colortex10Clear				= false;
 	const bool 	colortex12Clear				= true;
 	const bool 	colortex13Clear				= false;
 	const bool 	colortex14Clear				= false;
@@ -110,6 +112,7 @@
 	|	colortex7	|   rgba16ui        |	Full res  	|	Material data
 	|	colortex8	|   rgba16_snorm    |	Full res  	|	Normal data
 	|	colortex9	|   rgba16f     	|	Full res	|	Cloud history
+	|	colortex10	|   RG16F           |	Full res	|	Hurt timer/ripple phase
 	|	colortex12	|   rg16          	|	Full res	|	Water data
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)

@@ -138,10 +138,4 @@ void main() {
 
     materialOut.x = PackupDithered2x8U(lightmap, bayer4(gl_FragCoord.xy));
     materialOut.y = materialID;
-
-    // [2026-09-22] 清除 colortex7.w 的低 2 位（实体 bit0 / 受伤 bit1），防止打包的
-    // albedo 数据泄露成标志位。与 Block.frag / Terrain.frag 已有的处理一致。
-    // 水面 materialID=3u，不会被实体故障的 `materialID != 1u` 排除 ⇒ 漏清会让约
-    // 1/4 的水面像素被误判成"受伤实体"，进而被故障特效硬替换成位移采样（画面变暗）。
-    materialOut.w &= 0xFCu;
 }
