@@ -5,15 +5,6 @@
 // 开启后，太阳被地形挡/出屏/在相机背后 → 压掉水中正对太阳方向的模糊光晕。
 // Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
 // Modified by AnotherCream, 2026.
-#ifndef UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN
-    #define UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN 0.6
-#endif
-#ifndef UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF
-    #define UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF 0.2
-#endif
-#ifndef UW_VOLUMETRIC_LIGHT_STRENGTH
-    #define UW_VOLUMETRIC_LIGHT_STRENGTH 2.0
-#endif
 #ifndef UW_SUN_OCCLUSION
     #define UW_SUN_OCCLUSION // [OFF ON] 水雾太阳光晕受太阳是否被遮挡影响
 #endif
@@ -60,36 +51,18 @@ float EstimateCameraWaterDepth(in float skylight) {
 // vis 为该点阴影可见度（UW_VOLUMETRIC_LIGHT 逐点采样，关 = vec3(1.0)；开启
 // UW_WAVE_SHAFTS 时 vis 还乘入波面焦散调制 —— 只影响直射光束项），lightEnergy 为
 // 白天太阳/夜晚月光补蓝的定向光能量（与雾中光束同一约定，调用方算好）。
-// [2026-09-21 **光柱与雾分离**] shaftSource（out）只承载"定向光 × 可见度 × 波面焦散"那一项，
-// 由调用方作为**独立的一层**叠加；返回的 vec3 仍是雾本身（均匀多散射环境项）。
-// 这样光柱的可见度不再被雾的亮度稀释，也能单独调（UW_VOLUMETRIC_LIGHT_STRENGTH 移到合成处）。
-vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFactor, in vec3 vis,
-                         in vec3 lightEnergy, out vec3 shaftSource) {
+vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFactor, in vec3 vis, in vec3 lightEnergy) {
 	float phase = DualLobePhase(LdotV, 0.95, -0.6, 0.1);
-	// [2026-09-21 **相位压平**] 实测 g=0.95 时：0°=62、15°=0.45、30°=0.06、90°=0.006
-	// ⇒ 只有太阳 ±5° 锥内可见。与均匀相位混合即"把各向异性降到 g≈0.3~0.6"，业界标准做法。
-	phase = mix(phase, uniformPhase, saturate(UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN));
 	#ifdef UW_SUN_OCCLUSION
 		phase *= sunVisFactor;   // 仅压前向散射相位（光晕），保留均匀多散射环境项
 	#endif
 
 	// 阳光/月光到达该点：穿过的水柱 = 该点水深 × 太阳高度路径系数（太阳越低路径越长）
-	float waterColumn = pointDepth * mix(4.0, 1.0, worldLightDir.y);   // 标量：乘上 vec3 的水消光后才成 vec3
-	// [2026-09-21 **光束独立深度衰减**] 光束用轻衰减（否则 10 格深处只剩 0.15、倍率调到 20 也没用）；
-	// 均匀多散射环境项仍用全量水消光 —— 它是"从整个上半球漫射进来"的，物理上该被水吃光。
-	vec3 shaftTransmittance = exp2(-rLOG2 * waterExtinction * waterColumn * UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF);
-	vec3 ambientTransmittance = exp2(-rLOG2 * waterExtinction * waterColumn);
+	vec3 sunTransmittance = exp2(-rLOG2 * waterExtinction * pointDepth * mix(4.0, 1.0, worldLightDir.y));
 
 	const vec3 msV = waterAlbedo * 0.99;
-	// 定向项（= 光柱）与均匀多散射环境项（= 雾）分开累积：
-	// 前者交给调用方单独叠加，后者留在雾里。倍率 UW_VOLUMETRIC_LIGHT_STRENGTH 移到合成处。
-	vec3 shaftPart = phase * vis * shaftTransmittance;
-	vec3 ambientPart = uniformPhase * msV / oms(msV) * ambientTransmittance;
-	vec3 source = ambientPart;
-	// 注意：变量名不能叫 common —— 它是 GLSL 保留字（error C0000: unexpected reserved word）
-	vec3 mediaCommon = oms(wetnessCustom * 0.8) * lightEnergy;
-	shaftSource = shaftPart * mediaCommon;
-	source *= mediaCommon;
+	vec3 source = phase * vis + uniformPhase * msV / oms(msV);
+	source *= oms(wetnessCustom * 0.8) * lightEnergy * sunTransmittance;
 
 	// 深水增浓：散射源随深度增强（透射侧的增浓在 RaymarchWaterFog 里按相机深度定标）
 	source *= mix(1.0, UW_FOG_DEEP_DENSITY, saturate(pointDepth / UW_FOG_DEEP_RANGE));

@@ -243,12 +243,6 @@ option.UW_FOG_DEEP_RANGE=Depth Gradient Range
 option.UW_FOG_DEEP_RANGE.comment=Distance in blocks from the surface to full density. Smaller = gets dense just below the surface; larger = a gentler deep-sea feel. Depth is estimated from the underwater skylight (about 1 light level per block of water).
 option.UW_FOG_DEEP_DENSITY=Deep Water Density
 option.UW_FOG_DEEP_DENSITY.comment=Density multiplier at full depth relative to the surface (scales scattering and scene extinction together). 1.0 = no extra density (only the light-attenuation darkening); higher = denser deep water.
-option.UW_VOLUMETRIC_LIGHT=Underwater Volumetric Light
-option.UW_VOLUMETRIC_LIGHT.comment=Shadow-maps each underwater fog step: bridges, cave ceilings and terrain cut the sun/moon beams out of the water haze. The water surface itself never blocks light; moonlight beams appear at night. Requires Underwater Volumetric Fog.
-option.UW_WAVE_SHAFTS=Underwater Wave Caustic Shafts
-option.UW_WAVE_SHAFTS.comment=Wave ripples focus direct light into dancing columns underwater: each fog step reads the wave normal stored in the shadow map and refracts through it with the exact same formula and data as the floor caustics - the shafts land right on the dancing floor light spots, the pattern follows the sun angle, and moonlight gets the same treatment at night. Only modulates the direct beam, not the diffuse ambient. Requires underwater volumetric fog and light.
-option.UW_WAVE_SHAFTS_BRIGHTNESS=Caustic Shaft Brightness
-option.UW_WAVE_SHAFTS_BRIGHTNESS.comment=Brightness multiplier of the focused shafts, also controls the pattern contrast (same origin as the floor caustics boost, default 2.0). Higher = brighter, more visible shafts; 1.0 = no boost, only the focus/defocus light-and-dark pattern.
 
 option.UW_SUN_OCCLUSION=Underwater Sun Halo Occlusion
 option.UW_SUN_OCCLUSION.comment=Whether the blurry halo toward the sun in underwater fog disappears when the sun is occluded on screen. If the sun is blocked/behind/off-screen the halo hides, keeping the uniform multi-scatter ambient fog
@@ -789,14 +783,6 @@ option.UW_AMBIENT_DEPTH_MULT.comment=Effective path-length multiplier for sky li
 option.UW_VOXEL_SKY_WATER_FLOOR=Voxel Sky Light: Underwater Floor
 option.UW_VOXEL_SKY_WATER_FLOOR.comment=Underwater value of the analytic sky-light floor used by voxel GI (previously hard-coded at 0.003, which effectively removed all indirect light underwater). Raise it for brighter GI inside underwater shadows. 0.003 = old behaviour; default 0.05.
 
-option.UW_VOLUMETRIC_LIGHT_STRENGTH=Underwater Light Shaft Strength
-option.UW_VOLUMETRIC_LIGHT_STRENGTH.comment=Brightness multiplier for the underwater volumetric light (shafts carved by shadows). The shaft term is attenuated by the water extinction over the distance from the point to the surface times the sun path factor - water extinction drops to 1/e about every 5 blocks, so at 10 blocks only about 15% remains, and far less when the sun is low. Previously no slider could raise this term (UW_WAVE_SHAFTS_BRIGHTNESS only modulates the ripple pattern, not the base energy). This multiplies the directional phase term only; the uniform multiple-scattering ambient term is unaffected. Default 2.0.
 
-option.UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN=Underwater Shaft Phase Flattening
-option.UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN.comment=Real water has an extremely peaked scattering phase (with g=0.95: 62 looking straight at the sun, 0.45 at 15 degrees off, only 0.06 at 30 degrees) - the shafts are only visible inside a 5 degree cone around the sun and get swamped by the uniform ambient term elsewhere. This mixes the phase towards the uniform phase, effectively lowering the anisotropy to about g=0.3-0.6 so shafts read from any angle (the industry-standard trick). 0 = keep the physical phase.
-option.UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF=Underwater Shaft Depth Falloff
-option.UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF.comment=Falloff of the shaft term relative to the water extinction. Water extinction drops to 1/e about every 5 blocks, so only 15% remains at 10 blocks - which is why even a 20x strength multiplier showed nothing. This gives the shafts their own much gentler coefficient (standard practice): at 0.2 the 10-block value goes from 0.15 to 0.68. Applies to the directional shaft term only; the uniform multiple-scattering ambient term keeps the full water extinction. 1.0 = physical falloff.
 
-option.UW_WAVE_SHAFTS_FOCUS=Underwater Shaft Caustic Focus
-option.UW_WAVE_SHAFTS_FOCUS.comment=Surface waves focus sunlight into underwater shafts; this is how tight that focus test is: it lights up only where the refracted ray shifts sideways by less than 1/this value within one block of descent. The original hard-coded 12 (shift must be under 0.083 blocks), while typical wave slopes of 5-15 degrees produce 0.1-0.3 blocks of shift - so the caustic was almost always zero and only rare near-vertical wave facets lit up, which reads as very thin light. Lower values widen the test and make the shafts denser and more visible (1.0-3.0 is the most visible). 12.0 = old behaviour.
 

@@ -255,12 +255,6 @@ option.UW_FOG_DEEP_RANGE=深度渐变范围
 option.UW_FOG_DEEP_RANGE.comment=从水面到全浓的距离（格）。调小 = 下潜一点就变浓；调大 = 深海感更平缓。深度由水下天光估计（每格水约降 1 级天光）。
 option.UW_FOG_DEEP_DENSITY=深水增浓倍率
 option.UW_FOG_DEEP_DENSITY.comment=全深处相对水面的浓度倍率（散射与场景衰减同步放大）。1.0 = 不增浓（只有光衰减带来的变暗），越大深水越浓。
-option.UW_VOLUMETRIC_LIGHT=水下体积光
-option.UW_VOLUMETRIC_LIGHT.comment=沿水下雾的每一步采样阴影贴图：桥下、洞顶、地形把阳光/月光光束切开，直接长在水雾上。水面本身不挡光；夜晚有月光光束。需开启水下体积雾。
-option.UW_WAVE_SHAFTS=水下波纹焦散光柱
-option.UW_WAVE_SHAFTS.comment=水面波纹把直射光聚焦成水下摇摆的光柱：沿水下雾每步读取阴影贴图里存的水面波法线做折射汇聚，与水底焦散同一套公式与数据 —— 光柱正好落在水底舞动的光斑上，图案随太阳角度移动，夜晚月光同款。只调制直射光束，漫射环境光不受影响。需开启水下体积雾与水下体积光。
-option.UW_WAVE_SHAFTS_BRIGHTNESS=焦散光柱亮度
-option.UW_WAVE_SHAFTS_BRIGHTNESS.comment=波纹聚焦光柱的亮度倍率，同时控制图案对比度（与水底焦散的亮度增强同源，默认 2.0）。调高光柱更亮更明显；1.0 = 无增益，只有聚焦/发散的明暗图案。
 
 option.UW_SUN_OCCLUSION=水中太阳光晕遮挡
 option.UW_SUN_OCCLUSION.comment=水雾正对太阳方向的模糊光晕是否随"屏幕上太阳被遮挡"消失。太阳被地形挡/出屏/在相机背后 → 光晕隐藏，保留均匀多散射环境雾
@@ -969,14 +963,6 @@ option.UW_AMBIENT_DEPTH_MULT.comment=天空半球的光穿水柱的等效路径�
 option.UW_VOXEL_SKY_WATER_FLOOR=体素天光水下下限
 option.UW_VOXEL_SKY_WATER_FLOOR.comment=体素 GI 的解析天光下限在水下的取值（原实现硬编码 0.003 = 千分之三，等于把水下的间接光整个掐掉）。调大可让水下阴影里的 GI 间接光更亮。0.003 = 旧行为；默认 0.05。
 
-option.UW_VOLUMETRIC_LIGHT_STRENGTH=水下光束亮度倍率
-option.UW_VOLUMETRIC_LIGHT_STRENGTH.comment=水下体积光（阴影切出的光束）的亮度倍率。光束项被水的消光按"该点到水面的水深 × 太阳路径倍率"衰减——水消光约每 5 格衰减到 1/e，所以 10 格深只剩约 15%、太阳低时更几乎为零。原来没有旋钮能提这一项（UW_WAVE_SHAFTS_BRIGHTNESS 只调制波纹图案，不碰基准能量）。本项乘在定向相位项上，均匀多散射环境项不受影响。默认 2.0。
 
-option.UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN=水下光束相位压平
-option.UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN.comment=真实水的散射相位极其尖锐（g=0.95 时：正对太阳 62、偏 15° 掉到 0.45、偏 30° 只剩 0.06）——只有太阳 ±5° 锥内才看得见光柱，稍微偏一点就被均匀环境项淹掉。本项把相位与均匀相位混合，等效于把各向异性降到 g≈0.3~0.6，侧视也能看见光柱（业界的标准做法）。0 = 保持物理相位。
-option.UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF=水下光束深度衰减倍率
-option.UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF.comment=光束的衰减相对水消光的倍率。水消光约每 5 格衰减到 1/e，10 格深处只剩 15% —— 这是"倍率调到 20 也看不见"的原因。本项给光柱单开一个更小的系数（业界惯例）：0.2 时 10 格处从 0.15 提到 0.68。只作用于定向光束项，均匀多散射环境项仍用全量水消光。1.0 = 物理衰减。
 
-option.UW_WAVE_SHAFTS_FOCUS=水下光柱焦散聚焦松紧
-option.UW_WAVE_SHAFTS_FOCUS.comment=水面波纹把阳光聚焦成水下光柱，本项是聚焦判据的松紧：判据是"折射光线下降 1 格内横向偏移 < 1/本值"，原实现硬编码 12（即偏移必须小于 0.083 格）——而典型波面倾角 5°~15° 产生的偏移约 0.1~0.3 格，于是焦散几乎恒为 0，只剩极少数近乎垂直的波面点亮着，看起来就是"非常细的光"。调小本值 = 放宽判据 = 光柱变密变明显（1.0~3.0 最明显）。12.0 = 旧行为。
 
