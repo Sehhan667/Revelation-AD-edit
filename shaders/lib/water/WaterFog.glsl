@@ -5,6 +5,9 @@
 // 开启后，太阳被地形挡/出屏/在相机背后 → 压掉水中正对太阳方向的模糊光晕。
 // Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
 // Modified by AnotherCream, 2026.
+#ifndef UW_VOLUMETRIC_LIGHT_STRENGTH
+    #define UW_VOLUMETRIC_LIGHT_STRENGTH 2.0
+#endif
 #ifndef UW_SUN_OCCLUSION
     #define UW_SUN_OCCLUSION // [OFF ON] 水雾太阳光晕受太阳是否被遮挡影响
 #endif
@@ -61,7 +64,8 @@ vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFac
 	vec3 sunTransmittance = exp2(-rLOG2 * waterExtinction * pointDepth * mix(4.0, 1.0, worldLightDir.y));
 
 	const vec3 msV = waterAlbedo * 0.99;
-	vec3 source = phase * vis + uniformPhase * msV / oms(msV);
+	// [2026-09-21] 定向相位项乘 UW_VOLUMETRIC_LIGHT_STRENGTH（环境项不动）
+	vec3 source = phase * vis * UW_VOLUMETRIC_LIGHT_STRENGTH + uniformPhase * msV / oms(msV);
 	source *= oms(wetnessCustom * 0.8) * lightEnergy * sunTransmittance;
 
 	// 深水增浓：散射源随深度增强（透射侧的增浓在 RaymarchWaterFog 里按相机深度定标）

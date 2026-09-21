@@ -968,3 +968,6 @@ option.UW_AMBIENT_DEPTH_MULT=水下环境光衰减路径倍率
 option.UW_AMBIENT_DEPTH_MULT.comment=天空半球的光穿水柱的等效路径长度倍率。1.0 = 垂直路径；越大衰减越快、深水更快变暗。默认 1.0。
 option.UW_VOXEL_SKY_WATER_FLOOR=体素天光水下下限
 option.UW_VOXEL_SKY_WATER_FLOOR.comment=体素 GI 的解析天光下限在水下的取值（原实现硬编码 0.003 = 千分之三，等于把水下的间接光整个掐掉）。调大可让水下阴影里的 GI 间接光更亮。0.003 = 旧行为；默认 0.05。
+
+option.UW_VOLUMETRIC_LIGHT_STRENGTH=水下光束亮度倍率
+option.UW_VOLUMETRIC_LIGHT_STRENGTH.comment=水下体积光（阴影切出的光束）的亮度倍率。光束项被水的消光按"该点到水面的水深 × 太阳路径倍率"衰减——水消光约每 5 格衰减到 1/e，所以 10 格深只剩约 15%、太阳低时更几乎为零。原来没有旋钮能提这一项（UW_WAVE_SHAFTS_BRIGHTNESS 只调制波纹图案，不碰基准能量）。本项乘在定向相位项上，均匀多散射环境项不受影响。默认 2.0。

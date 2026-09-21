@@ -788,3 +788,6 @@ option.UW_AMBIENT_DEPTH_MULT=Underwater Ambient Path Length
 option.UW_AMBIENT_DEPTH_MULT.comment=Effective path-length multiplier for sky light travelling through the water column. 1.0 = vertical path; higher means faster falloff and darker deep water. Default 1.0.
 option.UW_VOXEL_SKY_WATER_FLOOR=Voxel Sky Light: Underwater Floor
 option.UW_VOXEL_SKY_WATER_FLOOR.comment=Underwater value of the analytic sky-light floor used by voxel GI (previously hard-coded at 0.003, which effectively removed all indirect light underwater). Raise it for brighter GI inside underwater shadows. 0.003 = old behaviour; default 0.05.
+
+option.UW_VOLUMETRIC_LIGHT_STRENGTH=Underwater Light Shaft Strength
+option.UW_VOLUMETRIC_LIGHT_STRENGTH.comment=Brightness multiplier for the underwater volumetric light (shafts carved by shadows). The shaft term is attenuated by the water extinction over the distance from the point to the surface times the sun path factor - water extinction drops to 1/e about every 5 blocks, so at 10 blocks only about 15% remains, and far less when the sun is low. Previously no slider could raise this term (UW_WAVE_SHAFTS_BRIGHTNESS only modulates the ripple pattern, not the base energy). This multiplies the directional phase term only; the uniform multiple-scattering ambient term is unaffected. Default 2.0.
