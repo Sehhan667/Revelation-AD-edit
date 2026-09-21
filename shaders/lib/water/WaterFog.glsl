@@ -60,7 +60,11 @@ float EstimateCameraWaterDepth(in float skylight) {
 // vis 为该点阴影可见度（UW_VOLUMETRIC_LIGHT 逐点采样，关 = vec3(1.0)；开启
 // UW_WAVE_SHAFTS 时 vis 还乘入波面焦散调制 —— 只影响直射光束项），lightEnergy 为
 // 白天太阳/夜晚月光补蓝的定向光能量（与雾中光束同一约定，调用方算好）。
-vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFactor, in vec3 vis, in vec3 lightEnergy) {
+// [2026-09-21 **光柱与雾分离**] shaftSource（out）只承载"定向光 × 可见度 × 波面焦散"那一项，
+// 由调用方作为**独立的一层**叠加；返回的 vec3 仍是雾本身（均匀多散射环境项）。
+// 这样光柱的可见度不再被雾的亮度稀释，也能单独调（UW_VOLUMETRIC_LIGHT_STRENGTH 移到合成处）。
+vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFactor, in vec3 vis,
+                         in vec3 lightEnergy, out vec3 shaftSource) {
 	float phase = DualLobePhase(LdotV, 0.95, -0.6, 0.1);
 	// [2026-09-21 **相位压平**] 实测 g=0.95 时：0°=62、15°=0.45、30°=0.06、90°=0.006
 	// ⇒ 只有太阳 ±5° 锥内可见。与均匀相位混合即"把各向异性降到 g≈0.3~0.6"，业界标准做法。
@@ -77,11 +81,14 @@ vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFac
 	vec3 ambientTransmittance = exp2(-rLOG2 * waterExtinction * waterColumn);
 
 	const vec3 msV = waterAlbedo * 0.99;
-	// [2026-09-21] 定向相位项乘 UW_VOLUMETRIC_LIGHT_STRENGTH（环境项不动）
-	vec3 shaftPart = phase * vis * UW_VOLUMETRIC_LIGHT_STRENGTH * shaftTransmittance;
+	// 定向项（= 光柱）与均匀多散射环境项（= 雾）分开累积：
+	// 前者交给调用方单独叠加，后者留在雾里。倍率 UW_VOLUMETRIC_LIGHT_STRENGTH 移到合成处。
+	vec3 shaftPart = phase * vis * shaftTransmittance;
 	vec3 ambientPart = uniformPhase * msV / oms(msV) * ambientTransmittance;
-	vec3 source = shaftPart + ambientPart;
-	source *= oms(wetnessCustom * 0.8) * lightEnergy;
+	vec3 source = ambientPart;
+	vec3 common = oms(wetnessCustom * 0.8) * lightEnergy;
+	shaftSource = shaftPart * common;
+	source *= common;
 
 	// 深水增浓：散射源随深度增强（透射侧的增浓在 RaymarchWaterFog 里按相机深度定标）
 	source *= mix(1.0, UW_FOG_DEEP_DENSITY, saturate(pointDepth / UW_FOG_DEEP_RANGE));

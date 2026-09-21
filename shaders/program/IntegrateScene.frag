@@ -253,7 +253,8 @@ vec3 ComputeFogSunVisibility(in vec3 worldDir, in float rayLength, in float dith
 // 步进中心带 BlueNoise 抖动防光束条带，噪声交 TAA（与雾中光束同一套路）。
 // 旧版的整体 skylight 门控改为逐点水下光衰减（物理等效，避免双重衰减）。
 mat2x3 RaymarchWaterFog(in float skylight, in float waterDepth, in vec3 worldDir,
-                        in float LdotV, in float sunVisFactor, in float dither, in vec3 lightEnergy) {
+                        in float LdotV, in float sunVisFactor, in float dither, in vec3 lightEnergy,
+                        out vec3 shaftScattering) {
     float camDepth = EstimateCameraWaterDepth(skylight);
 
     // 整条射线的等效消光：以相机深度定标（深水 = 场景衰减与散射权重同步更浓）
@@ -265,6 +266,8 @@ mat2x3 RaymarchWaterFog(in float skylight, in float waterDepth, in vec3 worldDir
     float halfSeg = 0.5 * waterDepth / float(UW_FOG_SAMPLES);
 
     vec3 scattering = vec3(0.0);
+    // [2026-09-21 光柱与雾分离] 光柱单独累积，由调用方作为独立一层叠加
+    shaftScattering = vec3(0.0);
     for (int i = 0; i < UW_FOG_SAMPLES; ++i) {
         // 段中心抖动（BlueNoise + 逐帧），段宽固定 = 总长/段数；首尾段夹回 [0, D]
         float tMid = waterDepth * (float(i) + dither) / float(UW_FOG_SAMPLES);
@@ -289,7 +292,10 @@ mat2x3 RaymarchWaterFog(in float skylight, in float waterDepth, in vec3 worldDir
             #endif
         #endif
 
-        scattering += (T0 - T1) * WaterFogPointSource(pointDepth, LdotV, sunVisFactor, vis, lightEnergy);
+        vec3 shaftSrc;
+        vec3 fogSrc = WaterFogPointSource(pointDepth, LdotV, sunVisFactor, vis, lightEnergy, shaftSrc);
+        scattering += (T0 - T1) * fogSrc;
+        shaftScattering += (T0 - T1) * shaftSrc;
     }
 
     return mat2x3(scattering, transmittance);
@@ -423,12 +429,18 @@ void main() {
     vec3 fogLightEnergy = global.directIlluminance
                         + vec3(0.30, 0.42, 0.85) * fogMoonAmt * VOXEL_MOON_STRENGTH;
 
+    // [2026-09-21 **光柱与雾分离**] 水下光柱作为**独立一层**累积，在 ApplyFog 之后单独叠加。
+    // 它只承载"定向光 × 可见度 × 波面焦散"，不含雾的环境项 ⇒ 可见度不被雾的亮度稀释，
+    // 且可以单独调（UW_VOLUMETRIC_LIGHT_STRENGTH 现在乘在这一层上）。
+    vec3 waterShafts = vec3(0.0);
+
     if (isEyeInWater == 1) {
         float LdotV = dot(worldLightDir, worldDir);
         #if defined UW_VOLUMETRIC_FOG
             // 水下体积雾 + 体积光：深度渐变散射（浅水青绿亮、深水浓蓝黑）+ 逐点阴影光束
             fogData = RaymarchWaterFog(eyeSkylightSmooth, viewDistance, worldDir, LdotV,
-                                       CalcSunScreenVisibility(), BlueNoise(texelPos, frameCounter), fogLightEnergy);
+                                       CalcSunScreenVisibility(), BlueNoise(texelPos, frameCounter), fogLightEnergy,
+                                       waterShafts);
         #else
             fogData = AnalyticWaterFog(eyeSkylightSmooth, viewDistance, LdotV, CalcSunScreenVisibility());
         #endif
@@ -486,6 +498,8 @@ void main() {
     }
 
     sceneColor = ApplyFog(sceneColor, fogData);
+    // [2026-09-21 光柱与雾分离] 光柱独立叠加（自己的倍率），不受雾的透射/亮度影响
+    sceneColor += waterShafts * UW_VOLUMETRIC_LIGHT_STRENGTH;
     // [2026-09] 地面大气散射的透射率并入 fogMask：远景的空气透视同样计入"雾量"（泛光雾 /
     // colortex0.a）。未启用该功能时保持原式不变（关闭即与旧版逐位相同）。
     #ifdef GROUND_SCATTERING
