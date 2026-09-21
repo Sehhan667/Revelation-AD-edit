@@ -86,9 +86,10 @@ vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFac
 	vec3 shaftPart = phase * vis * shaftTransmittance;
 	vec3 ambientPart = uniformPhase * msV / oms(msV) * ambientTransmittance;
 	vec3 source = ambientPart;
-	vec3 common = oms(wetnessCustom * 0.8) * lightEnergy;
-	shaftSource = shaftPart * common;
-	source *= common;
+	// 注意：变量名不能叫 common —— 它是 GLSL 保留字（error C0000: unexpected reserved word）
+	vec3 mediaCommon = oms(wetnessCustom * 0.8) * lightEnergy;
+	shaftSource = shaftPart * mediaCommon;
+	source *= mediaCommon;
 
 	// 深水增浓：散射源随深度增强（透射侧的增浓在 RaymarchWaterFog 里按相机深度定标）
 	source *= mix(1.0, UW_FOG_DEEP_DENSITY, saturate(pointDepth / UW_FOG_DEEP_RANGE));
