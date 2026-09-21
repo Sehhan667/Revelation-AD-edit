@@ -537,18 +537,6 @@ option.MOTION_BLUR=Motion Blur
 option.MOTION_BLUR_SAMPLES=Motion Blur Samples
 option.MOTION_BLUR_STRENGTH=Motion Blur Strength
 
-# [2026-09-21 A/B check screen] Temporary fallback toggles, under Debug -> A/B Check
-screen.ABCheck=A/B Check (Temporary)
-screen.ABCheck.comment=Every toggle of the pending verification batch in one place: flip one item at a time to compare against its pre-change behavior. The screen and the toggles are removed with the scaffolding once everything is verified.
-option.MOTION_BLUR_FULL_RES=Motion Blur Full Resolution (Fallback)
-option.MOTION_BLUR_FULL_RES.comment=Falls back the half-resolution optimization: restores the per-pixel full-resolution motion blur (independent motion vector and sample loop per pixel). Only enable to compare if fast-turn edges show tearing or smearing artifacts; default off = half-resolution block version.
-option.DOF_SPLIT_POSTFILTER=DOF Split Postfilter (Fallback)
-option.DOF_SPLIT_POSTFILTER.comment=Falls back the Postfilter merge: restores the separate postfilter pass (composite6_b, 3x3 same-layer median) so DOF runs the old Gather -> colortex15 -> Postfilter chain. Only enable to compare if the bokeh misbehaves; default off = merged version (one fewer full-screen pass). Enabling costs one extra shader compile at load time only.
-option.HURT_GLITCH_FRAME_GATE=Entity Glitch Frame Gate
-option.HURT_GLITCH_FRAME_GATE.comment=When off, the entity hit glitch no longer frame-gates (sin chains and tear loops run unconditionally every frame, i.e. the pre-optimization behavior). Only turn off to compare if the effect fails to trigger or misbehaves when hitting mobs.
-value.HURT_GLITCH_FRAME_GATE.true=On
-value.HURT_GLITCH_FRAME_GATE.false=Off
-
 option.BLOOM=Bloom
 option.BLOOM_BLENDING_MODE=Bloom Blending Mode
 value.BLOOM_BLENDING_MODE.0=Add
