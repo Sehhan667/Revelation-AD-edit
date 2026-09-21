@@ -48,6 +48,18 @@ uniform sampler2D colortex4; // Bloom tile input (not used in Level 0)
 uniform vec2 viewSize;
 uniform vec2 viewPixelSize;
 
+// [2026-09-21 故障发光] 故障场需要的输入。本 pass **不能** include Uniform.glsl ——
+// 它已经声明了 viewSize / viewPixelSize / colortex1 / colortex4，会与本文件的声明
+// 冲突（GLSL 同一 TU 内重复声明是错误），所以只补下面这几个。
+// is_hurt / frameTimeCounter 都是 Iris 提供的逐帧 uniform。
+uniform usampler2D colortex7;   // 材质数据：bit0 = 实体，bit1 = 受伤
+uniform float frameTimeCounter;
+uniform bool is_hurt;
+
+// 故障特效的选项与数学：与 Final.frag 共用同一份 ⇒ 光晕与可见撕裂严格对齐。
+// 选项 #define 也在这里面（Iris 从预处理后的源码里认选项，include 链里同样生效）。
+#include "/lib/post/Glitch.glsl"
+
 //======// Function //============================================================================//
 
 #if DOWNSAMPLE_LEVEL == 0
@@ -65,6 +77,75 @@ vec3 CalculateBloomTile(in vec2 centerUV) {
     // 体积过小的光源经两级模糊后仍裂成四瓣。扩散职责已移交 Blur.comp 的
     // 宽高斯核（tap 间距为 1 的 binomial 卷积，各向同性），这里只保留 box。
     return textureLod(bloomTileTex, centerUV, 0.0).rgb;
+}
+
+//================================================================================================//
+// [2026-09-21 故障发光] 故障发光项
+//
+// 在泛光 L0 画布上叠加「故障像素的自发光增量」= 线性场景色 × GLITCH_GLOW。
+// 只加**增量**：基础亮度已经由 box 降采样带进来了，这里再加整份会把亮度翻倍。
+// 后面 composite20_a/21_a 的宽高斯把它扩散成光晕，CombineBloomAndFog 在 tonemap
+// **之前**把它加回场景 ⇒ 光晕是真 HDR（可以超过 1.0、走高光滚降）。
+//
+// 判据与 Final.frag 完全一致（都来自 lib/post/Glitch.glsl）：
+//   * 实体区域故障：只有**超出实体轮廓边界**的溢出像素发光（EntitySpillGlow）——
+//     实体自己的像素、以及条带移走后留下的缺口都不发光
+//   * 全屏受伤故障：只有被撕裂的横条发光（二值满强度），避免受伤瞬间整屏发白
+// 色散（r6/r7）这里不参与 —— 泛光本身是模糊的，只取中间通道的位置就够。
+//
+// ⚠ 已知耦合（2026-09-21 用户裁定「接受」，暂不修）：
+//   泛光 L0 画布 colortex4 **同时被自动曝光使用** —— LumHistogram.comp（composite20）
+//   读它算亮度直方图，AutoExposure.comp（composite21）据此算曝光。本注入发生在
+//   composite10（降采样），**早于** composite20 ⇒ 发光会一并进直方图 ⇒ 受伤瞬间自动
+//   曝光会以为画面变亮、把曝光往下压 ⇒ 整屏略暗一下。实体故障面积小、几乎无感；
+//   全屏故障撕裂条带占屏比例大时可能有感。
+//   若要消除：把本函数搬到 Blur.comp 的共享内存装载处（每个装载纹素都加上对应发光，
+//   包括 halo 槽，避免条带边界出现欠扩散），并在 composite20_a.csh 里加一个注入宏 ——
+//   composite20_a 是第一趟模糊（直方图之后），composite21_a 是第二趟，**不能重复注入**。
+//================================================================================================//
+vec3 GlitchGlowTerm(in vec2 uv, in ivec2 fullTexel) {
+    // GLITCH_GLOW 是浮点宏，不能放进 #if（预处理器只做整数运算），只能用运行时判断；
+    // 它是编译期常量，编译器会折叠掉整个分支。
+    if (GLITCH_GLOW <= 0.0) return vec3(0.0);
+
+    // texelFetch 越界是未定义行为。main 里的边界检查已经保证 (id*2+1) 在范围内，
+    // 这里再夹一次纯属保险。
+    fullTexel = clamp(fullTexel, ivec2(0), ivec2(viewSize) - 1);
+
+    float offsetAccum, r6, r7;
+    ComputeGlitchField(frameTimeCounter, uv, offsetAccum, r6, r7);
+
+    vec3 glow = vec3(0.0);
+
+    #ifdef ENTITY_AREA_GLITCH
+        uvec4 matPack = texelFetch(colortex7, fullTexel, 0);
+        #ifdef ENTITY_GLITCH_OUTLINE_TEAR
+            ivec2 srcTexel = EntityTearSrcTexel(fullTexel, offsetAccum, ENTITY_AREA_GLITCH_INTENSITY, int(viewSize.x));
+            uvec4 srcPack = texelFetch(colortex7, srcTexel, 0);
+            // [2026-09-21 发光范围] 只给「超出实体轮廓边界」的溢出像素发光
+            //（EntitySpillGlow，与 Final.frag 同一判据 ⇒ 光晕与可见发光范围一致）。
+            if (EntitySpillGlow(matPack.w, srcPack.w, srcPack.y)) {
+                float uvG = GlitchLoop(uv.x - offsetAccum * ENTITY_AREA_GLITCH_INTENSITY);
+                glow += textureLod(colortex1, vec2(uvG, uv.y), 0.0).rgb * GLITCH_GLOW;
+            }
+        #else
+            // 旧撕裂模式没有「溢出到轮廓外」的像素 ⇒ 不发光（与 Final.frag 一致）
+        #endif
+    #endif
+
+    #ifdef GLITCH_VISUAL
+        #ifdef ALWAYS_GLITCH
+            float bandHit = 1.0;
+        #else
+            float bandHit = is_hurt ? float(FullScreenTearHit(offsetAccum)) : 0.0;
+        #endif
+        if (bandHit > 0.0) {
+            float uvG = GlitchLoop(uv.x + offsetAccum * HURT_GLITCH_INTENSITY);
+            glow += textureLod(colortex1, vec2(uvG, uv.y), 0.0).rgb * GLITCH_GLOW;
+        }
+    #endif
+
+    return glow;
 }
 
 //======// Main //================================================================================//
@@ -85,6 +166,10 @@ void main() {
 
     // 降采样（纯 2x2 box）
     vec3 bloomTile = CalculateBloomTile(centerUV);
+
+    // [2026-09-21 故障发光] 叠加故障发光项（只加增量）。centerUV 是 2x2 块中心，
+    // 对应的全分辨率像素 = id*2 + 1（colortex7 是全分辨率，取块中心像素作代表）。
+    bloomTile += GlitchGlowTerm(centerUV, ivec2(gl_GlobalInvocationID.xy) * 2 + 1);
 
     // 写入半分辨率目标纹理 (colorimg4) —— 左上象限
     imageStore(colorimg4, ivec2(gl_GlobalInvocationID.xy), vec4(bloomTile, 1.0));

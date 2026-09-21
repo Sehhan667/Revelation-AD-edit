@@ -53,22 +53,10 @@ out vec3 finalOut;
 // 注意：logo.png 现在不再被 shader 引用（文件保留没删，方便对照形状）。
 #define STARTUP_LOGO
 
-// ---------- 调试：始终显示全屏故障（取消注释即生效） ----------
-//#define ALWAYS_GLITCH
-
-// ---------- 全屏受伤故障 ----------
-#define GLITCH_VISUAL
-#define HURT_GLITCH_INTENSITY 0.4 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
-
-// ---------- 实体区域故障 ----------
-#define ENTITY_AREA_GLITCH
-#define ENTITY_AREA_GLITCH_INTENSITY 0.3 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
-
-// ---------- 撕裂层数（推荐 2~6） ----------
-#define GLITCH_TEAR_LAYERS 10 // [2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
-
-// ---------- 实体撕裂模式 ----------
-#define ENTITY_GLITCH_OUTLINE_TEAR // [注释以关闭] 开启：实体轮廓随条带一起撕裂（缺口用邻近背景近似填充）；关闭：旧版仅内部颜色错位
+// [2026-09-21 故障发光] 故障特效的选项与数学统一搬到 lib/post/Glitch.glsl ——
+// 泛光注入端（bloom/Downsample.comp）必须用同一份故障场，否则光晕会和可见撕裂错位。
+// 选项 #define 也一起搬过去了（Iris 从预处理后的源码里认选项，include 链里同样生效）。
+#include "/lib/post/Glitch.glsl"
 
 uniform bool is_hurt;
 
@@ -128,41 +116,8 @@ vec3 LoadChromaticScene(in ivec2 texel) {
 #endif
 }
 
-float loop(float x) {
-    x = mix(x, x - 1.0, float(x > 1.0));
-    x = mix(x, x + 1.0, float(x < 0.0));
-    return x;
-}
-
-// [2026-09-20 hash 统一] 三段故障特效（实体区域 / 全屏 ALWAYS / 全屏 is_hurt）共用同一份
-// 随机序列 + 多层撕裂偏移场——原先三段各抄一遍完整 sin 链（触发时每像素 27+ 次 sin）。
-// 抽出为函数后数学逐位等价（同一 sin 链、同一撕裂循环、同一求和顺序）。
-// r1..r7 由帧种子（frameTimeCounter * 16 取整）驱动，为帧内常数；撕裂循环按 uv.y 分层
-// 采样出条带位移 offsetAccum ∈ [-0.15, 0.15]；r6/r7 供 RGB 三通道的色散微偏移。
-// 各消费段只需要 offsetAccum / r6 / r7 三个输出（r1-r5 仅在链内部使用）。
-void ComputeGlitchField(in vec2 uv, out float offsetAccum, out float r6, out float r7) {
-    float seed = floor(frameTimeCounter * 16.0);
-    float r1 = fract(sin(seed * 0.012989) * 43758.5453123);
-    float r2 = fract(sin(r1 * 2.0 * 0.012989) * 43758.5453123);
-    float r3 = fract(sin(r2 * 3.0 * 0.012989) * 43758.5453123);
-    float r4 = fract(sin(r3 * 4.0 * 0.012989) * 43758.5453123);
-    float r5 = fract(sin(r4 * 5.0 * 0.012989) * 43758.5453123);
-    r6 = fract(sin(r5 * 6.0 * 0.012989) * 43758.5453123);
-    r7 = fract(sin(r6 * 7.0 * 0.012989) * 43758.5453123);
-
-    // 多层撕裂
-    const int layers = GLITCH_TEAR_LAYERS;
-    offsetAccum = 0.0;
-    for (int i = 0; i < layers; i++) {
-        float fi = float(i);
-        float threshold = fract(sin(r1 * (12.9898 + fi) + r2 * (78.233 - fi)) * 43758.5453);
-        threshold = threshold * 0.6 + 0.2;
-        float seg = mix(r3, mix(r4, r5, step(threshold, uv.y)), step(1.0 - threshold, uv.y));
-        offsetAccum += seg;
-    }
-    offsetAccum /= float(layers);
-    offsetAccum = (offsetAccum * 2.0 - 1.0) * 0.15;
-}
+// [2026-09-21] loop() 与 ComputeGlitchField() 已搬到 lib/post/Glitch.glsl
+// （泛光注入端也要用同一份故障场）。此处不再本地定义，否则重复定义会编译失败。
 
 void main() {
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
@@ -200,44 +155,48 @@ void main() {
         // 现在 KILL_RIPPLE 已整体移除、colortex10 随之废弃 ⇒ 本段回到 ddd28690 之前的
         // 无条件执行。代价：常态下全屏每像素白付 7 次 sin 链 + GLITCH_TEAR_LAYERS 层撕裂循环。
         uvec4 matPack = texelFetch(colortex7, texelPos, 0);
-        uint matW = matPack.w;
-        bool isEntity = ((matW & 1u) != 0u);          // bit0
-        bool isHurt   = ((matW & 2u) != 0u);          // bit1
 
         float intensity = ENTITY_AREA_GLITCH_INTENSITY;
         vec2 uv = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
         float offsetAccum, r6, r7;
-        ComputeGlitchField(uv, offsetAccum, r6, r7);
+        ComputeGlitchField(frameTimeCounter, uv, offsetAccum, r6, r7);
+
+        // [2026-09-21 故障发光] 线性增益 (1 + GLITCH_GLOW)：故障像素自身提亮。
+        // 这一份在 tonemap 之后的 LDR 空间，会被夹到 1.0；HDR 的那一份由泛光注入提供
+        // （bloom/Downsample.comp 用同一份故障场 ⇒ 光晕与这里严格对齐）。
+        const float glitchGain = 1.0 + GLITCH_GLOW;
 
         #ifdef ENTITY_GLITCH_OUTLINE_TEAR
             // ===== 新撕裂：实体轮廓随条带一起水平位移，缺口用邻近背景近似填充 =====
             // 内容来源像素 = 当前像素 - 条带位移（像素）。来源处是受伤实体则被拖拽到当前位置；
             // 当前是实体但来源不是（条带移走后的缺口），则用来源处的背景像素近似填充
-            ivec2 srcTexel = texelPos;
-            srcTexel.x -= int(round(offsetAccum * intensity * float(viewWidth)));
-            srcTexel.x = clamp(srcTexel.x, 0, int(viewWidth) - 1);
+            ivec2 srcTexel = EntityTearSrcTexel(texelPos, offsetAccum, intensity, int(viewWidth));
             uvec4 srcPack = texelFetch(colortex7, srcTexel, 0);
-            uint srcW = srcPack.w;
-            bool srcIsEntity = ((srcW & 1u) != 0u) && ((srcW & 2u) != 0u) && srcPack.y != 1u;
-            if (srcIsEntity || (isEntity && isHurt && matPack.y != 1u)) {
+            if (EntityTearHit(matPack.w, matPack.y, srcPack.w, srcPack.y)) {
                 float shiftUv = offsetAccum * intensity;
-                float uvR = loop(uv.x - (shiftUv + r6 * 0.1));
-                float uvG = loop(uv.x - shiftUv);
-                float uvB = loop(uv.x - (shiftUv - r7 * 0.1));
+                float uvR = GlitchLoop(uv.x - (shiftUv + r6 * 0.1));
+                float uvG = GlitchLoop(uv.x - shiftUv);
+                float uvB = GlitchLoop(uv.x - (shiftUv - r7 * 0.1));
 
                 vec3 glitchColor;
                 glitchColor.r = LoadGradedUV(vec2(uvR, uv.y)).r;
                 glitchColor.g = LoadGradedUV(vec2(uvG, uv.y)).g;
                 glitchColor.b = LoadGradedUV(vec2(uvB, uv.y)).b;
 
-                finalOut = glitchColor;
+                // [2026-09-21 发光范围] 畸变照旧作用于整个撕裂区；但**提亮只给
+                // 「超出实体轮廓边界」的像素**（EntitySpillGlow = 内容来自受伤实体、
+                // 当前像素却不属于实体，即被撕裂拖到轮廓外的溢出部分）。
+                // 实体自己的像素、以及条带移走后留下的缺口都不提亮。
+                float glowW = EntitySpillGlow(matPack.w, srcPack.w, srcPack.y) ? 1.0 : 0.0;
+                finalOut = GlitchBrighten(glitchColor, mix(1.0, glitchGain, glowW));
             }
         #else
             // ===== 旧撕裂：仅实体内部颜色错位，轮廓保持不动 =====
-            if (isEntity && isHurt && matPack.y != 1u) {
-                float uvR = loop(uv.x + (offsetAccum - r6 * 0.1) * intensity);
-                float uvG = loop(uv.x + offsetAccum * intensity);
-                float uvB = loop(uv.x + (offsetAccum + r7 * 0.1) * intensity);
+            // 这个模式不产生「溢出到轮廓外」的像素 ⇒ 不发光（发光的定义就是轮廓外溢出）。
+            if (EntityTearHitInnerOnly(matPack.w, matPack.y)) {
+                float uvR = GlitchLoop(uv.x + (offsetAccum - r6 * 0.1) * intensity);
+                float uvG = GlitchLoop(uv.x + offsetAccum * intensity);
+                float uvB = GlitchLoop(uv.x + (offsetAccum + r7 * 0.1) * intensity);
 
                 vec3 glitchColor;
                 glitchColor.r = LoadGradedUV(vec2(uvR, uv.y)).r;
@@ -256,35 +215,39 @@ void main() {
             const float intensity = HURT_GLITCH_INTENSITY;
             vec2 uv = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
             float offsetAccum, r6, r7;
-            ComputeGlitchField(uv, offsetAccum, r6, r7);
+            ComputeGlitchField(frameTimeCounter, uv, offsetAccum, r6, r7);
 
-            float uvR = loop(uv.x + (offsetAccum - r6 * 0.1) * intensity);
-            float uvG = loop(uv.x + offsetAccum * intensity);
-            float uvB = loop(uv.x + (offsetAccum + r7 * 0.1) * intensity);
+            float uvR = GlitchLoop(uv.x + (offsetAccum - r6 * 0.1) * intensity);
+            float uvG = GlitchLoop(uv.x + offsetAccum * intensity);
+            float uvB = GlitchLoop(uv.x + (offsetAccum + r7 * 0.1) * intensity);
 
             vec3 glitchColor;
             glitchColor.r = LoadGradedUV(vec2(uvR, uv.y)).r;
             glitchColor.g = LoadGradedUV(vec2(uvG, uv.y)).g;
             glitchColor.b = LoadGradedUV(vec2(uvB, uv.y)).b;
 
-            finalOut = mix(finalOut, glitchColor, intensity);
+            finalOut = mix(finalOut, GlitchBrighten(glitchColor, 1.0 + GLITCH_GLOW), intensity);
         #else
             if (is_hurt) {
                 const float intensity = HURT_GLITCH_INTENSITY;
                 vec2 uv = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
                 float offsetAccum, r6, r7;
-                ComputeGlitchField(uv, offsetAccum, r6, r7);
+                ComputeGlitchField(frameTimeCounter, uv, offsetAccum, r6, r7);
 
-                float uvR = loop(uv.x + (offsetAccum - r6 * 0.1) * intensity);
-                float uvG = loop(uv.x + offsetAccum * intensity);
-                float uvB = loop(uv.x + (offsetAccum + r7 * 0.1) * intensity);
+                float uvR = GlitchLoop(uv.x + (offsetAccum - r6 * 0.1) * intensity);
+                float uvG = GlitchLoop(uv.x + offsetAccum * intensity);
+                float uvB = GlitchLoop(uv.x + (offsetAccum + r7 * 0.1) * intensity);
 
                 vec3 glitchColor;
                 glitchColor.r = LoadGradedUV(vec2(uvR, uv.y)).r;
                 glitchColor.g = LoadGradedUV(vec2(uvG, uv.y)).g;
                 glitchColor.b = LoadGradedUV(vec2(uvB, uv.y)).b;
 
-                finalOut = mix(finalOut, glitchColor, intensity);
+                // [2026-09-21 故障发光] 畸变照旧作用于整屏；但**提亮只给被撕裂的横条**
+                // （FullScreenTearHit，二值满强度）—— 否则受伤瞬间整屏会发白。
+                vec3 distorted = glitchColor;
+                vec3 lit = GlitchBrighten(glitchColor, 1.0 + GLITCH_GLOW);
+                finalOut = mix(finalOut, mix(distorted, lit, float(FullScreenTearHit(offsetAccum))), intensity);
             }
         #endif
     #endif
