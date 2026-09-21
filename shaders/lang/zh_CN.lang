@@ -977,3 +977,6 @@ option.UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN.comment=真实水的散射相位极其�
 option.UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF=水下光束深度衰减倍率
 option.UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF.comment=光束的衰减相对水消光的倍率。水消光约每 5 格衰减到 1/e，10 格深处只剩 15% —— 这是"倍率调到 20 也看不见"的原因。本项给光柱单开一个更小的系数（业界惯例）：0.2 时 10 格处从 0.15 提到 0.68。只作用于定向光束项，均匀多散射环境项仍用全量水消光。1.0 = 物理衰减。
 
+option.UW_WAVE_SHAFTS_FOCUS=水下光柱焦散聚焦松紧
+option.UW_WAVE_SHAFTS_FOCUS.comment=水面波纹把阳光聚焦成水下光柱，本项是聚焦判据的松紧：判据是"折射光线下降 1 格内横向偏移 < 1/本值"，原实现硬编码 12（即偏移必须小于 0.083 格）——而典型波面倾角 5°~15° 产生的偏移约 0.1~0.3 格，于是焦散几乎恒为 0，只剩极少数近乎垂直的波面点亮着，看起来就是"非常细的光"。调小本值 = 放宽判据 = 光柱变密变明显（1.0~3.0 最明显）。12.0 = 旧行为。
+

@@ -797,3 +797,6 @@ option.UW_VOLUMETRIC_LIGHT_PHASE_FLATTEN.comment=Real water has an extremely pea
 option.UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF=Underwater Shaft Depth Falloff
 option.UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF.comment=Falloff of the shaft term relative to the water extinction. Water extinction drops to 1/e about every 5 blocks, so only 15% remains at 10 blocks - which is why even a 20x strength multiplier showed nothing. This gives the shafts their own much gentler coefficient (standard practice): at 0.2 the 10-block value goes from 0.15 to 0.68. Applies to the directional shaft term only; the uniform multiple-scattering ambient term keeps the full water extinction. 1.0 = physical falloff.
 
+option.UW_WAVE_SHAFTS_FOCUS=Underwater Shaft Caustic Focus
+option.UW_WAVE_SHAFTS_FOCUS.comment=Surface waves focus sunlight into underwater shafts; this is how tight that focus test is: it lights up only where the refracted ray shifts sideways by less than 1/this value within one block of descent. The original hard-coded 12 (shift must be under 0.083 blocks), while typical wave slopes of 5-15 degrees produce 0.1-0.3 blocks of shift - so the caustic was almost always zero and only rare near-vertical wave facets lit up, which reads as very thin light. Lower values widen the test and make the shafts denser and more visible (1.0-3.0 is the most visible). 12.0 = old behaviour.
+

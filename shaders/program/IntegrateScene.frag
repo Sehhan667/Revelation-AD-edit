@@ -176,6 +176,9 @@ vec3 SampleFogSunShadow(in vec3 camRelPos, in float viewDist) {
     return result;
 }
 
+#ifndef UW_WAVE_SHAFTS_FOCUS
+    #define UW_WAVE_SHAFTS_FOCUS 4.0
+#endif
 // [2026-09-21 波纹焦散光柱] 水面波纹对水下直射光束的聚焦调制：与 SampleFogSunShadow
 // 同一投影（阴影形变 + 体素平铺 Shift，超阴影距离返回 1 不调制），读 shadowcolor1 的
 // 水面波法线，折射汇聚公式与水底焦散 CalculateWaterCaustics 逐项同源 —— 因此光柱
@@ -208,7 +211,9 @@ float SampleWaterSurfaceCaustics(in vec3 camRelPos, in float viewDist) {
             // 终点横向偏移，偏移越小越亮 —— 与水底焦散同一启发式
             vec3 refractedPos = camRelPos - refractDir / refractDir.y;
             vec3 surfacePos = camRelPos - vec3(0.0, 1.0, 0.0);
-            float caustics = saturate(1.0 - 12.0 * distance(surfacePos, refractedPos));
+            // [2026-09-21] 12.0 是硬编码的聚焦松紧，实测过严（典型波面倾角的偏移 0.1~0.3 格
+            // 就判成 0）⇒ 光柱细到看不见。改为旋钮 UW_WAVE_SHAFTS_FOCUS，默认 4.0。
+            float caustics = saturate(1.0 - UW_WAVE_SHAFTS_FOCUS * distance(surfacePos, refractedPos));
             // 平滑下限 0.1 + 亮度倍率 = 水底焦散同款（倍率进 GUI，默认 2.0）
             return UW_WAVE_SHAFTS_BRIGHTNESS * (-smin(-caustics, -0.1, 0.15));
         }
