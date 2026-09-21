@@ -128,9 +128,7 @@ void main() {
     // 光栅化器会自动拦截屏幕外的三角形，此处的片段着色器根本不会执行，无需重复计算。
 
     if (isWaterOut == 1u) {
-        // [2026-09-21 B'4] 固定前向差分版：阴影 pass 的 quad 混合水体/岸片元 +
-        // 体素平铺区 discard 会破坏 quad 导数完整性，不冒这个险
-        vec3 waveNormal = CalculateWaterNormalForward(vectorDataOut.xz);
+        vec3 waveNormal = CalculateWaterNormal(vectorDataOut.xz);
         shadowcolor1Out.xy = OctEncodeUnorm(waveNormal.xzy);
         shadowcolor1Out.w = 1.0;
         return;

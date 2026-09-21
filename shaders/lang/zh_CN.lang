@@ -472,11 +472,6 @@ option.SSRT_REFINEMENT=反射重采样
 option.SSRT_REFINEMENT_STEPS=重采样精度
 option.SSRT_SKY_TRACING=追踪天空
 
-option.SSR_USE_HIZ=Hi-Z 反射追踪
-option.SSR_USE_HIZ.comment=每帧把屏幕深度归约成 6 级 max-depth 金字塔（64px 分块，存于专用纹理），常规反射按分块大小分层步进：空旷区域大步跳跃、接近几何时逐级降到逐像素，命中与细化逻辑与原版一致。相比固定步数的线性追踪，长距离反射漏检更少、平均采样更省。关闭则回退原线性追踪。只对 SSRT 路径（物体反射模式 = SSRT、半透明反射模式 = SSRT）生效；粗糙反射与快速 SSR 模式不受影响。
-value.SSR_USE_HIZ.true=开启
-value.SSR_USE_HIZ.false=关闭
-
 option.SPECULAR_IMPORTANCE_SAMPLING_BIAS=重要性采样偏度
 
 option.ROUGH_REFLECTIONS=粗糙反射支持
@@ -521,8 +516,6 @@ option.WATER_PARALLAX=水体视差
 option.WATER_CAUSTICS=水体焦散
 option.WATER_WAVE_HEIGHT=水波高度
 option.WATER_WAVE_SPEED=水波速度
-option.WATER_NORMAL_SCREEN_DERIV=水面法线屏幕导数（快）
-option.WATER_NORMAL_SCREEN_DERIV.comment=主水面法线用 2x2 像素块硬件导数代替三次高度采样（采样数 12→4，水面像素约 3 倍提速）。仅近处主水面生效；若掠射角波纹出现走样可关闭回退到原算法。
 option.WATER_FOG_DENSITY=水雾密度
 option.WATER_IOR=水体折射率
 option.WATER_PARALLAX_SAMPLES=水体视差采样数

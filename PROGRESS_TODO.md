@@ -123,28 +123,19 @@ Pending 暂存；提交移到**下一帧 dispatch 开头**（此刻 LUT 必然�
    Translucent 还是旧 9 点——直接套用已验证模板，每像素省 4 次深度读取。风险：低。
 
 **B' 档（算法替换，需实测）**
-4. **水面法线 dFdx/dFdy**（WaterWave.glsl:95-104）——✅ 已实施（commit 4ca9a530，
-   2026-09-21）：CalculateWaterNormal 前向差分 3 × CalculateWaterHeightFull = 12 fetch/像素
-   → 单次高度 + quad 内硬件导数 = 4 fetch，水面像素 3 倍降。存在逐像素 discard 的 Pass
-   （Shadow/DH/Voxy）保留前向差分 fallback。风险：中——掠射角 quad 内世界距离不均匀
-   可能走样，实测不行就回退。
-5. **Hi-Z SSR**（SSRT.glsl）——✅ 已实施（2026-09-21，B'5 批次第 4 项）：
-   McGuire 线性步进 16 步 + 8 步二分 = 24 次深度采样/反射像素 → 分层深度 mip 追踪。
-   实现：新增 `program/setup/HiZDepth.comp`（挂 `world*/deferred.csh`，Iris 规则
-   无编号 compute pass 在整个 deferred 段最先跑），16×16 线程组处理 64×64 tile，
-   LDS 逐级 box-max 归约出 6 级 max-depth mip（cell 2/4/8/16/32/64px），写入自定义
-   image `hizTex`（`image.hizImg = hizTex RED R32F FLOAT false true 1.0 1.0`——
-   R32F 与 depthtex2 精度逐位一致、帧间保留无 clear 开销、不占 colortex 槽位，
-   dispatch = ceil(viewSize/64) 个 workgroup）。SSRT.glsl 新增
-   `ScreenSpaceRaytraceHiZ`：入口判定（p.z >= hiZ 或 cell 纯天空才可跳过——出口判定
-   会漏检 cell 内部穿越的几何；纯天空 cell 若不特判会退化成逐像素爬行）、升级跳跃/
-   降级细化、level 0 命中候选走与原版完全相同的厚度过滤、深度导引穿透步长（1.5~8px，
-   单位为 t 增量 = px/rayLenPx）、二分细化区间取命中步 [tPrev, t]。`steps >= 12` 的
-   常规反射走 Hi-Z，粗糙反射与快速 SSR 模式（= 2）不受影响。GUI 开关
-   `SSR_USE_HIZ`（反射页，默认开；关 = 回退原线性追踪），与
-   `program.world*/deferred.enabled` 联动避免空跑 dispatch。LOD_MOD 下深度重映射
-   （depthtex2 sky marker → lodDepthTex1）在 mip 生成端与 level-0 读取端双端一致。
-   风险：中——需实测水面/金属长距离反射的命中密度与漏检率。
+4. **水面法线 dFdx/dFdy**（WaterWave.glsl:95-104）——❌ 已回退（2026-09-21，用户
+   实测后裁定）：曾以 commit 4ca9a530 实施（前向差分 12 fetch → quad 导数 4 fetch），
+   掠射角走样 + 实机报错排查中一并裁定回退。四个文件（WaterWave.glsl / DH Water.frag /
+   Shadow.frag / voxy Translucent.glsl）整文件恢复至 4ca9a530^，宏与 GUI 全清。
+   波纹焦散光柱依赖的 Shadow.frag shadowcolor1 波法线写入（先于 B'4 存在）不受影响。
+5. **Hi-Z SSR**（SSRT.glsl）——❌ 已回退（2026-09-21，用户实测后裁定）：曾以 commit
+   6ac5ce9d 实施（max-depth mip 链分层追踪）。回退内容：SSRT.glsl 恢复线性追踪、
+   删除 HiZDepth.comp 与三个 world*/deferred.csh、settings/properties/lang 全清
+   （含 image.hizImg、program.world*/deferred.enabled 门控、profile.Default、
+   反射页孤儿条目 SSRT_USE_HIZ 拼错名——该条目从未在游戏内显示过）。
+   背景现象：用户开启 CAS 时 Iris 报 GLSL source pre-processing failed；切任何选项
+   都会触发全量重编，Hi-Z 新 pass 首次进入重编路径，与回退裁定吻合。若回退后 CAS
+   仍报错，需完整报错文本（Iris 会写明失败程序名）再定位。
 6. **Glitch hash 链统一**（Final.frag 三段重复）——✅ 已实施（commit 70c86f80，
    2026-09-20）：r1-r7 sin 链 + 撕裂层循环在实体/全屏/always 三段各写一遍；统一为
    ComputeGlitchField(uv, out offsetAccum, out r6, out r7) 单函数三段复用（数学逐位
