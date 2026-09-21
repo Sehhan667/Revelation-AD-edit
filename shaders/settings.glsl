@@ -543,7 +543,6 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// #define DEBUG_CLOUD_NOISE
 	// #define DEBUG_CLOUD_SHADOWS
 	// #define DEBUG_TONE_MAPPING_PLOT
-	// #define DEBUG_KILL_RIPPLE_GRID
 	// #define FORCE_DISABLE_SUBGROUP_OPS
 	#define GI_MODE 0 // [0 1 2 3]
 	// Keep internal boolean aliases for Iris' program-toggle preprocessor.
