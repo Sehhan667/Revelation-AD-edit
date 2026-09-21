@@ -16,7 +16,7 @@
 
     [2026-09-21 Grade+Final 合并] 调色管线本体已抽到 lib/post/GradeCore.glsl，
     本 pass 仅在 CAS_ENABLED 档启用（shaders.properties 的
-    program.world*/composite31.enabled = CAS_ENABLED 门控）：
+    program.world<N>/composite31.enabled = CAS_ENABLED 门控）：
       - CAS 开启：composite31 照旧把 graded 图写进 colortex0，final 的 9-tap
         CAS 邻域采样直接读 colortex0（内联 Grade 会让每个邻域 tap 重跑整条
         调色管线，11 倍代价，不划算）；
