@@ -60,7 +60,6 @@ layout (location = 0) out vec4 sceneOut;
 #include "/lib/atmosphere/CommonFog.glsl"
 #include "/lib/SpatialUpscale.glsl"
 
-#include "/lib/water/WaterWave.glsl"
 #include "/lib/water/WaterFog.glsl"
 #include "/lib/surface/BRDF.glsl"
 #include "/lib/surface/SSRT.glsl"
@@ -196,25 +195,30 @@ float SampleWaterSurfaceCaustics(in vec3 camRelPos, in float viewDist) {
     float rangeFade = linearstep(shadowDistance - 8.0, shadowDistance, viewDist);
     if (rangeFade >= 1.0) return 1.0;
 
-    // [2026-09-21 **改用程序化波面**] 原来读 shadowcolor1 里的水面波法线：那依赖水面被提交进
-    // shadow pass，且**开阔水域没有遮挡时看不到光柱**（用户诉求：水面自己就该投下光柱）。
-    // 现在直接用包里现成的程序化波面 CalculateWaterNormal —— 与水底焦散、gbuffers 水面同源，
-    // 保证开阔水域也一定有光柱。
-    // 坐标用**绝对世界 xz**（camRelPos + cameraPosition），与 gbuffers/Water.frag 的
-    // minecraftPos 同一约定，波面才不会随相机滑动。
-    // 放在条件外无条件求值：CalculateWaterNormal 内部有 fwidth，非一致控制流下导数未定义。
-    vec3 waveNormal = CalculateWaterNormal(camRelPos.xz + cameraPosition.xz);
+    vec3 shadowClipPos = (shadowModelView * vec4(camRelPos, 1.0)).xyz;
+    shadowClipPos = (shadowProjection * vec4(shadowClipPos, 1.0)).xyz;
+    vec3 ssp = DistortShadowSpace(shadowClipPos) * 0.5 + 0.5;
+    #ifdef ENABLE_VOXELIZATION
+        ShiftShadowScreenPos(ssp.xy);
+    #endif
 
-    // 折射方向朝下：除以 y 归一成「垂直下降 1 格」的位移，波面倾角把折射终点横向偏移，
-    // 偏移越小越亮 —— 与水底焦散同一启发式
-    vec3 refractDir = refract(vec3(0.0, 1.0, 0.0), waveNormal, 1.0 / WATER_IOR);
-    vec3 refractedPos = camRelPos - refractDir / refractDir.y;
-    vec3 surfacePos = camRelPos - vec3(0.0, 1.0, 0.0);
-    // [2026-09-21] 12.0 是硬编码的聚焦松紧，实测过严（典型波面倾角的偏移 0.1~0.3 格
-    // 就判成 0）⇒ 光柱细到看不见。改为旋钮 UW_WAVE_SHAFTS_FOCUS，默认 4.0。
-    float caustics = saturate(1.0 - UW_WAVE_SHAFTS_FOCUS * distance(surfacePos, refractedPos));
-    // 平滑下限 0.1 + 亮度倍率 = 水底焦散同款（倍率进 GUI，默认 2.0）
-    return mix(1.0, UW_WAVE_SHAFTS_BRIGHTNESS * (-smin(-caustics, -0.1, 0.15)), 1.0 - rangeFade);
+    if (all(equal(ssp, saturate(ssp)))) {
+        vec4 surfaceData = textureLod(shadowcolor1, ssp.xy, 0.0);
+        if (surfaceData.w > EPS) {
+            vec3 waveNormal = OctDecodeUnorm(surfaceData.xy);
+            vec3 refractDir = refract(vec3(0.0, 1.0, 0.0), waveNormal, 1.0 / WATER_IOR);
+            // 折射方向朝下：除以 y 归一成「垂直下降 1 格」的位移，波面倾角把折射
+            // 终点横向偏移，偏移越小越亮 —— 与水底焦散同一启发式
+            vec3 refractedPos = camRelPos - refractDir / refractDir.y;
+            vec3 surfacePos = camRelPos - vec3(0.0, 1.0, 0.0);
+            // [2026-09-21] 12.0 是硬编码的聚焦松紧，实测过严（典型波面倾角的偏移 0.1~0.3 格
+            // 就判成 0）⇒ 光柱细到看不见。改为旋钮 UW_WAVE_SHAFTS_FOCUS，默认 4.0。
+            float caustics = saturate(1.0 - UW_WAVE_SHAFTS_FOCUS * distance(surfacePos, refractedPos));
+            // 平滑下限 0.1 + 亮度倍率 = 水底焦散同款（倍率进 GUI，默认 2.0）
+            return UW_WAVE_SHAFTS_BRIGHTNESS * (-smin(-caustics, -0.1, 0.15));
+        }
+    }
+    return 1.0;
 }
 #endif
 
