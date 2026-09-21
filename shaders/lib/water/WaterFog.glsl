@@ -70,7 +70,7 @@ vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFac
 	#endif
 
 	// 阳光/月光到达该点：穿过的水柱 = 该点水深 × 太阳高度路径系数（太阳越低路径越长）
-	vec3 waterColumn = pointDepth * mix(4.0, 1.0, worldLightDir.y);
+	float waterColumn = pointDepth * mix(4.0, 1.0, worldLightDir.y);   // 标量：乘上 vec3 的水消光后才成 vec3
 	// [2026-09-21 **光束独立深度衰减**] 光束用轻衰减（否则 10 格深处只剩 0.15、倍率调到 20 也没用）；
 	// 均匀多散射环境项仍用全量水消光 —— 它是"从整个上半球漫射进来"的，物理上该被水吃光。
 	vec3 shaftTransmittance = exp2(-rLOG2 * waterExtinction * waterColumn * UW_VOLUMETRIC_LIGHT_DEPTH_FALLOFF);
