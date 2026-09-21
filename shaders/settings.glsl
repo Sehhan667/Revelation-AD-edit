@@ -140,8 +140,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 修法：给环境光算一个"等效天光"——按**水的消光**随相机水深衰减，而不是用被压死的 lightmap。
 	// 相机水深用与 lib/water/WaterFog.glsl 的 EstimateCameraWaterDepth 同一套近似
 	//（eyeSkylightSmooth 开四次方还原天光亮度，再线性反解 [0,15] 格）。
-	// UW_AMBIENT_STRENGTH = 水下环境光整体强度（0 = 完全关掉本豁免，回到旧行为）
-	#define UW_AMBIENT_STRENGTH 0.35 // [0.0 0.1 0.2 0.35 0.5 0.7 1.0]
+	// UW_AMBIENT_STRENGTH = 水下环境光整体强度（0 = 完全关掉本豁免，回到旧行为）。
+	// 默认 1.0 = 实测确认的档位（用户实机裁定）
+	#define UW_AMBIENT_STRENGTH 1.0 // [0.0 0.1 0.2 0.35 0.5 0.7 1.0]
 	// 天空半球的光穿水柱的等效路径倍率（1.0 = 垂直路径；越大衰减越快）
 	#define UW_AMBIENT_DEPTH_MULT 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 	// 体素天光（SimpleSkyLighting）在水下的门控下限——原来是硬编码的 0.003（千分之三），

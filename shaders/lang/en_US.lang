@@ -437,7 +437,7 @@ option.SUBSURFACE_SCATTERING_RADIUS.comment=Diffusion mean free path (= value x 
 option.SUBSURFACE_SCATTERING_TRANSMISSION=Backlight Translucency (view dependent)
 option.SUBSURFACE_SCATTERING_TRANSMISSION.comment=Transmission glow for thin surfaces (leaves, grass, vines) when back-lit. This term contains the camera direction, so it only shows when looking towards the sun and pops as the camera turns - hence the default of 0 (off). Raise it if you want the backlit glow.
 option.SUBSURFACE_SCATTERING_DIFFUSE=Front Diffusion
-option.SUBSURFACE_SCATTERING_DIFFUSE.comment=Brightness added on lit faces. Camera independent: it only follows N.L and shadow visibility, exactly like the old implementation (steady while turning the camera, responsive to lighting). At the default 0.35 a lit face is about 20% brighter than a normal block.
+option.SUBSURFACE_SCATTERING_DIFFUSE.comment=Brightness added on lit faces. Camera independent: it only follows N.L and shadow visibility, exactly like the old implementation (steady while turning the camera, responsive to lighting). At the default 1.0 a lit face is about 20% brighter than a normal block.
 option.SUBSURFACE_SCATTERING_AMBIENT=Ambient Subsurface
 option.SUBSURFACE_SCATTERING_AMBIENT.comment=The only term that does not depend on the sun direction or the surface orientation, so it is what keeps SSS visible in shade, on back-facing surfaces and indoors (attenuated by AO and the indoor gate). 0 leaves only the two sun-driven terms.
 option.SUBSURFACE_SCATTERING_DIFFUSION=Screen-Space Diffusion (currently disabled)
@@ -783,7 +783,7 @@ option.RSM_MAX_ACCUM_FRAMES=RSM Max Accumulation Frames (not wired)
 option.RSM_MAX_ACCUM_FRAMES.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
 
 option.UW_AMBIENT_STRENGTH=Underwater Ambient Strength
-option.UW_AMBIENT_STRENGTH.comment=Ambient light strength for underwater surfaces that are NOT in direct sunlight. The game attenuates the sky lightmap by one level per block underwater (reaching zero around 15 blocks), and direct sunlight is already exempted from that attenuation while ambient light was not - so deep underwater, faces turned away from the sun went almost black. This option gives the ambient term an equivalent sky light based on the WATER extinction at the camera depth, instead of the crushed lightmap. 0 = disable the exemption (old behaviour); default 0.35.
+option.UW_AMBIENT_STRENGTH.comment=Ambient light strength for underwater surfaces that are NOT in direct sunlight. The game attenuates the sky lightmap by one level per block underwater (reaching zero around 15 blocks), and direct sunlight is already exempted from that attenuation while ambient light was not - so deep underwater, faces turned away from the sun went almost black. This option gives the ambient term an equivalent sky light based on the WATER extinction at the camera depth, instead of the crushed lightmap. 0 = disable the exemption (old behaviour); default 1.0.
 option.UW_AMBIENT_DEPTH_MULT=Underwater Ambient Path Length
 option.UW_AMBIENT_DEPTH_MULT.comment=Effective path-length multiplier for sky light travelling through the water column. 1.0 = vertical path; higher means faster falloff and darker deep water. Default 1.0.
 option.UW_VOXEL_SKY_WATER_FLOOR=Voxel Sky Light: Underwater Floor
