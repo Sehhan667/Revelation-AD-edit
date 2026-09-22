@@ -468,7 +468,11 @@ void main() {
         bool pOk = frameCounter >= 2 && all(greaterThanEqual(pC, ivec3(0))) && all(lessThan(pC, ivec3(VOXEL_AREA)))
                 && any(greaterThan(FetchPrevRadiance(pC), vec3(0.0)));
         if (uIntv > 1 && pOk && (((vi + frameCounter) & (uIntv - 1)) != 0)) {
-            vec4 o = vec4(max(FetchPrevRadiance(pC), 1e-7) * 100.0, FetchPrevExposure(pC));
+            // [2026-09-22 溢出修复] 搬运路径同样要钳：半浮点上限 65504，而 ×100 存储意味着
+            // nRC > 655.04 就存成 Inf —— Inf 再经 `max(inf,1e-7)*100 = inf` 与
+            // `mix(nRC, inf, 0.995) = inf` **永久卡死**（无法被新值稀释），并经 self-bounce
+            // 扩散成大片。钳到 600（×100 = 60000 < 65504）后，已有 Inf 也会在 4 帧内被覆盖掉。
+            vec4 o = vec4(min(max(FetchPrevRadiance(pC), 1e-7), 600.0) * 100.0, FetchPrevExposure(pC));
             if ((frameCounter & 1) == 0) imageStore(voxelRadiance, c, o);
             else                          imageStore(voxelRadiance2, c, o);
             continue;
@@ -548,7 +552,11 @@ void main() {
         if (maxC > 1.0) nRC *= 1.0 / maxC;
 
         // ---- 写入 ×100（alpha 复用为天空曝光度；原 blk=1 空标记仅 DEBUG 用，废弃）----
-        vec4 o = vec4(nRC * 100.0, nExp);
+        // [2026-09-22 溢出修复] rgba16f 上限 65504，×100 存储意味着 nRC > 655.04 就写成
+        // Inf（半浮点无法表示）⇒ 该体素永久卡死在 Inf（mix/max 都拉不回来），并经
+        // self-bounce 扩散成大片"亮度极高颜色鲜艳"的溢出像素。钳到 600 ⇒ 存储值
+        // ≤ 60000，留 8% 余量；600 ≈ 阳光项 128×albedo×rcpPdf(≤20) 的极端样本量级。
+        vec4 o = vec4(min(nRC, 600.0) * 100.0, nExp);
         if ((frameCounter & 1) == 0)
             imageStore(voxelRadiance, c, o);
         else
