@@ -34,7 +34,10 @@ uniform sampler2D shadowcolor0;
 // 返回彩色阴影 vec3——1=全亮直射；0=被实心挡；穿过半透明物体（玻璃）时
 // = AlbedoToAbsorption(玻璃颜色, 不透明度)，反弹光线带上玻璃染色。
 vec3 VoxelSunShadowMap(vec3 camRelPos, vec3 normal) {
-    vec3 result = vec3(1.0);
+    // [2026-09-23] 初值由 vec3(1.0) 改为 vec3(0.0)：所有"未能完成深度比较"的路径
+    //（法线微偏移把采样点推出阴影图范围等）都应保守判为**无阳光**，而不是"全亮"。
+    // 原初值 1.0 正是上面那个瓦片带误采样的帮凶——只要没走到计算分支就返回"直射"。
+    vec3 result = vec3(0.0);
     // [FIX 2026-08-20] sunPosition 是 eye space（视图空间，见 Uniform.glsl），背对太阳时 .y
     // 会掉到 0 以下 → 此门控把 sunVis 全判 0 → 整个世界阳光反弹消失（亮面也黑）。
     // 改用世界空间太阳方向 worldSunDir.y（白天>0 / 夜晚<0，与月光弹射的平滑门控衔接）。
@@ -42,6 +45,20 @@ vec3 VoxelSunShadowMap(vec3 camRelPos, vec3 normal) {
     vec3 shadowClipPos = (shadowModelView * vec4(camRelPos, 1.0)).xyz;
     shadowClipPos = (shadowProjection * vec4(shadowClipPos, 1.0)).xyz;
     vec3 ssp = DistortShadowSpace(shadowClipPos) * 0.5 + 0.5;
+    // [2026-09-23 修复：范围检查必须在 ShiftShadowScreenPos **之前**]
+    // 原实现把 `all(equal(ssp, saturate(ssp)))` 放在 shift 之后。但 ShiftShadowScreenPos 是
+    // `coord * VOXEL_SHADOW_RATIO + (1 - VOXEL_SHADOW_RATIO)` —— 它把阴影图有效区压缩到右侧
+    // [1-R, 1]，左侧 [0, 1-R) 那条带（宽 VOXEL_TILE_WIDTH = 256px）是**体素化瓦片区**，
+    // 里面存的是体素瓦片深度而非阴影深度。于是原始坐标落在 [-(1-R)/R, 0)（阴影视锥左外侧
+    // 的一条带）时，shift 后恰好被压进体素瓦片带、却仍能通过 saturate 检查
+    // ⇒ 深度比较读到体素化数据（多为"未被遮挡"）⇒ sunVis = 1
+    // ⇒ 阳光反弹在阴影范围外误触发 ⇒ 被太阳直射的彩色方块反弹出亮度极高、颜色为反照率
+    // 原色的溢出像素（实测纯红 187,0,0），且随相机移动扫过世界不同区域
+    //（走开消失 / 精确回原位复现 / 重载后换位置）。
+    // 注入端 VoxelGI.frag:300 与本函数共用 ⇒ DEBUG_VOXEL_GI 里缓存也呈该颜色。
+    // 修法：范围外一律保守判 0（无阳光反弹）—— 阴影范围外本就拿不到遮挡数据，
+    // 宁可少反弹，也不要用体素瓦片数据当成"直射"。
+    if (!all(equal(ssp, saturate(ssp)))) return vec3(0.0);
     #ifdef ENABLE_VOXELIZATION
         ShiftShadowScreenPos(ssp.xy);
     #endif
