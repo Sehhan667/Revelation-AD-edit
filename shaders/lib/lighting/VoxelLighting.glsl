@@ -222,7 +222,13 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // [2026-08-19] 夜晚月光反弹强度：moonlightMult(~0.001) 让 directIlluminance 夜晚≈0 →
 // 体素 GI 无月光反弹。此为独立方向化月光反弹倍率（月亮向面弹射），夜晚才有间接月光 GI。
 #define VOXEL_MOON_STRENGTH 2.0 // [0.0 0.1 0.25 0.5 0.75 1.0 1.5 2.0] 夜晚月光反弹强度（0=关闭月光反弹）
-#define VOXEL_TRACE_SUN_STRENGTH 32.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
+// [2026-09-23 倍率回正] 32.0 → 1.0。原倍率是历史补丁（注释链：1.0→2.0→8.0→32.0，都是为
+// "让阳光反弹可见"而抬），但它把物理正确的阳光项（directIlluminance/VOXEL_SUN_REFERENCE
+// 已是 0-1 尺度）放大了 32 倍 ⇒ 被太阳直射的**彩色方块**（红石/红羊毛等）反弹出
+// 亮度极高、颜色为反照率原色的溢出像素，且只在 sunVis=1 处触发 ⇒ 随相机位置出现/消失。
+// 现在有降噪链与 firefly 中值，不需要靠过曝来"看见"；要更亮请调 VOXEL_GI_TRACE_STRENGTH
+// 或修天光/环境光链路，不要用本条倍率。
+#define VOXEL_TRACE_SUN_STRENGTH 1.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
 // 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；
 // 洞穴/室内（skyLightmap≈0）无天光，不会过量。若整体过亮用 VOXEL_GI_TRACE_STRENGTH 旋钮。
