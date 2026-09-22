@@ -157,6 +157,12 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
     #define VOXEL_IRC_SPP 1
 #endif
 #define VOXEL_IRC_TRACE_DISTANCE 16     // 光线最大步进体素数（64³ 网格内足以跨过洞穴/房间）
+// [2026-09-22 firefly 修复] 半球余弦采样在掠射方向 pdf→0，原下限 1e-4 让 rcpPdf 高达
+// 10000 ⇒ 单个掠射样本（阳光项本身 ~128 级）被放大到数十万，写入 voxelRadiance 后经
+// 时域混合（blend 0.995，残留 ~200 帧）与 self-bounce 传播 ⇒ "亮度极高、颜色鲜艳、
+// 异于场景"的溢出像素。钳到 0.05（rcpPdf ≤ 20）把极端样本压回正常量级；
+// 代价是掠射样本权重被低估（轻微无偏性损失，视觉无感）。
+#define VOXEL_IRC_PDF_MIN 0.05
 // [2026-08-20 注入降频] 每个体素每 N 帧才重新投 IRC 射线一次（N 应为 2 的幂）。
 // 体素场低频近似静态，中间 N-1 帧沿用上次缓存的旧值。算力直接降到 ~1/N，几乎无视觉代价。
 // 1=不降频（默认，逐帧全量重注入）；2/4=每 2/4 帧重注入 1 次。配合时域混合（blend 0.99）

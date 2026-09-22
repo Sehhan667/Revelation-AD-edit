@@ -190,7 +190,7 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             dir = VoxelRandUnitVector(seed);
             pdf = 1.6;
         }
-        float rcpPdf = rcp(max(pdf, 1e-4));
+        float rcpPdf = rcp(max(pdf, VOXEL_IRC_PDF_MIN));
 
         // ---- 穿透式 DDA 步进（发射光体素 → 球形光源
         // 平滑贡献 + 穿透不挡光；普通固体命中停止）----
