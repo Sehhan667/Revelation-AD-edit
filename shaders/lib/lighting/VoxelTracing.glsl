@@ -295,7 +295,15 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         vec3 sunDir = mat3(shadowModelViewInverse) * vec3(0.0, 0.0, 1.0);
         // [2026-08-19 恢复 lightmap 门控] 阳光门限用命中体素 sky（写胜 skylight），半遮挡按比例放行。
         float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
-        float sunLighting = saturate(dot(sunDir, hitNormal)) * saturate(max(hitSkylight, skyLightmap) * 444.0);
+        // [2026-09-23 修复] ×444 是「atomicMax 字节序 bug 时期」的遗留补丁：当时 hitSkylight
+        // 恒读 0（sky 字节被 block/emissive 的高位压掉，见 Shadow.frag 的字节序注释），为了让
+        // 阳光反弹还能出现，才把门控放大到必然饱和 ⇒ **门控形同虚设**：屋顶下/室内/洞穴里
+        // 照样反弹阳光（用户实测：暗处出现被太阳直射的彩色方块"反照率原色"的亮斑，绿色最明显，
+        // 且降噪压不住因为是成片大值）。
+        // 该字节序 bug 已修（sky 现在放 R 字节），门控可恢复实际语义：天光低处屏蔽阳光反弹。
+        // 用 smoothstep 而非硬阈值，避免阈值处突变。
+        float sunLighting = saturate(dot(sunDir, hitNormal))
+                          * smoothstep(0.25, 0.55, max(hitSkylight, skyLightmap));
         // [FIX 2026-08-05] 阳光项改用本地重算的直射辐照度：诊断确认 global.directIlluminance
         // 在计算端（DiffuseIndirect）读到 0（SSBO 跨 pass 屏障/绑定问题）→ 阳光项整体乘 0
         // → 阴影纯黑。本地重算（同 GlobalStorage.comp）；若 SSBO 有值则优先用 SSBO。

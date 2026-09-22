@@ -282,7 +282,13 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
                 contrib += max(alb, vec3(VOXEL_GI_BLOCK_MIN_ALBEDO)) * blocklightColor * lD.y * VOXEL_GI_BLOCK_STRENGTH * absorption;
             // 真阳光：rPI 方向项（hitNormal 为命中面法线）。
             // [2026-08-19 脱原版光照] 不再读体素 skylight 做阳光门控（sunVis 阴影贴图即遮挡判定）。
-            float sunLighting = saturate(dot(sunDir, hitNormal)) * rPI;
+            // [2026-09-23 恢复天光门控] 上面那次"脱原版光照"与追踪端的 ×444 是同一个病根：
+            // 当时 hitSkylight 恒读 0（sky 字节被 block/emissive 高位压掉，见 Shadow.frag 字节序
+            // 注释）⇒ 天光门控会把阳光反弹整个掐死 ⇒ 两端各自绕过。字节序 bug 已修，
+            // 门控恢复实际语义：**屋顶下/室内/洞穴（天光低）不注入阳光反弹**。
+            // 用户实测症状：暗处出现被太阳直射的彩色方块"反照率原色"的亮斑（绿色最明显）。
+            float sunLighting = saturate(dot(sunDir, hitNormal)) * rPI
+                              * smoothstep(0.25, 0.55, hitSkylight);
             // [FIX 2026-08-06 阳光色] 阳光项用暖阳色 sunLight（sunIrradiance 暖白
             // ×128×rcp(300) 归一化到 0-1，白天≈0.43，与注入端 sunLight/黑体色温一致 + 追踪端
             // directIlluminance），不再是天空蓝 VoxelSkyColor——蓝天空色导致阳光反弹偏蓝且暗，
