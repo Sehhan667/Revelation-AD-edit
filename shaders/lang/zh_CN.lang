@@ -768,6 +768,12 @@ option.ENTITY_GLITCH_OUTLINE_TEAR=实体轮廓撕裂
 option.ENTITY_GLITCH_OUTLINE_TEAR.comment=开启后实体轮廓随条带一起水平位移，缺口用邻近背景近似填充；关闭时使用旧版仅内部颜色错位
 option.GLITCH_TEAR_LAYERS=故障特效切片数
 option.GLITCH_TEAR_LAYERS.comment=数值越高画面撕的越碎，细细的切成臊子
+option.GLITCH_TEAR_REF_DISTANCE=撕裂距离衰减·内圈
+option.GLITCH_TEAR_REF_DISTANCE.comment=这个距离（米）内实体受击特效的撕裂位移满幅；更远处开始线性减弱，到「撕裂距离衰减·外圈」完全不撕。对水面/彩色玻璃同样生效。全屏受击屏闪不受此项影响
+option.GLITCH_TEAR_FADE_DISTANCE=撕裂距离衰减·外圈
+option.GLITCH_TEAR_FADE_DISTANCE.comment=超过这个距离（米）完全不出现实体撕裂位移（远处小物体不再被拖走）。设为 0 或不超过内圈 = 关闭衰减（回到远近一样大的旧行为）
+option.DEBUG_GLITCH_TEAR=撕裂距离衰减读数
+option.DEBUG_GLITCH_TEAR.comment=整屏读数：红=视距（越红越远，满值 64 m），绿=撕裂位移系数（亮=满幅、黑=此处完全不撕），蓝=材质标志位（0.5=实体位、再+0.5=受伤位）。用来确认衰减是否作用到你看的那块像素
 option.KILL_RIPPLE=击杀特效
 option.KILL_RIPPLE.comment=实体被杀死倒地期间会持续变红，超过触发阈值后手部物品出现泛白提亮与扩散涟漪，模拟击杀反馈
 option.KILL_RIPPLE_TRIGGER_TIME=击杀触发阈值

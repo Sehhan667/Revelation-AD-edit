@@ -33,6 +33,10 @@ out vec3 finalOut;
 //======// Function //============================================================================//
 #include "/lib/universal/Random.glsl"
 
+// [2026-10-06 撕裂距离衰减] 需要 ScreenToViewDepth 把深度换算成视距（lib/universal/Transform.glsl）。
+// 该文件在 LOD_MOD（Voxy / DH）分支下引用的 lod* 别名在 Uniform.glsl 三档都已定义，故可安全引入。
+#include "/lib/universal/Transform.glsl"
+
 #include "/lib/post/GradeCore.glsl"
 #include "/lib/post/KillRipple.glsl"
 #include "/lib/post/StartupLogo.glsl"
@@ -71,7 +75,48 @@ out vec3 finalOut;
 // ---------- 实体撕裂模式 ----------
 #define ENTITY_GLITCH_OUTLINE_TEAR // [注释以关闭] 开启：实体轮廓随条带一起撕裂（缺口用邻近背景近似填充）；关闭：旧版仅内部颜色错位
 
+// ---------- 撕裂位移的距离衰减（两个半径；外圈 0 = 关闭衰减 = 旧行为） ----------
+// 内圈内满幅，内外圈之间线性降到 0，外圈之外**完全不撕**。见 GlitchTearDistanceFade 的长注释。
+#define GLITCH_TEAR_REF_DISTANCE 4.0  // [0 1 2 3 4 6 8 12 16 24 32]
+#define GLITCH_TEAR_FADE_DISTANCE 24.0 // [0 4 8 12 16 20 24 32 48 64]
+
+// 手部/贴脸像素的 raw depth 阈值（与包内既有判手部写法同源：KillRipple 与 SSILVB_HAND_DEPTH_THRESHOLD
+// 都用 0.56）。手部深度是压缩编码，直接当视距换算会读成"很远"，必须单独放行。
+#define GLITCH_HAND_DEPTH 0.56
+
+// ---------- 调试：撕裂距离衰减读数（默认关；GUI「调试」页也能开） ----------
+// 打开后整屏变成读数：R = 视距/64 m（越红越远）；G = 撕裂位移系数（亮=满幅、黑=此处完全不撕）；
+// B = 材质标志位（0.5 = 实体位，再 +0.5 = 受伤位）。
+// 用法：看远处生物那一块 —— R 应很红、B 应有蓝、G 应很暗。G 仍亮 = 衰减没作用到它身上。
+//#define DEBUG_GLITCH_TEAR
+
 uniform bool is_hurt;
+
+// ---------- 撕裂位移的距离衰减 ----------
+// 撕裂本来是纯屏幕空间位移（|offsetAccum| ≤ 0.15 屏宽 × 强度），与距离完全无关。
+// [2026-10-06 第三次修订，改语义] 前两版都按 1/距离缩放，用户反馈"还是不行、远处照撕"——原因是
+// **屏幕尺寸本身 ∝ 1/距离**：位移按同一比例缩，等于相对物体永远一样大，观感根本没变。
+// 要"自然减小"必须**收敛到 0**，所以改成距离窗口：
+//     内圈 GLITCH_TEAR_REF_DISTANCE 内      → 100%
+//     内外圈之间                            → 线性降到 0
+//     外圈 GLITCH_TEAR_FADE_DISTANCE 之外   → 完全不撕
+// 外圈设 0（或 ≤ 内圈）＝ 关闭衰减 ＝ 旧的全屏等幅行为。
+// 视距取 depthtex1（含半透明 = 看得见的表面；水面/彩色玻璃才吃到自己的深度，DOF 也用这张）。
+// raw depth < GLITCH_HAND_DEPTH 的像素（手部、贴脸几何）恒满幅：手部深度是压缩编码，
+// 直接当视距换算会读成很远（见 DeferredLight.frag 的 HAND_DEPTH_OFFSET）。
+// 判断"关闭"用运行期比较，不用 #if 比浮点 —— 实测 Iris 的 jcpp 只按整数部分比较浮点。
+// 作用范围：实体区域故障两个分支；全屏受伤屏闪按用户要求保持等幅。
+float GlitchTearDistanceFade(in ivec2 texel) {
+    if (loadDepth0(texel) < GLITCH_HAND_DEPTH) return 1.0;
+    // [2026-10-06 符号修正（前三次"没用"的真因）] ScreenToViewDepth 返回的是**视空间 z（负数）**，
+    // 不是距离：GL 视空间相机前方 z < 0。所以负数直接和 4.0 比会**恒为真**（永远"在内圈"）⇒ 恒满幅。
+    // 包内取距离的写法都带负号（DOF/Prepare.comp:58、DOF/Gather.comp:224 都是 -ScreenToViewDepth...），
+    // 这里照做。以后改这段务必先确认符号，或直接看 GUI 的「撕裂距离衰减读数」。
+    float viewDist = -ScreenToViewDepth(loadDepth1(texel));
+    if (viewDist <= GLITCH_TEAR_REF_DISTANCE) return 1.0;
+    if (GLITCH_TEAR_FADE_DISTANCE <= GLITCH_TEAR_REF_DISTANCE) return 1.0;
+    return clamp((GLITCH_TEAR_FADE_DISTANCE - viewDist) / (GLITCH_TEAR_FADE_DISTANCE - GLITCH_TEAR_REF_DISTANCE), 0.0, 1.0);
+}
 
 vec3 FFXCasFilter(in ivec2 texel, in float sharpness) {
     #define CasLoad(offset) LoadGradedTexel(texel + (offset))
@@ -217,17 +262,36 @@ void main() {
             // ===== 新撕裂：实体轮廓随条带一起水平位移，缺口用邻近背景近似填充 =====
             // 内容来源像素 = 当前像素 - 条带位移（像素）。来源处是受伤实体则被拖拽到当前位置；
             // 当前是实体但来源不是（条带移走后的缺口），则用来源处的背景像素近似填充
+            // [2026-10-06 距离衰减] 位移先乘 tearScale（按受伤实体自身的视距，见 GlitchTearDistanceFade）。
+            // 先按当前像素的 k 定位源像素；若源是受伤实体，说明真正的被撕对象在那一侧，
+            // 改用源的 k 重算并重取一次 —— 「被拖走的条带」与「补洞」必须共用同一个 k，
+            // 否则遮罩判定和取色会错开；同时避免近处实体叠在远背景/天空上时被背景的视距把位移砍掉。
+            float rawShift = offsetAccum * intensity;
+            float tearScale = GlitchTearDistanceFade(texelPos);
             ivec2 srcTexel = texelPos;
-            srcTexel.x -= int(round(offsetAccum * intensity * float(viewWidth)));
+            srcTexel.x -= int(round(rawShift * tearScale * float(viewWidth)));
             srcTexel.x = clamp(srcTexel.x, 0, int(viewWidth) - 1);
             uvec4 srcPack = texelFetch(colortex7, srcTexel, 0);
             uint srcW = srcPack.w;
             bool srcIsEntity = ((srcW & 1u) != 0u) && ((srcW & 2u) != 0u) && srcPack.y != 1u;
-            if (srcIsEntity || (isEntity && isHurt && matPack.y != 1u)) {
-                float shiftUv = offsetAccum * intensity;
-                float uvR = loop(uv.x - (shiftUv + r6 * 0.1));
+            if (srcIsEntity) {
+                float srcScale = GlitchTearDistanceFade(srcTexel);
+                if (srcScale != tearScale) {
+                    tearScale = srcScale;
+                    srcTexel = texelPos;
+                    srcTexel.x -= int(round(rawShift * tearScale * float(viewWidth)));
+                    srcTexel.x = clamp(srcTexel.x, 0, int(viewWidth) - 1);
+                    uvec4 srcPack2 = texelFetch(colortex7, srcTexel, 0);
+                    // 重取后要重新判定（含手部排除 srcPack.y != 1，与第一遍的判据保持一致）
+                    srcIsEntity = ((srcPack2.w & 1u) != 0u) && ((srcPack2.w & 2u) != 0u) && srcPack2.y != 1u;
+                }
+            }
+            if (tearScale > 0.0 && (srcIsEntity || (isEntity && isHurt && matPack.y != 1u))) {
+                float shiftUv = rawShift * tearScale;
+                float chroma = 0.1 * tearScale;   // 色散偏移也同比例衰减，否则远处不撕裂却仍掉色边
+                float uvR = loop(uv.x - (shiftUv + r6 * chroma));
                 float uvG = loop(uv.x - shiftUv);
-                float uvB = loop(uv.x - (shiftUv - r7 * 0.1));
+                float uvB = loop(uv.x - (shiftUv - r7 * chroma));
 
                 vec3 glitchColor;
                 glitchColor.r = LoadGradedUV(vec2(uvR, uv.y)).r;
@@ -238,10 +302,12 @@ void main() {
             }
         #else
             // ===== 旧撕裂：仅实体内部颜色错位，轮廓保持不动 =====
-            if (isEntity && isHurt && matPack.y != 1u) {
-                float uvR = loop(uv.x + (offsetAccum - r6 * 0.1) * intensity);
-                float uvG = loop(uv.x + offsetAccum * intensity);
-                float uvB = loop(uv.x + (offsetAccum + r7 * 0.1) * intensity);
+            // [2026-10-06 距离衰减] 位移整体乘 tearScale；这里是当前像素本身即受伤实体，取其视距即可
+            float tearScale = GlitchTearDistanceFade(texelPos);
+            if (tearScale > 0.0 && isEntity && isHurt && matPack.y != 1u) {
+                float uvR = loop(uv.x + (offsetAccum - r6 * 0.1) * intensity * tearScale);
+                float uvG = loop(uv.x + offsetAccum * intensity * tearScale);
+                float uvB = loop(uv.x + (offsetAccum + r7 * 0.1) * intensity * tearScale);
 
                 vec3 glitchColor;
                 glitchColor.r = LoadGradedUV(vec2(uvR, uv.y)).r;
@@ -371,5 +437,16 @@ void main() {
     // 改为逐帧 STBN 时空蓝噪声：帧间图案去相关 → 无固定条纹，同时压 8-bit 量化带。
     // 若静止画面仍有可见量化带，把振幅 rcp255 后乘 1.5~2.0；若嫌时间噪声明显则乘 0.75。
     finalOut += (SampleStbnVec1(texelPos, frameCounter) - 0.5) * rcp255;
-    
+
+    // [2026-10-06 调试] 撕裂距离衰减读数（GUI「调试」页可开，源码里也能取消注释）。
+    //   R = 视距/64 m（越红越远）  G = 撕裂位移系数（亮=满幅、黑=完全不撕）  B = 材质标志位（实体+0.5 / 受伤+0.5）
+    // 排查"远处仍然撕得很远"：看远处生物/水面所在的位置 —— R 应很红、B 应有蓝、G 应很暗。
+    // G 仍然亮 ⇒ 衰减没作用到那个像素（视距读错或不是这条路径）。放在最后 ⇒ 不被其它段覆盖。
+    #ifdef DEBUG_GLITCH_TEAR
+        uint dbgMat = texelFetch(colortex7, texelPos, 0).w;
+        float dbgFlags = 0.5 * float((dbgMat & 1u) != 0u) + 0.5 * float((dbgMat & 2u) != 0u);
+        finalOut = vec3(saturate(-ScreenToViewDepth(loadDepth1(texelPos)) / 64.0),
+                        GlitchTearDistanceFade(texelPos),
+                        dbgFlags);
+    #endif
 }

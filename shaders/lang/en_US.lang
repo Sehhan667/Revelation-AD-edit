@@ -611,6 +611,36 @@ option.GAMMA_CORRECTION=Gamma Correction
 option.CAS_ENABLED=Contrast-Adaptive Sharpening
 option.CAS_STRENGTH=CAS Strength
 
+# [2026-10-06] The whole R!G!B! screen had no English entries (GUI showed raw keys).
+option.GLITCH_VISUAL=Screen Glitch on Hurt
+option.GLITCH_VISUAL.comment=Shows a full-screen glitch effect when you take damage
+option.HURT_GLITCH_INTENSITY=Hurt Glitch Strength
+option.ENTITY_AREA_GLITCH=Entity Hurt Glitch
+option.ENTITY_AREA_GLITCH.comment=Also affects stained glass
+option.ENTITY_AREA_GLITCH_INTENSITY=Entity Hurt Glitch Strength
+option.ENTITY_GLITCH_OUTLINE_TEAR=Entity Outline Tear
+option.ENTITY_GLITCH_OUTLINE_TEAR.comment=On: the entity outline is displaced together with each tear band (the gap is approximated with neighbouring background). Off: legacy behavior, only colors inside the entity are displaced
+option.ALWAYS_GLITCH=Always Show Glitch
+option.ALWAYS_GLITCH.comment=Debug: keep the glitch effect on all the time
+option.GLITCH_TEAR_LAYERS=Tear Band Count
+option.GLITCH_TEAR_LAYERS.comment=Higher splits the picture into more, thinner tear bands
+option.GLITCH_TEAR_REF_DISTANCE=Tear Distance Falloff - Inner
+option.GLITCH_TEAR_REF_DISTANCE.comment=Entity hurt-glitch tear offset is at full strength inside this distance (meters); beyond it, it falls off linearly until the outer radius where tearing stops. Applies to water/stained glass too. The full-screen hurt glitch is not affected
+option.GLITCH_TEAR_FADE_DISTANCE=Tear Distance Falloff - Outer
+option.GLITCH_TEAR_FADE_DISTANCE.comment=No entity tear offset at all beyond this distance (meters), so small distant objects are no longer dragged away. Set to 0 (or not more than the inner radius) to disable the falloff (old behavior: same offset at any distance)
+option.DEBUG_GLITCH_TEAR=Tear Distance Falloff Readout
+option.DEBUG_GLITCH_TEAR.comment=Full-screen readout: red = view distance (brighter = farther, saturates at 64 m), green = tear offset scale (bright = full strength, black = no tearing here), blue = material flags (0.5 = entity bit, +0.5 = hurt bit). Use it to check whether the falloff reaches the pixels you are looking at
+option.KILL_RIPPLE=Kill Ripple
+option.KILL_RIPPLE.comment=While a killed entity is toppling it keeps turning red; past the trigger time the held item gets a whitening pulse and an outward ripple as kill feedback
+option.KILL_RIPPLE_TRIGGER_TIME=Kill Trigger Time
+option.KILL_RIPPLE_TRIGGER_TIME.comment=Seconds an entity has to stay red before it counts as killed (a normal hit is about 0.3-0.5 s)
+option.KILL_RIPPLE_DURATION=Pulse Duration
+option.KILL_RIPPLE_DURATION.comment=Duration of a single kill pulse (seconds)
+option.KILL_RIPPLE_RANGE=Ripple Spread Distance
+option.KILL_RIPPLE_RANGE.comment=Maximum pixel distance the white ripple travels outward from the held item outline
+option.KILL_RIPPLE_HIGHLIGHT=Whiten Strength
+option.KILL_RIPPLE_HIGHLIGHT.comment=How strongly the held item whitens during the pulse
+
 
 # Compatibility
 option.MOD_BLOCK_SUPPORT=Mod Block Support
