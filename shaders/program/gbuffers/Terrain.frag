@@ -20,11 +20,21 @@
 
 */
 // 视差映射最大距离（米），超出此距离视差完全失效
-#define PARALLAX_MAX_DISTANCE 32  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+#define PARALLAX_MAX_DISTANCE 64  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
 
-// 视差映射淡化距离（米）
-#define PARALLAX_FADE_START 32  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
-#define PARALLAX_FADE_END   16  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+// 视差映射淡化距离（米）：内圈（FADE_END）满强度，外圈（FADE_START）淡到 0
+#define PARALLAX_FADE_START 64  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+#define PARALLAX_FADE_END   32  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+// [2026-10-06 视差阴影可视距离] 满强度半径 16->32 m、淡出终点 32->64 m，MAX_DISTANCE 同步 64。
+// 为什么原来"看不到"：视差自阴影只乘直射阳光，且两者共用同一条 fade —— fade 归零时射线横向
+// 步长也归零，只剩 z 方向爬升，必定判定无遮挡。所以 32 m 外结构上不可能有自阴影，
+// 16 m 内才满强度更是等于"开了也白开"。
+// 取 64/32 不是拍脑袋：这正是本文件 #else 兜底（smoothstep(64.0, 32.0, d)）与上游 Revelation
+// 的等价范围，即"没有这些旋钮时本该有的行为"；旧值 32/16 是本 fork 后来收紧的一半。
+// 代价：参与视差的像素面积约 4 倍（视差是可选功能、默认关，只影响主动开视差的人）。
+// 想省性能：把这三项一起调回 MAX_DISTANCE/FADE_START=32、FADE_END=16。
+// 另一个坑（只影响深度写入档）：FADE_START > PARALLAX_MAX_DISTANCE 时，fade 还没归零就先被
+// doParallax=false 掐断，深度会在 MAX_DISTANCE 处硬切 —— 保持 FADE_START <= MAX_DISTANCE（现在 64/64 齐平）。
 
 // 方块法线/高光贴图裁剪最大距离（米）
 #define BLOCK_TEXTURE_CULL_DISTANCE 64  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
@@ -41,7 +51,12 @@ layout (location = 0) out vec4 albedoOut;
 layout (location = 1) out uvec4 materialOut;
 layout (location = 2) out vec4 normalOut;
 
+// [2026-10-06 视差阴影接线] 声明了 location 3 就必须把 colortex0 也列进 RENDERTARGETS：
+// 只有 6,7,8 三个目标时，第 4 个输出没有 draw buffer，写出去的值落不到 deferred 读的位置
+// （DeferredLight.frag 的 shadow *= 1 - colortex0.x）。这不是本包独有写法：上游修同一问题时
+// （commit 9cd3edca Fix parallax shadow issue when disable PARALLAX_DEPTH_WRITE）加的就是这一行。
 #if defined PARALLAX && defined PARALLAX_SHADOW && !defined PARALLAX_DEPTH_WRITE
+/* RENDERTARGETS: 6,7,8,0 */
 layout (location = 3) out float parallaxShadowOut;
 #endif
 
@@ -88,6 +103,15 @@ void main() {
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
     float dither = BlueNoise(ivec2(gl_FragCoord.xy), frameCounter);
 
+    // [2026-10-06 视差阴影接线] 一开始就写 0（= 无自阴影），只让真正算了视差的像素覆盖它。
+    // 必须「先清后写」而不是像 Block/Textured 那样在末尾写 0：Terrain 的自阴影在中间算出来，
+    // 末尾再写 0 会把它抹掉。也不能指望不写 —— colortex0 每帧不清（config.glsl
+    // colortex0Clear = false），未写入的像素会留着上一帧最终画面的红通道，
+    // DeferredLight.frag 的 shadow *= 1 - colortex0.x 就会按上一帧亮度压掉直射阳光。
+    #if defined PARALLAX && defined PARALLAX_SHADOW && !defined PARALLAX_DEPTH_WRITE
+        parallaxShadowOut = 0.0;
+    #endif
+
     vec2 packedGeo = unpackSnorm2x16(normalPack);
     vec2 packedNormal = packedGeo;          // 默认输出几何法线
 
@@ -100,11 +124,22 @@ void main() {
         skipNormalSpecular = distSq > (BLOCK_TEXTURE_CULL_DISTANCE * BLOCK_TEXTURE_CULL_DISTANCE);
     #endif
 
+    // [2026-10-06 视差深度写入 × 方块PBR剔除] 这一档下强制不剔除（BLOCK_TEXTURE_CULL_DISTANCE 失效）。
+    // 为什么：深度写入把视差位移后的高度写进深度缓冲，下游（SSAO/GTAO、SSR、GI 重建、阴影、DOF）
+    // 都按这张深度判几何。而剔除是一条**硬边界**：边界外深度停在几何面、边界内被位移，
+    // 同时法线（L210）与 PBR 材质（L257）也从贴图值切成几何值 —— 同一平面上出现台阶与材质突变。
+    // 视差范围（PARALLAX_MAX_DISTANCE / fade）本来是渐变的，剔除却在其中插一条硬线，
+    // 范围调得比剔除距离大时深度会直接硬切。故此处让两者不再互相打架。
+    // 选项仍留在 GUI（关掉视差或深度写入即恢复生效）；本块只在两个开关同时打开时参与编译。
+    #if defined PARALLAX && defined PARALLAX_DEPTH_WRITE
+        skipNormalSpecular = false;
+    #endif
+
     vec4 albedo;
 
     #ifdef PARALLAX
         vec2 parallaxCoord = texCoord;
-        mat2 texGrad; // 提前声明，远距离不会赋值但不会用到
+        mat2 texGrad; // 提前声明：剔除命中的远距离分支不赋值也不使用；深度写入档下剔除被强制关掉，这里总会赋值
 
         if (skipNormalSpecular) {
             // 远距离：跳过导数，普通采样

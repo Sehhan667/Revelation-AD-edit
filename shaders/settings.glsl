@@ -330,10 +330,14 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define PARALLAX_SHADOW // Enables parallax shadow
 	//#define PARALLAX_BASED_NORMAL // Enables parallax based normal
 
-	//#define PARALLAX_SAMPLES 15 // Sample count of parallax. [5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200]
-	//#define PARALLAX_DEPTH 0.35 // Parallax depth. [0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0][0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.5 0.75 1.0 1.25 1.5 1.75 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
+	// [2026-10-06 视差接线] 三个"数值型"选项必须保持启用（不能连注释一起关掉）：
+	// 它们是 PARALLAX 的子参数，被 lib/surface/Parallax.glsl 无条件引用；一旦为空，
+	// 只要用户打开「视差」就会编译失败（error C1503: undefined variable PARALLAX_SAMPLES）。
+	// 父开关 PARALLAX 默认关，故把它们启用在画面上零影响（默认观感不变）。
+	#define PARALLAX_SAMPLES 15 // Sample count of parallax. [5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200]
+	#define PARALLAX_DEPTH 0.35 // Parallax depth. [0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0][0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.5 0.75 1.0 1.25 1.5 1.75 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
 	//#define PARALLAX_REFINEMENT // Enables parallax refinement
-	//#define PARALLAX_REFINEMENT_STEPS 8 // Sample count of parallax refinement. [4 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64 68 72 76 80 84 88 92 96 100] [2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 18 24]
+	#define PARALLAX_REFINEMENT_STEPS 8 // Sample count of parallax refinement. [4 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64 68 72 76 80 84 88 92 96 100] [2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 18 24]
 	//#define PHYSICS_OCEAN_SUPPORT
 /* Reflections */
 	//#define ROUGH_REFLECTIONS // Enables rough reflections

@@ -1,3 +1,17 @@
+// [2026-10-06 铁律二兜底] 本文件无条件引用 PARALLAX_SAMPLES / PARALLAX_DEPTH / PARALLAX_REFINEMENT_STEPS，
+// 而它们由 GUI 选项决定：用户存档里若把这三项留空（历史配置或 profile 写成 !NAME），宏就不存在，
+// 只要 PARALLAX 打开就整包编译失败（error C1503: undefined variable PARALLAX_SAMPLES）。
+// 这里给兜底值，保证库文件单独展开也能编译；取值与 settings.glsl 的源码默认一致。
+#ifndef PARALLAX_SAMPLES
+    #define PARALLAX_SAMPLES 15 // [5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200]
+#endif
+#ifndef PARALLAX_DEPTH
+    #define PARALLAX_DEPTH 0.35 // [0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
+#endif
+#ifndef PARALLAX_REFINEMENT_STEPS
+    #define PARALLAX_REFINEMENT_STEPS 8 // [4 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64 68 72 76 80 84 88 92 96 100]
+#endif
+
 #define atlasCoord(coord) (tileOffset + tileScale * fract(coord))
 #define atlasTexel(coord) ivec2((tileOffset + tileScale * fract(coord)) * vec2(atlasSize))
 

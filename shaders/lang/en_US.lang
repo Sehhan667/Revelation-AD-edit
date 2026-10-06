@@ -387,6 +387,7 @@ option.AGN_STRENGTH=AGN Strength
 option.PARALLAX=Parallax Occlusion Mapping
 option.PARALLAX_SHADOW=Parallax Shadow
 option.PARALLAX_DEPTH_WRITE=Parallax Depth Write
+option.PARALLAX_DEPTH_WRITE.comment=Writes parallax displacement into the depth buffer (AO/SSR/GI/shadows read it as geometry). While on, Block PBR Cull Distance is ignored so depth, normals and materials stay continuous.
 option.PARALLAX_BASED_NORMAL=Parallax Based Normal
 option.PARALLAX_DEPTH=Parallax Depth
 suffix.PARALLAX_DEPTH=m
@@ -394,6 +395,20 @@ suffix.PARALLAX_DEPTH=m
 option.PARALLAX_SAMPLES=Parallax Samples
 option.PARALLAX_REFINEMENT=Parallax Refinement
 option.PARALLAX_REFINEMENT_STEPS=Parallax Refinement Steps
+
+# [2026-10-06] Parallax distance options had no English entries (GUI showed raw keys).
+option.PARALLAX_MAX_DISTANCE=Parallax Max Distance
+option.PARALLAX_MAX_DISTANCE.comment=No parallax at all beyond this distance (meters)
+option.PARALLAX_FADE_START=Parallax Fade End Distance
+option.PARALLAX_FADE_START.comment=Outer radius: parallax (and its self shadow) fades to zero here
+option.PARALLAX_FADE_END=Parallax Fade Start Distance
+option.PARALLAX_FADE_END.comment=Inner radius: full parallax strength inside this distance
+
+# [2026-10-06] The two PBR cull options had no English entries either (GUI showed raw keys).
+option.TEXTURE_CULL_DISTANCE=Entity PBR Cull Distance
+option.TEXTURE_CULL_DISTANCE.comment=Entity normal/specular maps are skipped beyond this distance (meters)
+option.BLOCK_TEXTURE_CULL_DISTANCE=Block PBR Cull Distance
+option.BLOCK_TEXTURE_CULL_DISTANCE.comment=Block normal/specular maps are skipped beyond this distance (meters). Ignored while Parallax and Parallax Depth Write are both enabled.
 
 option.EMISSIVE_MODE=Emissive Mode
 value.EMISSIVE_MODE.0=Hardcoded Only

@@ -21,7 +21,9 @@ layout (location = 0) out vec4 albedoOut;
 layout (location = 1) out uvec4 materialOut;
 layout (location = 2) out vec4 normalOut;
 
+// [2026-10-06] 同 Terrain.frag：location 3 要落到 colortex0，RENDERTARGETS 必须含第 4 个目标。
 #if defined PARALLAX && defined PARALLAX_SHADOW && !defined PARALLAX_DEPTH_WRITE
+/* RENDERTARGETS: 6,7,8,0 */
 layout (location = 3) out float parallaxShadowOut;
 #endif
 
