@@ -645,17 +645,21 @@ void main() {
             // [2026-08-21 网格内 SH 混入] 恢复体素范围内 SH 球谐光做环境底：GI 天光是方向性的
             //（朝上/侧面亮、朝下 0），朝下表面只靠 GI 自反弹（距离有限）易死黑。加法混入
             // SH 全空间辐照度（含下半球，昼夜/方向自动），由 VOXEL_GI_SH_MIX 控制强度——
-            // 默认 0.15 轻微补底不破坏 GI 方向性；调 0 完全屏蔽（旧行为）。
+            // 低值（0.1-0.2）轻微补底不破坏 GI 方向性；默认 0.0 = 屏蔽（= 修好接线前的实际观感）。
             #ifdef DIMENSION_NETHER
                 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
             #else
                 float nightVisionFloor = 5e-3 * nightVision;
                 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6)) * nightVisionFloor;
             #endif
-            #if VOXEL_GI_SH_MIX > 0.0
+            // [2026-10-06 接线修复] 原来是 `#if VOXEL_GI_SH_MIX > 0.0`。实测 Iris 的 jcpp 预处理
+            // 只按**整数部分**比较浮点（0.5 → 0、4.0 → 4），所以该分支在默认 0.5 下**恒假**——
+            // 「网格内 SH 环境光」自加进来到现在从未生效，只有滑条=1.0 时才会突然打开。
+            // 改为运行期判断：0~1 任意档位都正确，语义与注释一致（0 = 屏蔽）。
+            if (VOXEL_GI_SH_MIX > 0.0) {
                 // SH 全空间辐照度（含下半球）→ 朝下表面吃到环境光，随昼夜自动正确
                 ambientAccum += skySHIrradiance * VOXEL_GI_SH_MIX;
-            #endif
+            }
         } else {
             // 网格外：光追范围外无 GI 数据，MINIMUM_AMBIENT_BRIGHTNESS 作为全局最暗保底，
             // 不随 lightmap 门控被压灭。此前主世界网格外洞穴/无光处 lightmap.y≈0 时，
