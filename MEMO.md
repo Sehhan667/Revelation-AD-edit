@@ -842,3 +842,427 @@ $c -notmatch '\?'                                  # 无乱码
 - **想要低空云海**：把某一层降下来即可 —— 滑条最低 400/500，例如
   `CLOUD_MID_ALTITUDE` 4000 → 500、`CLOUD_MID_THICKNESS` → 500~800、`CLOUD_AS_COVERAGE` 0.5~0.8，
   头顶 500~1000 格处就是一层真体积云。代价：那一层原来的高空云没了。
+
+---
+
+# 备忘：VXGI 阳光反弹「大片明亮鲜艳亮斑」收敛（2026-09-30）
+
+## 现象与定位
+- 用户实测：VXGI 模式偶尔出现**大片**、**鲜艳**的亮斑（自述「像溢出」）。
+- 定位手段：滑条逐项归零 → **只把 `VOXEL_TRACE_SUN_STRENGTH` 归零即消失**
+  ⇒ 来源是**每像素追踪端的阳光反弹项**（不是 IRC 注入，也不是天光/自反弹）。
+- 注意「大片 + 鲜艳」这两个特征：不是 firefly（零星单点，已有 rcpPdf 钳制 + 中值滤波），
+  而是**成片**（所以降噪压不住）；颜色是命中体素反照率原色（VoxelTracing 用体素平均色当 albedo）。
+
+## 根因（三个叠加，都不是"数量级错误"）
+1. **可见性只做 3 格 DDA**（`VoxelSunShadowTracing`）：薄遮挡物——半砖/玻璃/地毯/活板门/树叶，
+   在 MC 里 **skylight 几乎不衰减**——下方天光门控照样全开；加上太阳掠射角时阴影贴图沿法线的
+   屏幕偏移（`ssp.xy += normal.xy * 0.000125`）会把命中点"推出"薄顶 ⇒ 判成直射 ⇒
+   薄屋顶/树荫下**整片地板**吃满 0.43 量级的彩色反弹。
+2. **天光门控区间太松**（0.25-0.55）：skylight≈0.55（原版 lightmap 8/15）就全开，
+   半遮挡（树荫/窗边/薄顶下）拦不住。DDGI 探针端早就用更紧的 `smoothstep(0.20, 0.80)`。
+3. **量级本身偏高**：`directIlluminance/VOXEL_SUN_REFERENCE` = 128/300 = 0.427（正午峰值），
+   比物理的 L=alb·E·cos/π（≈0.318）高 1.34 倍；且这条链路历史上被 1.0→2.0→8.0→32.0
+   反复放大（32× 时期就是"彩色方块反弹出原色溢出像素"，2026-09-23 才回正 1.0）。
+
+## 修复（4 处，均为最小改动）
+| 文件 | 改动 |
+|---|---|
+| `VoxelSunShadow.glsl` | 新增宏 `VOXEL_SUN_TRACE_STEPS`（默认 **8**，原硬编码 3），DDA 循环用它 |
+| `VoxelTracing.glsl` | 阳光门控 `smoothstep(0.25,0.55,…)` → `smoothstep(0.20,0.80,…)`（对齐 DDGI 探针端） |
+| `VoxelTracing.glsl` | 阳光项加单次弹射上限 `min(sunBounce, alb)`（常态不触发，防未来加大倍率再次贴顶） |
+| `VoxelLighting.glsl` | `VOXEL_TRACE_SUN_STRENGTH` 默认 1.0 → **0.5**（GUI 可调，阴影发暗就拖回去） |
+
+顺手修：`DeferredLight.frag` 的 `voxelGI *= albedo * VOXEL_GI_TRACE_STRENGTH` 去掉重复乘的强度
+（DiffuseIndirect 写信号时已乘过 → GUI 滑条原本是平方）。
+
+## 第二轮（2026-10-01）：用户反馈「没有修复」→ 改打 IRC 注入端
+上面 4 处（追踪端）**实测未消除亮斑** ⇒ 主因不在追踪端量级/可见性，改为收敛**注入端**：
+`VoxelGI.frag` 的 `sunLighting` 去掉 `rPI`（与追踪端口径统一）。
+- 量级链：普通方块全方向采样 pdf=1.6 → rcpPdf=0.625；本项期望 = alb×(128/300)×π×0.625
+  = **alb×0.84** → 叠加自反弹(0.8)后必然 >1.0 → 撞上文件末尾的「保色压缩」
+  （`if(maxC>1) nRC *= 1/maxC`）⇒ **整片日照区的 IRC 缓存钉在 1.0 天花板且色相被归一化成
+  纯反照率原色**；这份贴顶纯色再经 0.995 时域混合 + 自反弹扩散 + 8-tap 三线性读出
+  ⇒ 按 1m 体素尺度的**成片鲜艳亮斑**。去 rPI 后期望 = alb×0.27，远离钳位线。
+- ⚠️ 待用户确认的诊断（两个滑条名字很容易混）：
+  1. `阳光注入强度 VOXEL_GI_SUN_STRENGTH` 归零 → 亮斑消失？（= IRC 注入端，已改）
+  2. `阳光反弹强度 VOXEL_TRACE_SUN_STRENGTH` 归零 → 亮斑消失？（= 追踪端，第一轮已改）
+  3. 另需排除：`环境天空注入倍率 VOXEL_GI_SKY_STRENGTH`（用户配置 4.0 且
+     `VOXEL_IRC_SKY_GATE=1` 无门控 → IRC 天光期望 ≈1.0，**同样会贴顶**）。
+  4. `光追降噪 VOXEL_GI_DENOISE` 关掉 → 亮斑是否仍在（分辨"信号"还是"降噪链"）。
+
+## 影响面 / 回滚
+- `VoxelSunShadowTracing` 是**共用函数**，IRC 注入端（VoxelGI.frag）与 DDGI 探针端
+  （DiffuseIndirect ProbeTrace）也一起变保守 ⇒ 阴影整体略暗（可用 `VOXEL_GI_SUN_STRENGTH` /
+  `VOXEL_GI_TRACE_STRENGTH` 补）。嫌 IRC 注入端性能吃紧就把 `VOXEL_SUN_TRACE_STEPS` 降到 4-5。
+- 逐项回滚顺序：先 `VOXEL_TRACE_SUN_STRENGTH` 拖回 1.0（量级）→ 再把门控改回 0.25-0.55
+  → 最后把 `VOXEL_SUN_TRACE_STEPS` 改回 3（可见性）。
+
+## 若下次仍复现，先用这个判据定位
+`VoxelTracing.glsl` 里 `#define DEBUG_SUNBOUNCE_VIS`（解除注释）→ 三通道：R=sunVis（阴影贴图遮挡
+判定，0=采样失败/判无阳光）、G=朝向太阳、B=天光门控。亮斑区域若 **R=1** ⇒ 仍是"误判直射"
+（可见性问题，继续加 `VOXEL_SUN_TRACE_STEPS` / 查阴影贴图）；若 R=1 且 G=1、B=1 ⇒ 判定正确、
+只是量级偏好问题 ⇒ 纯调 `VOXEL_TRACE_SUN_STRENGTH`。
+（注：追/注两端代码已于 2026-10-02 整段移除，上述调试宏随之删除；重写后再按新实现补判据。）
+
+---
+
+# 备忘：阳光/月光反弹整段移除（2026-10-02，待重写）
+
+## 为什么推倒
+- 前两轮（2026-09-30 收敛量级+可见性、2026-10-01 去注入端 rPI）**都没修掉**。
+- 用户补充的关键特征：**亮斑是单个异常像素，会被降噪放大；玩家站在特定位置时，即使转头也会
+  在原位（同一世界位置）再次出现** ⇒ 不是"整片贴顶"（那会是成片），而是**单像素极端值/
+  firefly**，且与**世界几何位置**绑定（体素网格是相机锚定的，同一世界点的体素内容/命中
+  随相机位置变化 → 只在特定站位复现）。
+- 处置：按用户要求**整段停用阳光/月光反弹**，先拿到「零反弹基线」——若亮斑仍在，说明来源
+  根本不是反弹（应转向查 发射光 VoxelHitLightSphere / IRC 自反弹 / 保色压缩钳位 / 降噪链）。
+
+## 本次移除的代码（3 个注入点 + 1 个辅助文件）
+| 位置 | 内容 |
+|---|---|
+| `lib/lighting/VoxelTracing.glsl` | 追踪端阳光项（sunDir/sunLighting/directIlluminance 重算/sunVis/sunBounce）+ 月光项 + `DEBUG_SUNBOUNCE_VIS`；include 一并去掉 |
+| `program/gi/VoxelGI.frag` | IRC 注入端阳光项（sunLight/sunLighting/sunVis）+ 月光项 + `sunDir` 本地量；include 去掉 |
+| `program/diffuse/DiffuseIndirect.comp` | DDGI 探针端阳光项（sunSkyGate / VoxelSunShadowTracing）；include 去掉 |
+| `lib/lighting/VoxelSunShadow.glsl` | **整份删除**（VoxelSunShadowMap + VoxelSunShadowTracing，已无调用点；git 历史保留供重写参考） |
+
+保留（按用户要求「先保留滑条，只停用代码」）：`VOXEL_GI_SUN_STRENGTH` / `VOXEL_TRACE_SUN_STRENGTH` /
+`VOXEL_MOON_STRENGTH` / `VOXEL_SUN_REFERENCE` 宏与 GUI 滑条 → 当前是**无效旋钮**，重写后接线。
+注意 `VOXEL_MOON_STRENGTH` **不能删**：IntegrateScene 的**体积雾/月晕光能量**还在消费它（非反弹）。
+`shadow/Common.glsl` 与 `shadowtex1` 的 include/声明在两个 compute 单元里保留（已无消费点，
+但删掉有编译风险，重写时会用到）。
+
+## 重写时的方向（下次商量）
+1. **别在每像素追踪端直接产阳光项**：1 SPP 的随机采样天生是 firefly 源。本项目已有先例——
+   发射光就是为这个原因从追踪端迁到 IRC 时域累积（见 VoxelLighting.glsl 的
+   `VOXEL_GI_TRACE_LIGHT_STRENGTH` 注释）。阳光反弹应同样**只走 IRC 注入端**，
+   追踪端靠「自反弹」读回。
+2. **物理量级一次定死**：L = albedo·E·cosθ/π，E 用 `global.directIlluminance/128`，
+   不要再用历史倍率补丁（1.0→2.0→8.0→32.0 那条链就是教训）。
+3. **可见性判定要可靠**：阴影贴图 + 网格内体素 DDA（薄遮挡必须挡住），并且门控用
+   `max(命中体素 skylight, 像素 lightmap)` 的 smoothstep，区间对齐探针端 `(0.20, 0.80)`。
+4. **单样本硬上限**：`min(项, albedo)` 一类封顶要常驻，防止未来调参再次贴顶。
+
+## 本轮附带修复（同一症状「单像素极值」的直接来源）
+- **真 bug：NaN 体素被判成固体。** 三处追踪循环原本都写 `if (hvd.z <= 0.5) continue;`
+  —— NaN 参与任何比较都返回 false，于是 **NaN 的 voxelID 会跳过"空气"分支**、
+  落进命中路径：`IsHitBlock(abs(NaN), ...)` + 用垃圾 `hvd.r/g/w` 解出的 albedo
+  参与 方块光/阳光/自反弹 ⇒ 该格贡献出极值。因为钉在体素格上，
+  表现正是用户描述的「**单个异常像素 + 固定世界位置复现**（网格相机锚定，站着不动则格不动）+
+  被降噪放大（a-trous pass3 步长 8px 会把它糊成一片）」。
+  改为 `if (!(hvd.z > 0.5))`：有效数据逐位等价，NaN 归入空气。
+  三处：`VoxelTracing.glsl` / `VoxelGI.frag`(IrcTraceVoxel) / `DiffuseIndirect.comp`(ProbeTrace)。
+- **albedo `saturate()`**（同三处）：合法数据本就 0-1，只防垃圾/半精度残留被放大成极值。
+- **逐像素追踪输出硬上限 `min(result.rgb, 8.0)`**（`DiffuseIndirect.comp`，VXGI 分支）：
+  合法 GI 量级远低于 8，拦住"不可能属于该点"的极值，避免降噪把单像素糊成亮斑。
+- 附带排掉一个自己引入的隐患：注释里 ASCII `"` **跨行未配对**（开引号在一行、闭引号在下一行）
+  是 jcpp 最危险的形态；已改成 `「」`。顺带实测确认：本项目已有多处**同行配对**与**跨行**的
+  ASCII 引号注释（VoxelTracing L35-36、VoxelLighting L132-133/L162-163、VoxelSkyLight L50-51）
+  一直正常编译 ⇒ MEMO 早先"注释里绝不能有 ASCII 引号"的结论过严，真正要避免的是
+  **`#include` 行尾注释**（那条才是确证的坑）。
+
+## 源头定位（2026-10-02，用户确认"确实没有异常亮斑了"之后回查）
+结论：**根因是写入端不收口，不是阳光反弹的倍率/门控。** 这解释了为什么 09-30、10-01 两轮
+调倍率与门控全都无效。
+
+1. **先排除一个**：`hvd.z`（voxelID）**不可能**是 NaN —— 写入端是 `float(uint(...))`（恒为有限值），
+   且 GS 的 `clamp(voxelCoord, 0..63) == voxelCoord` 会拒掉 NaN 坐标（`NaN == NaN` 为 false）。
+   ⇒ 我 10-02 加的「NaN 体素当空气」**不是这次的修复**，只是无害加固。**（更正我先前的归因）**
+2. **真正的口子 = `voxelData.rg`（`rgStore`）**：`Shadow.frag` 里 `.b` 与 skylight 都 clamp 了，
+   但 `rgStore` 是**原样**写进 rgba16f（半浮点上限 65504）。
+   固体格存 `texture(tex, v_midCoord).rgb * vectorDataOut` 的 RG（反照率），
+   透明格存 UV —— 一旦出现**非有限值**（UV 非有限时 `texture()` 是 UB，可能返回 NaN）
+   或 **>1**，垃圾反照率就进了缓冲。读取端（VoxelTracing / VoxelGI / ProbeTrace）
+   把它原样乘进 方块光/阳光反弹/IRC 自反弹 ⇒ **单像素极值** ⇒ 钉体素格（固定世界位置复现）
+   ⇒ 被 SVGF 大步长 a-trous 放大成可见亮斑。
+3. **收口**（本次）：写入端 `saturate(v_midCoord)`、`saturate(vectorDataOut)`、
+   结果 `isnan/isinf → 0`、再 `saturate(rgStore)`；读取端保留 10-02 的 `saturate(albedo)`
+   （第二道防线）与逐像素输出 `min(…, 8.0)`（兜底）。
+   ⚠️ 注意 `clamp/saturate` 对 NaN 的行为依赖实现（按 GLSL 的 min/max 语义会返回 max 侧 = 1），
+   所以**不能只靠 saturate 杀 NaN**，必须显式 `isnan/isinf` 归零。
+4. 未确证的一点：具体是「NaN」还是「>1」触发（两者都被同一处收口覆盖）。
+   若要确证，需在写入端加一次性诊断（把非有限/越界值染色上屏）；当前症状已消失，暂不做。
+5. 残留隐患（未改，仅记录）：`Shadow.vert` 的 `uint materialID = uint(max(mc_Entity.x - 1e4, 1));`
+   —— `mc_Entity.x` 若为 NaN，`uint(NaN)` 是 UB（可能得 0），materialID=0 ⇒ voxelID=0
+   ⇒ 该格被当成"空气"写入，等于**墙上开了个 1 格洞**（漏光），而不是亮斑。地形阶段
+   MC 不会送 NaN，属低概率，故未动。
+
+---
+
+# 备忘：阳光反弹重写（2026-10-02，追踪端 + IRC 注入端）
+
+## 新结构
+`lib/lighting/VoxelSunBounce.glsl`（新建）= **阳光反弹的唯一定义**，两端各自调用、不得各写一份：
+| 函数 | 作用 |
+|---|---|
+| `VoxelSunShadowMap(camRelPos, normal)` | 阴影贴图判定（**权威**）：1=直射 / 0=实心挡 / 玻璃=吸收色；范围外保守判 0 |
+| `VoxelSunOcclusion(voxelPos, sunDir)` | 体素 DDA（**补充**）：`VOXEL_SUN_TRACE_STEPS`(默认 12) 格内的薄遮挡；NaN 格当空气 |
+| `VoxelSunVisibility(...)` | 两者相乘（DDA 只能压低，永不误放行） |
+| `VoxelSunSkyGate(hit, pixel)` | `smoothstep(0.20, 0.80, max(...))`，与探针端口径一致 |
+| `VoxelSunEnergy()` | 0-1 尺度直射辐照度：`global.directIlluminance / VOXEL_SUN_REFERENCE`，**不碰大气 LUT** |
+| `VoxelSunBounce(...)` | 一次弹射项：`alb·E·cosθ·gate·vis·strength`，外层 `min(项, albedo)` + NaN/Inf→0 |
+
+接线：`VoxelTracing.glsl`（追踪端，命中段）与 `VoxelGI.frag`（IRC 注入端，命中段）各一处调用。
+滑条 `VOXEL_TRACE_SUN_STRENGTH` / `VOXEL_GI_SUN_STRENGTH` 都已重新接线（默认 1.0）。
+
+## 相对被删旧实现的 5 处实质改动（都是踩过的坑）
+1. **口径唯一**：旧实现两端各写一份，一端带 `rPI`、一端不带；一端用 SSBO、一端用常量；
+   门控一端 `(0.25,0.55)`、一端 `(0.20,0.80)` ⇒ 怎么调都对不上。现在只有一份函数。
+2. **不采大气 LUT**：旧追踪端在 **compute** 里调 `AtmosphereTransmittanceToSun` ——
+   MEMO 的另一条硬结论是「compute 里大气 LUT 未绑定、采样得 NaN/garbage」。改用 SSBO +
+   常量兜底（`VoxelSunEnergy()`），并把 NaN/Inf 显式归零。
+3. **方向不再用 `shadowModelViewInverse`**：MEMO 记录该矩阵在 compute 无效；
+   两端统一用 `worldSunDir`（世界空间、指向太阳，白天 y>0、夜晚 y<0）。
+4. **量级一次定死**：E 已是 0-1 尺度，公式里没有任何"为了让反弹可见"的补偿系数
+   （历史上 1.0→2.0→8.0→32.0 那条链就是教训）；要更亮请调滑条。
+5. **三道极值保险**：单次弹射 `min(项, albedo)` → 逐像素输出 `min(result, 8.0)`（DiffuseIndirect）
+   → 写入端 albedo `saturate` + `isnan/isinf→0`（Shadow.frag）。任何一层坏数据都成不了亮斑。
+
+## 未做（明确记录）
+- **探针端（GI_MODE=3）**未接阳光反弹（该模式内部启用、不暴露 GUI）。要对齐就照
+  `VoxelSunBounce` 的结构在 `DiffuseIndirect.comp` 的 `ProbeTrace` 里追加，
+  且必须用 `VoxelSunEnergy()`（compute 不能碰大气 LUT）。
+- **月光反弹**本轮未一并重写（用户只要求阳光）。`VOXEL_MOON_STRENGTH` 目前只被
+  IntegrateScene 的体积雾/月晕消费；要恢复照 `VoxelSunBounce` 再加一个函数即可。
+- 注意**两端叠加**的固有语义：追踪端给"锐利近场"，IRC 自反弹给的则是缓存里的那份，
+  两者都会带上阳光反弹 ⇒ 观感上约为单份 ×2。嫌亮先降 `VOXEL_TRACE_SUN_STRENGTH`。
+- IRC 注入端在"特殊方块表面格"走半球采样（pdf=2cos），`rcpPdf` 最大 20（`VOXEL_IRC_PDF_MIN` 钳制）
+  ⇒ 掠射角下单样本会被放大；这是**既有**估计器特性（对 blocklight 同样成立），
+  由缓存末尾的保色压缩兜住，本轮未改。
+
+---
+
+# 决策：放弃重写、回到旧实现作基线（2026-10-02 晚）
+
+## 为什么
+用户提议：「旧反弹虽然有 bug 但**可以工作**，不如回到旧实现对齐再改进」。同意 —— 重写版
+（`VoxelSunBounce.glsl`，已删除）**实测完全看不到反弹**，而旧实现至少能出效果。
+在一个已验证能工作的基线上做最小改动，风险远低于从零重写（本次重写的教训是：
+**手抄一遍 DDA/障碍判定这种"已经调对过的代码"很容易引入静默归零**，
+嫌疑最大的就是我重写版里的 `VoxelSunOcclusion`，但无法在不进游戏的情况下证伪）。
+
+## 现在的状态（working tree vs HEAD，共 9 文件 / +64 -12）
+- **复活**：`lib/lighting/VoxelSunShadow.glsl`（`git checkout HEAD --` 字节级还原）+ 三个调用点
+  的旧阳光项（追踪端 `VoxelTracing.glsl`／IRC 注入端 `VoxelGI.frag`／探针端
+  `DiffuseIndirect.comp` ProbeTrace）= **与被删前完全一致的旧实现**。
+- **保留的改进（都是根因修复/纯防护，不改旧观感）**：
+  1. `Shadow.frag`：写入端 albedo `saturate` + 非有限值归零 —— **这才是"亮斑"的根因修复**；
+  2. 三处读取端 `saturate(albedo)` + `!(hvd.z > 0.5)` NaN 归空气；
+  3. 追踪端阳光项外层 `min(项, albedo)` 单样本上限（旧实现没有；防滑条拖到 32 烧白）；
+  4. `DiffuseIndirect.comp` 逐像素输出 `min(result, 8.0)` 兜底；
+  5. `DeferredLight.frag` 去掉重复乘的 `VOXEL_GI_TRACE_STRENGTH`（原本滑条是平方）。
+- **一处小改**：追踪端 `sunDir` 从 `mat3(shadowModelViewInverse)*vec3(0,0,1)` 改为 `worldSunDir`。
+  白天二者等价（`worldSunDir = sunlightSign · shadowModelViewInverse[2]`，白天 sign=+1）⇒ 对观感
+  无影响；好处是晚上会自动跟随月亮的换边，并且不再依赖"compute 里矩阵是否有效"这个疑点。
+- **未改**（列为下一轮候选）：注入端的 `rPI`（与追踪端口径不一致，但它是旧观感的一部分）、
+  两端门控区间不一致（0.25-0.55 vs 0.20-0.80）、月光反弹仍未恢复。
+
+## 用户须知
+`shaderpacks/Revelation-AD-edit.txt` 里记着 `VOXEL_TRACE_SUN_STRENGTH=32.0`（追查亮斑时拖满的）。
+
+## [同日撤回] 「单样本上限 min(项, albedo)」已删除 —— 它废掉了滑条
+用户实测反馈：「阳光反弹有，但是很弱」。查证：`0.43 × strength ≥ 1` 之后该项一律被
+`min(项, albedo)` 按回 1×albedo ⇒ **strength 从 2.4 到 32 视觉完全一样**，
+用户把滑条推到 32 也看不出变化（相当于被强制降到 0.07 倍）。
+⇒ 该上限从追踪端阳光项移除（保留旧实现原式）。
+
+**教训（重要）**：不要把"防极值"做成**与反照率挂钩的乘性封顶**——它和"强度可调"直接冲突，
+用户会以为功能坏了。防极值应该做在**产生端**（写入端收口、读取端 saturate）或
+**输出端**（`min(result, 8.0)` 这种与调参量无关的绝对兜底），不要做在中间环节。
+当前三层防护都在"与滑条无关"的位置，所以删除上限不重新引入亮斑风险。
+
+## 诊断开关（已接好 GUI，随时可用）
+`设置 → 调试 → 体素 → 阳光反弹因子调试`（settings.glsl / shaders.properties / 双语 lang 三处同步）。
+三通道：**R=遮挡可见性（阴影贴图×体素DDA）/ G=命中面朝向太阳 / B=天光门控**。
+
+---
+
+# 后续：强度收敛 + 室内漏光修复（2026-10-02 深夜）
+
+## 1. `VOXEL_SUN_BOUNCE_GAIN`（代码侧增益，当前 8.0）
+滑条拖到 32 仍"有但很弱"的原因不是门控/遮挡（已用角落读数确认宏值=32 生效），而是
+**追踪端是"半球 1 采样 + 时域平均"的估计器，收敛值 = 命中率 × 单次量级**；开阔地上多数
+射线飞向天空、不命中任何面 ⇒ 命中率天然很低 ⇒ 平均值就是很淡，而强度滑条只放大
+**单次量级**、改不了命中率（所以 32 也救不回来）。
+⇒ 新增 `VOXEL_SUN_BOUNCE_GAIN`（VoxelLighting.glsl，与滑条相乘、不占 GUI）直接抬结果，
+并把 `DiffuseIndirect` 的输出上限 8.0 → 32.0（否则增益被截平）。
+**教训**：调不动的时候先分清"门控/遮挡问题"还是"估计器命中率问题"——前者调得动，后者调滑条无效。
+
+## 2. 室内漏光：**改从几何根因解决**（门控维持原式）
+用户反馈"阳光反弹会穿过厚度为 0 的缝隙漏进室内"，并明确指出**不要用 MC lightmap 做门控**
+（会引出很多奇异景象——MC lightmap 与体素/光追两套光照语义不一致）。
+⇒ 门控保持原式 `smoothstep(0.25, 0.55, max(hitSkylight, skyLightmap))` 不动。
+
+**根因（用户指认，正确）**：两个方块斜向贴着时，接触面积 = 0，只剩一条**零宽度的棱/点**。
+体素 DDA 在这类"角点 tie"步里会**多轴同时推进**、直接跳到对角格，
+**中间那 2~3 个接触格从不被采样** ⇒ 射线顺着这条缝穿过去 ⇒ 漏光。
+
+**修法**（`VoxelSunShadow.glsl` 的 `VoxelSunShadowTracing`，本次）：
+在每一步判断 `dot(tracingNext, tracingNext) > 1.0`（= 多轴 tie），若是则对每个发生 tie 的轴
+**各自回退一格**得到"侧格"（2 轴 tie → 2 个侧格；3 轴 tie → 3 个棱格，正好覆盖角点周围
+除对角格外的全部格），任一侧格是**整块固体**（`abs(z) <= 154`）即判遮挡。
+物理依据：这两格在棱/点上确实相接，光不该穿过。只测整块——形状块的子盒在棱接触时不封闭，
+避免误判，交给主路径的 `IsHitBlock`。
+**注意**：该补测只加在**阳光遮挡 DDA** 上（GI 主追踪/IRC/探针的 DDA 未动）；若以后发现
+主 GI 也有同类缝漏，可照同一手法复制过去。
+**待验证**：斜向贴着的方块（尤其形状块+整块混合）是否还有残留细缝；以及性能
+（tie 步多 2~3 次 texelFetch，只在 3 步的短程 DDA 里）。
+
+---
+
+# 回归修复：非完整方块光源又变回「整格发光」（2026-10-02）
+
+- 现象：火把/灯笼等非完整光源看起来像**整块方块**在发光（用户实测）。
+- 原因：`VOXEL_GI_LIGHT_RADIUS` 在后续会话里被折中抬到 **0.8**（当时为修"走亮停暗"），
+  0.8 半径在 1.0 的格子里几乎填满 ⇒ 光晕退化成"整个格子亮"。
+  `VoxelHitLightSphere` 的 `mix(...,1.0,0.15)` 底保早已删除（2026-08-19），所以本次只有半径一项。
+- 修复：代码 `VoxelLighting.glsl` + **`shaders.properties` 的 `profile.Default`** 同时回 **0.5**
+  （profile 里也写着 0.8，只改代码默认会被 profile 覆盖回来——这类"同一选项三处写值"要一起改）。
+- **教训（写进硬约束）**：`VOXEL_GI_LIGHT_RADIUS` 必须保持 **0.5（格内切球）**。
+  命中率低引起的 1SPP 噪声/时域闪烁，要靠 `VOXEL_GI_BOOST`（默认 24）与时域累积解决，
+  **不要再靠放大半径**——半径一过 0.5 就退化成"整格发光"，且会溢出相邻格。
+- 顺带可见：用户 txt 里 `VOXEL_GI_BOOST=1.0`（默认 24.0）——若火把整体偏暗，先查这条
+  （大概率是早前逐项归零排查时留下的）。
+
+---
+
+# 备忘：方块光「凭空发光」两处口径修复（2026-10-02 深夜）
+
+## 现象（关掉天空光/阳光，只留方块光；用户实测）
+- **没光源的情况下，斜着放两个方块，缝隙自己就开始发光** —— 是"凭空发光"，不是漏光。
+- 有时还能看到「不存在的方块在遮挡光线」。
+- 用户选项文件实测值（`Revelation-AD-edit.txt`）：GI_MODE=2、SKY/SUN/TRACE_SKY/TRACE_SUN 全 0、
+  VOXEL_GI_DENOISE=false、**VISUALIZE_VOXELS=true**、VOXEL_GI_BOOST=1.0（默认 24）。
+
+## 根因 1（主因）＝ 主 GI 的 DDA 缺 tie 接触格判定
+阳光 DDA（`VoxelSunShadowTracing`）2026-10-02 早先已补过"多轴 tie → 回退侧格判整块遮挡"，
+但**主 GI 追踪（`VoxelTracing.VoxelTracePixel`）与 IRC 注入（`VoxelGI.frag.IrcTraceVoxel`）
+当时没同步**。两个方块斜向贴着时接触面积为 0，只剩一条零宽度的棱：DDA 在 tie 步直接跳到对角格，
+中间侧格从不被采样 ⇒ 射线顺着这条缝穿过去。
+**"凭空发光"的机理**：出界路径（`!hitSolid` / 循环走完）带 `VOXEL_NOLIGHT_BRIGHTNESS` 兜底底光，
+命中路径在 return 前不带。于是无光源场景里"命中方块"的像素 = 0，而穿缝的射线一路走到出界 ⇒
+唯一拿到底光 ⇒ 缝隙是整幅画面里唯一非零的地方（暗场 + 自动曝光再把它放大）⇒ 看起来就是缝自己发光。
+> 教训：NOLIGHT 这类"兜底底光"在无光源场景会变成唯一光源，任何"该挡住却没挡住"的几何漏洞都会被
+> 它点亮。所以排查"凭空发光"时要先查几何漏洞，而不是先动底光数值。
+
+## 根因 2 ＝ `FetchVoxelRadianceTrilinear` 收整数坐标，插值退化
+签名是 `(ivec3 c)`，函数体却写 `f = c + 0.5 → i = c → t`（恒为 0.5）：采样点落在 2×2×2 的
+**格角**上 ⇒ 实际是「命中格 + 其 +X/+Y/+Z 八分体」8 格等权平均 = 半格偏移（还不对称）+ 2 格模糊，
+且命中格自身辐射被稀释成 1/8。它唯一的调用点是自反弹（`VoxelTracing`），正是方块光链路的主干
+⇒ 方块光会沿格边界/一格薄墙渗出来。
+修法：改收**连续位置**（调用点传 `hitVoxelPos + vec3(cDi)`），先 `-0.5` 对齐纹素中心再插值；
+格心处 t=0 ⇒ 命中格权重 1（不再稀释），平滑只发生在 ±半格内。
+归一化变了 ⇒ `VOXEL_GI_SELF_BOUNCE` 默认 0.8 → **0.3**（近场最多亮 ~8×，平坦区几乎不变）。
+
+## 本轮改动
+| 文件 | 改动 |
+|---|---|
+| `lib/lighting/VoxelGI.glsl` | `FetchVoxelRadianceTrilinear` 改收连续位置 + 真三线性 |
+| `lib/lighting/VoxelTracing.glsl` | 调用点传连续命中点；主 DDA 补 tie 接触格判定；**NOLIGHT 底光乘天光门控** |
+| `program/gi/VoxelGI.frag` | `IrcTraceVoxel` 补同款 tie 判定；**NOLIGHT 底光乘曝光度门控** |
+| `lib/lighting/VoxelLighting.glsl` | `VOXEL_GI_SELF_BOUNCE` 0.8 → 0.3 |
+
+## 第二轮：tie 补测**没有**修掉现象 ⇒ 主因是 NOLIGHT 兜底底光
+用户实测「不行」。回查 tie 判定的触发条件：`tracingNext = step(totalStep, vec3(rayLength))`
+要**精确**浮点平局（两支的 totalStep 位相等）才成立，而两支只差一个恒定偏移（起点分数差），
+所以 tie 在一般场景里本就极稀疏 ⇒ 它不可能是"每次都复现"的主因（补测留着，与阳光端同口径，
+但别指望它治这个）。
+
+真正对得上「无光源 + 凭空发光」的只有一处：**`VOXEL_NOLIGHT_BRIGHTNESS` 兜底底光**。
+它字面就是"没有光源也加光"，而且**只加在出界路径上**（命中路径 `return` 前不带）：
+- 暗场里它是唯一的非零加法项 ⇒ 被自动曝光（AUTO_EV_MAX=10，≈×1024）放大成可见辉光；
+- "斜放两块"时，缝方向的射线走出界拿到它、旁边方块表面的射线全命中方块 ⇒ 0 ⇒
+  缝是画面里唯一非零的位置 ⇒ 看起来就是缝自己发光。
+
+修法（两端口径都收口，门控用各自可靠的天空可见度，**不用体素 vd.w 的写胜残留 skylight**）：
+- 追踪端（每像素）：`smoothstep(0.03,0.15, 像素自身 skyLightmap)`（与 DeferredLight 最小
+  环境光底同一口径）；
+- 注入端（每体素）：`smoothstep(0.03,0.15, FetchPrevExposure(c+cDi))`（上一帧曝光度 =
+  射线真实出界比例，封闭/暗室 ≈0）。
+  ※ [2026-10-06 修编译错误] 这里原写成 `FetchPrevRadiance(c+cDi).a`：该函数返回 **vec3 辐照度**，
+  没有 `.a` 分量 ⇒ Iris/NVIDIA 报 `C1031 swizzle mask element not present` + `C1068 array index
+  out of bounds`（对 vec3 取第 4 个分量）。它只在 `GI_MODE == 2`（VXGI）分支里编译，所以直到
+  把 GI_MODE 从 0 改成 2 才暴露。曝光度必须用同文件的 `FetchPrevExposure()`（读 voxelRadiance.a）。
+代价：真正无天光的地方（暗室/洞穴）兜底底光归 0，会黑一些 —— 这正是"不凭空发光"的代价，
+而且与本项目最小环境光底早已采用的 lightmap 门控方向一致。
+
+## 未做 / 待验证
+- 探针端（GI_MODE=3）的 `ProbeTrace` DDA 未加 tie 判定（当前不用；要用时照抄）。
+- 「隐形挡光」本轮**未找到确证**：把 block.properties 全部材质 ID 分过组，非发光、非形状、
+  非透明的只有 33/34/37/38/46/50；其中 33（weeping_vines / crimson_fungus / chorus_*）与
+  34（brewing_stand / *_candle_cake）是薄方块，但它们走 **CUTOUT 层** ⇒ 被 `Shadow.geom` 的
+  渲染层门限排除、**根本没进体素**（是"漏"不是"挡"）。若该现象仍复现，先按方块类型确认它走哪个
+  渲染层，再决定是补形状子盒还是补渲染层放行。
+- **`VISUALIZE_VOXELS=true` 是调试开关**：`Terrain.frag` 会把每格反照率换成"体素格里的图集中心色"，
+  且与本帧写入存在读写竞争、用 `ivec3(pos)` 截断又没有内偏移 ⇒ 排查观感问题前先确认它是关的，
+  否则看到的画面自带一层调试假象。
+
+---
+
+# 排查备忘录：体素"幻影格"根因——VS 剔除后 return，GS 读未定义值（2026-10-07）
+
+## 结论（一句话）
+`Shadow.vert` 里所有「把顶点踢到 NDC 角点后 `return`」的剔除路径（背面剔除 /
+`SHADOW_CULL_UNDERGROUND` / `blockEntityId==10030`）会让 `texCoord`、`vectorData`、
+`g_voxelCoord`、`g_voxelCoordBase`、`g_voxelID`、`g_mcLightLevel`、`g_posInvalid`
+**全部保持"未写入"状态（GLSL 未定义值，实测表现为寄存器残留）**；而 `Shadow.geom` 的体素分支
+**完全不看 `gl_Position`**，只按这些输出算格坐标并 `imageStore` ⇒ **每个被剔除的面都会往体素网格里
+写一个"幻影体素"**。这就是上一节「未做/待验证」里那条"隐形挡光找不到确证"的答案，也是
+黑格 / 蓝格 / 紫格 / "挡光↔不挡光疯狂切换" / 贴着墙角漏光的唯一来源（写入路径本身是确定的：
+VoxelClear 每帧清空 + 体素瓦片 1 格 1 纹素精确光栅化，除此之外没有任何随机性）。
+
+## 三种残留值分别对应已观测到的现象
+| 残留内容 | 写进 voxelData 的结果 | 观测现象 |
+|---|---|---|
+| 未写入的 `texCoord`（UV 落到图集透明处） | `z>0.5` 但反照率 (0,0,0) | **黑色体素**：挡光但不反弹（"在挡光空气处放个方块就是黑的"） |
+| 未写入的 `g_voxelID` = 负数（上一个顶点是水/玻璃/树叶） | `z<0` | **蓝色体素**：被当透明格吸收 |
+| 未写入的 `g_voxelID` = 0（或残留坐标落到别处） | `z=0` | **紫色体素**；且把该格真记录**清成空气** ⇒ **贴着墙角/天花板漏光** |
+
+幻影写入与合法写入同帧抢写（`voxelData` 是 `imageStore` 写胜），胜负随绘制顺序变 ⇒
+同一格逐帧在"有数据 / 空气"之间跳 = 用户看到的"可以挡光和不可挡光之间疯狂切换"。
+
+> **实测结论（2026-10-07，用户）：现象消失，本根因成立。** 三处改动都不动体素覆盖策略，
+> 因此没有任何观感回归；只有"幻影格"本身不见了。
+
+## 修法（三处，都不改变体素覆盖策略，因此无观感回归）
+1. `program/shadow/Shadow.vert`：新增 `flat out float g_culled;`，`main` 入口先置 0，
+   **每条"踢顶点 + return"的路径在 return 之前置 1**。
+2. `program/shadow/Shadow.geom`：新增 `flat in float g_culled[]`（声明放在
+   `#ifdef ENABLE_VOXELIZATION` **外面**——体素化关闭时真阴影分支同样需要它），两条分支各自
+   在最前面 `if (g_culled[0] + g_culled[1] + g_culled[2] > 0.5) return;`：
+   只要有一个顶点被剔除就整三角形不发射。
+   - 与旧行为逐位对齐：MC 方块面三顶点法线相同 ⇒ 旧实现是三顶点一起被踢到 NDC 角点 → 零面积 → 丢弃；
+   - 顺带修掉旧实现在**混合法线**三角形上"把一条边拉到 NDC 角点、带着未定义 varying 铺满阴影区"
+     的垃圾三角形（smooth 法线模型/部分模组模型会踩到）。
+3. `program/shadow/Shadow.frag`：不变量防御 `if (abs(v_voxelID) < 0.5) return;`。
+   合法路径**不可能**写出 ID 0（`materialID = max(mc_Entity.x - 1e4, 1) ≥ 1`，透明取负），
+   所以写出 0 必然是垃圾；宁可不写，也不允许用空值覆盖真值（覆盖 = 直接制造漏光）。
+
+## 已修 / 实测通过
+- **覆盖缺口（2026-10-07 已修 + 用户实测通过）**：体素分支原先只发"三顶点都朝光源"的三角形 ⇒
+  若某方块的**全部**已网格化暴露面都背对光源（天花板底面、多层墙内侧、被相邻方块盖住的墙角），
+  该格**永远没有体素** ⇒ 该格是空气 ⇒ GI 射线不在那一层停下、穿过去打到迎光外层
+  （那层 `skylight=15`、`sunVis=1`）⇒ **室内被算成受直射的反弹面 = 室内漏光**。
+  多层墙是"逐层依赖"的：N 格厚的墙在体素里只剩 1 格厚；用户实测表现正是
+  "品红格总以三格长条为一组、三格之间互相影响"（拆/放一层会改变其余层的暴露面）。
+  修法：`Shadow.vert` 新增 `flat out float g_backFace`（背光顶点在体素化开启时**不再早退**，
+  照常把体素输出算完），`Shadow.geom` 里**真阴影分支**用 `backAny` 丢弃背光三角形
+  （阴影观感与旧版逐位一致）、**体素分支照写**。
+  代价（用户实测裁定："不得不付"）：GS 体素三角形量约翻倍 + 背光顶点不再省那段 ALU。
+  附带效果：同格"写胜"竞争面变多，被遮挡格可能取到背光面的 `sky=0` ⇒ 阳光反弹门控关掉
+  ⇒ 室内更不发光（方向正确）。若日后出现"走动时墙面某格忽明忽暗"，需把背光面改成
+  "只在空格时才填"（read-modify-write，`voxelData` 要去掉 `writeonly`）。
+
+## 未做 / 待验证
+- `VOXEL_GI_DENOISE=false` 时 `DeferredLight` 直接读半分辨率棋盘信号（未降噪，选项说明里就写着
+  "较闪烁"），1 SPP 噪声在 1m 体素网格上就是"格子大小、逐帧变"的斑块 ⇒ 排查"闪烁"类观感问题
+  前先确认这个开关与 `VOXEL_TRACE_SPP`。
+- 调试口径（2026-10-07 已改）：`VISUALIZE_VOXELS` 与 `DEBUG_VOXEL_GI` 统一色标——
+  品红 `z==0` 真空气 / 蓝 `z<0` 透明格（有数据且吸收）/ 原色 = 固体格真实反照率 /
+  偏黄 = 形状块格（吃 `HitShape` 子盒）；画面仍是方块自身纹理 = 该格在 64³ 网格之外。
+  旧口径把"透明格"画成方块原色、并和真空气同画蓝色，是把水/玻璃/树叶读成"漏写"的直接原因。
+- `HitShape`（`lib/lighting/VoxelShape.glsl`）末尾 `return hit;` 且 `hit` 初值 false ⇒
+  **155-294 里凡是没有对应分支的 vID，一律按"不命中"返回（光线直接穿过去 = 确定性漏光）**。
+  该区间很宽（含 farmland/dirt_path/cauldron/hopper/scaffolding/anvil/stonecutter/composter/
+  end_portal_frame 等非形状块），值得对照 `block.properties` 10155-10294 逐条核一遍。
+
