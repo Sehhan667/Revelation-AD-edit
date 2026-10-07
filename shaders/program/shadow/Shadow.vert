@@ -24,6 +24,17 @@ out vec2 texCoord;
 out vec3 vectorData; // Minecraft position in water, vertColor in other materials
 flat out uint isWater;
 
+// [2026-10-07 幻影体素根因] 1 = 本顶点被剔除（gl_Position 被踢到 NDC 角点后 return）⇒ 下方
+// texCoord / vectorData / g_* **全部没有写入**，按 GLSL 规范是未定义值（实测为寄存器残留）。
+// Shadow.geom 的体素分支**完全不看 gl_Position**，只用 g_voxelCoord 等输出算格坐标并
+// imageStore ⇒ 原实现会拿残留值往体素网格里写"幻影体素"，三种残留各对应一个已观测现象：
+//   残留 UV 采到透明纹素 → 反照率 (0,0,0)：**黑色体素**（仍 z>0.5，挡光，所以"放个方块就是黑的"）
+//   残留负 ID（上一个是水/玻璃/树叶顶点）→ **蓝色体素**（被当透明格吸收）
+//   残留 ID 0 → z=0，把该格真记录**清成空气** → **紫色体素 + 贴着墙角/天花板漏光**
+// 且幻影写入与合法写入逐帧抢写（imageStore 写胜）⇒ "挡光与不挡光疯狂切换"。
+// 结论：任何"踢顶点 + return"的剔除都必须显式告知 GS；GS 只能在 !culled 时读体素数据。
+flat out float g_culled;
+
 // 传递给 GS 的体素化数据（编码语义gbuffers Terrain.vert，坐标系必须与查询端一致）
 #ifdef ENABLE_VOXELIZATION
 out vec3 g_voxelCoord;       // 含 toCenter*0.001 偏移（imageStore 目标 → GS 质心平均后 floor）
@@ -56,21 +67,27 @@ uniform vec3 cameraPositionFract; // Iris Exclusive
 
 //======// Main //================================================================================//
 void main() {
+    // 默认存活；下面每条"踢顶点 + return"的剔除路径必须先置 1（见文件头 g_culled 注释）
+    g_culled = 0.0;
+
     // [优化] 1. 将所有剔除判断放到最上方
     #ifdef SHADOW_CULL_UNDERGROUND
         if (eyeSkylightSmooth < 0.01) {
+            g_culled = 1.0;
             gl_Position = vec4(-1.0);
             return;
         }
     #endif
 
     if (blockEntityId == 10030) {
+        g_culled = 1.0;
         gl_Position = vec4(-1.0);
         return;
     }
 
     #ifdef SHADOW_BACKFACE_CULLING
         if ((gl_NormalMatrix * gl_Normal).z < 0.0) {
+            g_culled = 1.0;
             gl_Position = vec4(-1.0);
             return;
         }

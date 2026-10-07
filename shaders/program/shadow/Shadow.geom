@@ -29,6 +29,11 @@ layout(triangle_strip, max_vertices = 6) out;
 in vec2 texCoord[];
 in vec3 vectorData[];
 flat in uint isWater[];
+// 1 = 该顶点被 VS 剔除（gl_Position 被踢到 NDC 角点后 return）⇒ 该顶点的 texCoord/vectorData/g_*
+// 全部未写入。必须整三角形丢弃：两条分支都受它影响（体素分支拿残留值写幻影体素；真阴影分支
+// 会把混合法线三角形的边拉到 NDC 角点，铺出带未定义 varying 的垃圾三角形）。放在 ifdef 外面
+// 是因为体素化关闭时（GI_MODE<2，多数配置）真阴影分支同样需要这条判定。
+flat in float g_culled[];
 
 #ifdef ENABLE_VOXELIZATION
 in vec3 g_voxelCoord[];      // 含 toCenter*0.015625 偏移（供 GS 质心平均 → voxelCoord）
@@ -62,6 +67,16 @@ flat out float v_isVoxel;     // 1=体素 tile 像素（FSH 走 image 路径）0
 
 void main() {
     #ifdef ENABLE_VOXELIZATION
+
+        // [2026-10-07 幻影体素根因] VS 里"踢顶点 + return"的剔除路径（背面剔除 / SHADOW_CULL_UNDERGROUND
+        // / blockEntityId==10030）会把 g_voxelCoord、g_voxelCoordBase、g_voxelID、g_notInVoxel、
+        // g_mcLightLevel、g_posInvalid **留成未定义值**。它们必须在**任何**读取之前判掉：
+        // 体素分支不看 gl_Position，只按这些输出算格坐标并 imageStore ⇒ 读到寄存器残留就会往
+        // 体素网格里写幻影体素（黑格/蓝格/紫格，其中 ID=0 的还会把真格子清成空气 → 漏光）。
+        // 语义：只要有一个顶点被剔除就整三角形不发射。MC 方块面三顶点法线相同 ⇒ 与旧行为
+        // （三顶点一起踢到 NDC 角点变成零面积）一致；顺带消掉旧实现在**混合法线**三角形上
+        // 把一条边拉到角点、带着未定义 varying 铺满阴影区的垃圾三角形。
+        if (g_culled[0] + g_culled[1] + g_culled[2] > 0.5) return;
 
         // ---- 真阴影分支：bias + Shift ----
         // 用无偏移 g_voxelCoordBase 计算边长（偏移版 g_voxelCoord 的 toCenter*0.015625
@@ -165,6 +180,11 @@ void main() {
     #else
 
         // 体素化关闭：原样转发（全幅真阴影，无 Shift）
+        // 同样先丢弃含被剔除顶点的三角形：顶点位置已经被踢到 NDC 角点，混合法线三角形会被
+        // 拉成一条跨阴影区的垃圾三角形（varying 也是未定义值）。MC 方块面三顶点法线相同 ⇒
+        // 对地形/实体与旧行为逐位一致，只修掉模型法线的异常情况。
+        if (g_culled[0] + g_culled[1] + g_culled[2] > 0.5) return;
+
         for (int i = 0; i < 3; i++) {
             gl_Position = gl_in[i].gl_Position;
             texCoordOut = texCoord[i];

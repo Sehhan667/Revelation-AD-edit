@@ -71,6 +71,13 @@ void main() {
     #ifdef ENABLE_VOXELIZATION
         // ---- 体素 tile 像素：直写 3D image（格式与 gbuffers 时代 Terrain.frag 完全一致）----
         if (v_isVoxel > 0.5) {
+            // [2026-10-07 不变量防御] 合法写入路径**不可能**产生 voxelID==0：Shadow.vert 里
+            // materialID = max(mc_Entity.x - 1e4, 1) ≥ 1，透明取负 ⇒ |ID| ≥ 1；而 z==0 是
+            // "本格为空"的编码（VoxelClear 的清空值、消费端判空的依据）。一旦写出 z=0，
+            // 就是把一个**合法固体格清成空气** → 该格立刻漏光，且与合法写入抢写 → 逐帧切换。
+            // 根因（VS 剔除后 return 导致 GS 读未定义值写幻影体素）已在 Shadow.vert/geom 修掉，
+            // 这里再挡一道：宁可不写，也不允许"用空值覆盖真值"。
+            if (abs(v_voxelID) < 0.5) return;
             // 同方块所有片元 midCoord/voxelID 同值 → imageStore 直接覆盖（无需 atomicMax）
             // w = Pack2xU8(texRes, skylight)（高 8 位纹理分辨率
             //（低配固定 16）、低 8 位天空光 lightmap）。skylight 走 imageStore（写胜）而非
