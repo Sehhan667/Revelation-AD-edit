@@ -357,8 +357,17 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
                 const float ircSkyVis = 1.0;
             #endif
             // [2026-08-20] 下界（worldId == -1）无天空：屏蔽出界天光
+            // [2026-10-07 零档 = 完全不计算] 判断写成**运行时常量** `VOXEL_GI_SKY_STRENGTH > 0.0`：
+            // 该宏是 Iris 滑条注入的**字面量**，GLSL 编译器会常量折叠并把整段（含 VoxelSkyColor
+            // 内部的大气 LUT 采样）当死代码消除 —— 滑条归零 = 这项不计算，而不是"算了再乘 0"。
+            // 这里**不能**写成 `#if VOXEL_GI_SKY_STRENGTH > 0.0`：Iris 的 jcpp 在 #if 里只按整数
+            // 部分比较浮点（见 6c44e61d），0.5 会被判成 0 ⇒ 中等档位会被静默编译掉。
+            // 动机（用户实测）：IRC 天光是"逐格拷贝"链条的种子 —— 下面自反弹那一行
+            //（contrib += alb * FetchPrevRadiance(hit) * SELF_BOUNCE）**没有任何遮挡判断**，
+            // 种子存在时天光会一格一格渗进密封空间/地下；归零后室内天光只剩追踪端那条
+            //（VOXEL_GI_TRACE_SKY_STRENGTH）。
             #ifndef GI_ACTIVE_IRC
-            if (worldId != -1)
+            if (worldId != -1 && VOXEL_GI_SKY_STRENGTH > 0.0)
                 contrib += VoxelSkyColor(dir, hitSkylight) * VOXEL_GI_SKY_STRENGTH * ircSkyVis * absorption;
             #endif
             // NOLIGHT 底光（出界路径专有：NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)；
