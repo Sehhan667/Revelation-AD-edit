@@ -34,6 +34,10 @@ flat in uint isWater[];
 // 会把混合法线三角形的边拉到 NDC 角点，铺出带未定义 varying 的垃圾三角形）。放在 ifdef 外面
 // 是因为体素化关闭时（GI_MODE<2，多数配置）真阴影分支同样需要这条判定。
 flat in float g_culled[];
+// 1 = 该顶点法线背对光源。只用来剔**真阴影**分支（保持"阴影只由迎光面投放"的原观感）；
+// **体素分支不看它** —— 背光面同样要写体素，否则厚墙内侧/厚天花板下层缺格 ⇒ 室内漏光
+//（GI 光线穿过缺格打到迎光外层，那层是 skylight=15/sunVis=1 ⇒ 室内被算成受直射反弹面）。
+flat in float g_backFace[];
 
 #ifdef ENABLE_VOXELIZATION
 in vec3 g_voxelCoord[];      // 含 toCenter*0.015625 偏移（供 GS 质心平均 → voxelCoord）
@@ -78,6 +82,10 @@ void main() {
         // 把一条边拉到角点、带着未定义 varying 铺满阴影区的垃圾三角形。
         if (g_culled[0] + g_culled[1] + g_culled[2] > 0.5) return;
 
+        // 真阴影分支沿用"只由迎光面投放"的旧观感（背面剔除的原始目的）；体素分支不吃这个条件，
+        // 否则厚墙内侧/厚天花板下层缺格 ⇒ GI 穿过缺格打到迎光外层 ⇒ 室内漏光。
+        bool backAny = (g_backFace[0] + g_backFace[1] + g_backFace[2]) > 0.5;
+
         // ---- 真阴影分支：bias + Shift ----
         // 用无偏移 g_voxelCoordBase 计算边长（偏移版 g_voxelCoord 的 toCenter*0.015625
         // 会让面三角每条边缩短 ~0.016 → 总和偏离 3.4142 达 0.048+
@@ -92,7 +100,7 @@ void main() {
         shadowVaild = shadowVaild || all(lessThan(abs(gl_in[1].gl_Position.xy), vec2(1.0)));
         shadowVaild = shadowVaild || all(lessThan(abs(gl_in[2].gl_Position.xy), vec2(1.0)));
 
-        if (shadowVaild) {
+        if (shadowVaild && !backAny) {
             float bias = saturate(max(posDiff.x, max(posDiff.y, posDiff.z)) * 0.5 - 1.0) * shadowProjection[0][0] * 0.3;
 
             for (int i = 0; i < 3; i++) {

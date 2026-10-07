@@ -35,6 +35,13 @@ flat out uint isWater;
 // 结论：任何"踢顶点 + return"的剔除都必须显式告知 GS；GS 只能在 !culled 时读体素数据。
 flat out float g_culled;
 
+// [2026-10-07 覆盖缺口] 1 = 该顶点法线背对光源（仅 SHADOW_BACKFACE_CULLING 打开时可能为 1）。
+// 与 g_culled 分开的原因：**背光面不能丢体素**。体素化只发背光面 ⇒ 厚墙内侧 / 厚天花板下层那格
+// 一个三角形都没有 ⇒ 该格是空气 ⇒ GI/阳光射线不在那一层停下、穿过去打到迎光外层
+// （那层 skylight=15、sunVis=1）⇒ **室内墙面/天花板被算成受直射的反弹面 = 室内漏光**（用户实测）。
+// 正确语义：真阴影分支丢弃背光三角形（保持原观感），体素分支**照写**。
+flat out float g_backFace;
+
 // 传递给 GS 的体素化数据（编码语义gbuffers Terrain.vert，坐标系必须与查询端一致）
 #ifdef ENABLE_VOXELIZATION
 out vec3 g_voxelCoord;       // 含 toCenter*0.001 偏移（imageStore 目标 → GS 质心平均后 floor）
@@ -69,6 +76,7 @@ uniform vec3 cameraPositionFract; // Iris Exclusive
 void main() {
     // 默认存活；下面每条"踢顶点 + return"的剔除路径必须先置 1（见文件头 g_culled 注释）
     g_culled = 0.0;
+    g_backFace = 0.0;
 
     // [优化] 1. 将所有剔除判断放到最上方
     #ifdef SHADOW_CULL_UNDERGROUND
@@ -86,11 +94,21 @@ void main() {
     }
 
     #ifdef SHADOW_BACKFACE_CULLING
-        if ((gl_NormalMatrix * gl_Normal).z < 0.0) {
-            g_culled = 1.0;
-            gl_Position = vec4(-1.0);
-            return;
-        }
+        bool backFace = (gl_NormalMatrix * gl_Normal).z < 0.0;
+        #ifdef ENABLE_VOXELIZATION
+            // 体素化开启时**不能早退**：体素输出必须是有效值（早退 = 未定义值 = 幻影体素，
+            // 血泪教训见文件头）。背光顶点照常算完，由 GS 分流：真阴影分支丢弃、体素分支照写。
+            // 代价：背光顶点不再省下这段 ALU（本项目实测"背面剔除无效"，该 pass 瓶颈不在这里）。
+            g_backFace = backFace ? 1.0 : 0.0;
+        #else
+            // 体素化关闭（GI_MODE<2，多数配置）：维持原早退，省掉顶点后段 ALU；
+            // GS 靠 g_culled 整三角形丢弃，混合法线三角形也不会再被拉到 NDC 角点。
+            if (backFace) {
+                g_culled = 1.0;
+                gl_Position = vec4(-1.0);
+                return;
+            }
+        #endif
     #endif
 
     // [优化] 3. 确认顶点存活后进行空间变换
