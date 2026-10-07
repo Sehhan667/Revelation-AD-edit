@@ -658,7 +658,12 @@ void main() {
             // 改为运行期判断：0~1 任意档位都正确，语义与注释一致（0 = 屏蔽）。
             if (VOXEL_GI_SH_MIX > 0.0) {
                 // SH 全空间辐照度（含下半球）→ 朝下表面吃到环境光，随昼夜自动正确
-                ambientAccum += skySHIrradiance * VOXEL_GI_SH_MIX;
+                // [2026-10-07 skylight 门控] 网格外那条 SH（下方 lm3 那一行）本来就乘 lmGate
+                //（AmbientSkyGate = cube(lightmap.y)，水下走透射豁免），网格内这条一直没门控
+                // ⇒ 地下/密封空间照样吃到整份 SH 天光环境底 = "无天空的地方也亮"（用户实测）。
+                // 改成与网格外同口径 lmGate：MC 天光按每格 -1 自然衰减 ⇒ 这项跟着自然衰减，
+                // 无天光处归 0（cube 在 lightmap≈0.15 时已 <0.004）。夜视/最小环境光底不受影响。
+                ambientAccum += skySHIrradiance * VOXEL_GI_SH_MIX * lmGate;
             }
         } else {
             // 网格外：光追范围外无 GI 数据，MINIMUM_AMBIENT_BRIGHTNESS 作为全局最暗保底，
