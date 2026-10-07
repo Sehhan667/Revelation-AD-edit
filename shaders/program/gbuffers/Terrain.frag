@@ -240,14 +240,68 @@ void main() {
     #ifdef VISUALIZE_VOXELS
         #ifdef ENABLE_VOXELIZATION
         {
-            // 读取体素数据（atlas 引用格式，RGBA16）并按相机位移重投影。
-            // 数据为本帧（gbuffers 边写边读，边缘可能闪烁；调试功能，默认关闭）
-            ivec3 voxVisCoord = ivec3(block_centered_relative_pos);
-            ivec3 voxVisPrev = voxVisCoord + (cameraPositionInt - previousCameraPositionInt);
-            if (all(greaterThanEqual(voxVisPrev, ivec3(0))) && all(lessThan(voxVisPrev, ivec3(VOXEL_AREA)))) {
-                vec4 voxVisData = texelFetch(voxelDataSampler, voxVisPrev, 0);
+            // 读取体素数据，显示"该格实际存了什么"。
+            // [2026-10-07 修调试视图·第一轮] 三处都会让人误判"体素坏了"：
+            // ① 采样点落在体素格边界：block_centered_relative_pos（Terrain.vert:100，已含
+            //    cameraPositionFract + VOXEL_RADIUS）在方块面上恰是整数边界，ivec3 截断会在
+            //    "自身格/邻接格"间逐帧跳变（DeferredLight 的 DEBUG_VOXEL_GI 早已用"沿几何法线向内
+            //    偏移 0.05 格"修过同类问题），这里与它对齐。
+            // ② 相机位移重投影：那是上一帧 IRC 缓冲的口径（见 DEBUG_VOXEL_SKY_LEVEL），
+            //    而 voxelData 是本帧 shadow pass 写的 ⇒ 移动时故意读邻格内容。
+            // ③ 解包错误：旧代码 `texture(tex, voxVisData.xy)` 把 .xy 当图集 UV，但按
+            //    Shadow.frag:95-103 的写入约定，**固体格的 .xy 存的是染过色的反照率 RG**
+            //    （透明格的 .xy 才是 UV）⇒ 拿"颜色"当"UV"采样，落到白纹素就变白。
+            // [2026-10-07 第二轮·判读去歧义] 旧口径"方块自己的纹理 = 无数据"有两个致命歧义：
+            //   - 透明格（水/玻璃/树叶）此前用 texture(tex, uv) 画，看起来就像方块正常颜色
+            //     ⇒ 被误读成"无数据"，而它其实有数据、且**真的挡光**（吸收路径）；
+            //   - z==0（真·无数据）与"存的反照率恰好是 0（黑）"都表现为深色 ⇒ 分不清。
+            // 现在改为固定色标（本帧 shadow pass 每帧清空后被写过的格子才有色）：
+            //   品红/橙红/纯黄 = z==0 真·空气（本帧没有任何几何写这一格 ⇒ 光穿透）
+            //                     —— 三种颜色按"本像素自己方块的材质 ID"再分类，见下方分支
+            //   蓝   (0,0.35,1)+ = z<0   透明格（水3/玻璃4/叶13/植物1000+/传送门1500），亮度按 |ID| 分档
+            //   原色             = z>0  固体格，显示体素里存的**真实反照率**（黑 = 存的 (0,0,0)，
+            //                            典型来源：精灵图中心透明的方块，如铁栏杆/地毯/雪层/压力板
+            //                            ——它们按 155-294 形状块路径写入，子盒求交后才决定是否挡光）
+            //   偏黄             = z>154 形状块格（楼梯/门/栅栏/墙…），吃 HitShape 子盒判定，
+            //                            因此"看起来是空的"却有实心子盒 ⇒ 会挡光
+            // 画面仍是方块自己的纹理 = 该格坐标在 64³ 网格**之外**（无光追数据，非"坏了"）。
+            vec3 voxVisNormal = OctDecodeSnorm(packedGeo);
+            ivec3 voxVisCoord = ivec3(block_centered_relative_pos - voxVisNormal * 0.05);
+            if (all(greaterThanEqual(voxVisCoord, ivec3(0))) && all(lessThan(voxVisCoord, ivec3(VOXEL_AREA)))) {
+                vec4 voxVisData = texelFetch(voxelDataSampler, voxVisCoord, 0);
                 if (voxVisData.z > 0.5) {
-                    albedo.rgb = texture(tex, voxVisData.xy).rgb;  // 图集 UV 中心采样（与 gbuffers 同图集）
+                    // 固体格：.xy = 反照率 RG，.w 高 8 位 = 反照率 B（低 8 位是 skylight）。
+                    // 与 lib/lighting/VoxelData.glsl 的 VoxelUnpack2xU8X / VoxelGI.frag:301 同口径；
+                    // 这里内联是为了不把 VoxelData.glsl 的 atlas2D 依赖拉进 gbuffers 程序。
+                    float voxVisB = floor(voxVisData.w * 65535.0 / 256.0) / 255.0;
+                    albedo.rgb = saturate(vec3(voxVisData.r, voxVisData.g, voxVisB));
+                    if (voxVisData.z > 154.5) {
+                        // 形状块：混 25% 黄，使"看得见形状块格"与"普通整块"可区分，
+                        // 同时把纯黑反照率抬到暗黄（仍在深色区，不会和品红混淆）。
+                        albedo.rgb = mix(albedo.rgb, vec3(1.0, 0.85, 0.10), 0.25);
+                    }
+                } else if (voxVisData.z < -0.5) {
+                    // 透明格：不再采样图集（那会画成方块原色 → 被误读成"无数据"）。
+                    float voxVisT = fract(abs(voxVisData.z) * 0.1);
+                    albedo.rgb = vec3(0.0, 0.35, 1.0) + vec3(0.0, 0.15, 0.0) * voxVisT;
+                } else {
+                    // z==0：本帧没有任何几何写这一格。**按本像素自己方块的材质 ID 再分类**，
+                    // 因为"空"有三种完全不同的来路，修法也完全不同（判读一次就能定案）：
+                    //   橙红 (1,0.35,0) = 透明类 ID（水3/玻璃4/叶13/植物1000-1003/传送门1500）：
+                    //        这类块本该走吸收/透明路径，却没有体素 ⇒ 渲染层门限没放行
+                    //        （树叶若在 MC 里走 CUTOUT_MIPPED 就是这种：会被 Shadow.geom 的门限排除）
+                    //        ⇒ **真·漏光**（整块不挡光），要补渲染层放行。
+                    //   纯黄 (1,1,0)   = 形状类 ID（155-294）：形状块被写丢了 ⇒ 不该出现，看到请报我。
+                    //   品红 (1,0,1)   = 其余（未列入 block.properties，materialID==1）：
+                    //        · 薄/异形块：`isFullBlock` 检测**按设计**拒绝（防幻影整块，见 Shadow.geom）
+                    //        · 完整方块：**全部已建网格的暴露面都背对太阳**（厚墙上你正看着的那一面、
+                    //          厚天花板的下层）⇒ 这格在体素里缺一层，但迎光外壳仍被体素化 ⇒ 基本不漏光。
+                    float mid = float(materialID);
+                    bool voxVisTrans = (mid == 3.0 || mid == 4.0 || mid == 13.0
+                                     || (mid >= 1000.0 && mid <= 1003.0) || mid == 1500.0);
+                    if (voxVisTrans)                          albedo.rgb = vec3(1.0, 0.35, 0.0);
+                    else if (mid >= 155.0 && mid <= 294.5)    albedo.rgb = vec3(1.0, 1.0, 0.0);
+                    else                                      albedo.rgb = vec3(1.0, 0.0, 1.0);
                 }
             }
         }
