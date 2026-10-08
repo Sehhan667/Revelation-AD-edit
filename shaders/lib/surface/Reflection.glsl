@@ -154,13 +154,15 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
 
     viewPos += mat3(gbufferModelView) * worldNormal * (length(viewPos) * REFLECTION_NORMAL_BIAS);
 
-    // 天空方向：原始金属方向
+    // 天空方向 / SSR 方向：两者其实是同一个向量
+    // （reflect(worldDir, worldNormal) == worldDir + worldNormal*2*abs(dot(N, worldDir))），
+    // 保留两个名字只是让天空回退段与 SSR 段各自可读。
     vec3 skyLightDir = reflect(worldDir, worldNormal);
-    // SSR 方向：正确方向
     float NdotV = abs(dot(worldNormal, -worldDir));
     vec3 ssrRayDir = worldDir + worldNormal * (NdotV * 2.0);
 
-    if (dot(worldNormal, skyLightDir) < EPS) return vec4(0.0);
+    // [2026-10-08] 删死代码：原 `if (dot(worldNormal, skyLightDir) < EPS) return vec4(0.0);` 恒不成立
+    // —— dot(N, R) = NdotV > 0，永远走不到 return。
 
     float fresnel = FresnelDielectricN(NdotV, 1.5);
 
@@ -221,10 +223,17 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
         if (traceHit) {
             float edgeFade = hitCoord.x * hitCoord.y * oms(hitCoord.x) * oms(hitCoord.y);
             edgeFade *= 1e2 + cube(saturate(1.0 - gbufferModelViewInverse[2].y)) * 1e3;
-            
-            ivec2 texel = uvToTexel(hitCoord * 0.5);
-            float hitDepth = loadDepth0(texel);
-            vec3 reflectViewPos = ScreenToViewPos(vec3(hitCoord * 0.5, hitDepth));
+
+            // [2026-10-08 P0-2] 深度与视图位置必须用**屏幕**坐标（depthtex0 是全分辨率、全屏），
+            // 只有采样 colortex4 才需要 ×0.5 —— 它的左上象限是半分辨率画布（ReprojectScene.comp
+            // 用 workGroupsRender=0.5 写入）。
+            // 原代码把象限坐标一路用到深度读取与 viewPos 重建上：uvToTexel(hitCoord*0.5) 取到了
+            // 屏幕坐标一半处的深度，ScreenToViewPos(vec3(hitCoord*0.5, d)) 的 ndc = hitCoord-1 ∈ [-1,0]
+            // 只对屏幕左上象限成立 ⇒ reflectionDist 完全错误（接触硬化、以及后续任何按命中距离
+            // 加权的降噪/模糊都会拿到错距离）。clamp 是防 hitCoord == 1.0 时 texelFetch 越界。
+            vec2 hitUv = clamp(hitCoord, vec2(0.0), vec2(1.0) - viewPixelSize);
+            float hitDepth = loadDepth0(uvToTexel(hitUv));
+            vec3 reflectViewPos = ScreenToViewPos(vec3(hitUv, hitDepth));
             reflectionDist = distance(reflectViewPos, viewPos);
 
             vec2 sampleUv = hitCoord * 0.5;
