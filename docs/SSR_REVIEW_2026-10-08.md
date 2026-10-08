@@ -236,6 +236,32 @@ program.world1/deferred21.enabled = false
 （注意：`deferred21` 从未出现在 `shaders.properties` 的任何 `.enabled` 规则里，
 这与"作者会显式关掉空转 pass"的既有做法不一致，是本次发现的直接动因。）
 
+### 3.1 补充论证与实测结论（2026-10-08 复核）
+
+- **哪个写端才是"活的"——用消费端语义可判定**：`IntegrateScene.frag:317-318` 对玻璃/水面做
+  `sceneColor = sceneColor * specularLight.a + specularLight.rgb`。`Translucent.comp` 的返回值是
+  `vec4(reflection * fresnel, 1.0 - fresnel)`，`.a` = 1-fresnel ⇒ 与该公式**完全吻合**；
+  而 `SpecularIndirect.frag` 的 `.a` 是**命中距离**（无命中为 `FP16_MAX`）⇒ 若消费的是它的输出，
+  玻璃会被乘上 ~65504 或一个距离值，画面会直接爆掉 —— 显然不是。⇒ 消费端一直在读
+  `Translucent.comp` 那一份，`deferred21` 的输出从写出到被覆盖**没有任何读者**。
+- **三个维度链路一致**（本次逐文件核对）：`world0`/`world-1`/`world1` 都含
+  `composite4.csh → /program/Translucent.comp` 与 `composite4.fsh → /program/IntegrateScene.frag`，
+  且 `composite4` 没有任何 `.enabled` 规则（默认全开）⇒ 在 world0 做的 A/B 结论可外推到另两个维度。
+- **`Translucent.comp` 不是同类浪费**：它在 L246 有
+  `if ((materialID != 2u && materialID != 3u) && notParticle && !translucentEntity) return;`
+  ⇒ 普通不透明像素直接早退，它的 SSR 只服务水/玻璃/半透明实体（且其输出被消费端使用）⇒ 保留。
+- **`deferred21` 的"意图"**：按 `config.glsl:108` 的缓冲表，colortex3 是
+  "Indirect diffuse → **Indirect specular** → Motion vector" 三段时间复用，`deferred21` 正是上游给
+  "间接镜面"这一环准备的写端；但它照顾的那类像素（`material.specularMask`＝粗糙度<0.39 或金属度>0.01
+  的**不透明**光滑面，如湿地/冰）在 `IntegrateScene` 里根本没有读取分支 ⇒ 即便不被覆盖也不可见。
+  ⇒ 结论：这是**上游遗留且已被旁路**的一趟，删除不丢功能；若将来想让不透明光滑面也有间接镜面
+  （湿地/冰面反射），那是**新功能接线**，需要专门设计谁写谁读，而不是恢复这一趟。
+- **实测**：用户把 `program.world*/deferred21.enabled` 置 false 后"目前没观察到异常，帧率有少量提升"
+  ⇒ 已删除 7 个文件（commit `f3b963a7`）。
+- **唯一残留注意点**：`deferred40`（`PTGI_Median.comp`，仅 `VOXEL_GI_DENOISE_MODE=1` 时启用）
+  跑在 deferred21 **之后**且会读 colortex3。若该档开启，`deferred21` 写的反射字节会被 GI 降噪器
+  当成"棋盘 GI 信号"读走（污染）。用户实测无差异 ⇒ 该档在其配置下未启用；且删除后这层污染也随之消失。
+
 ---
 
 ## 四、路线图（按投入产出）
