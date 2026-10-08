@@ -1266,3 +1266,71 @@ VoxelClear 每帧清空 + 体素瓦片 1 格 1 纹素精确光栅化，除此之
   该区间很宽（含 farmland/dirt_path/cauldron/hopper/scaffolding/anvil/stonecutter/composter/
   end_portal_frame 等非形状块），值得对照 `block.properties` 10155-10294 逐条核一遍。
 
+# 备忘：SSR/SSRT 反射审查 + 确定缺陷修复（2026-10-08）
+
+## 结论（一句话）
+反射链的算法骨架（线性屏幕空间步进 + 二分 + 上一帧重投影取光）与 MC 圈同类实现（Photon）一致，
+不是落后方案；但读码查出 **5 处确定性缺陷**（2 处纯浪费、1 处坐标错误、1 处死代码、1 处厚度判据失控）
+和 **1 处高度可疑的整趟白做 pass（deferred21）**，另有 `TODO.md #0` 反射拖影的架构性根因
+（反射没有自己的运动向量）。完整审查（含文献与验证状态）见 `docs/SSR_REVIEW_2026-10-08.md`。
+
+## 谁在跑（装配层事实，供以后排查直接引用）
+- `world0/deferred1.csh` = `ReprojectScene.comp`：`workGroupsRender 0.5` + `loadDepth0(texelPos << 1)`
+  ⇒ **colortex4 左上象限 = 半分辨率重投影场景历史**（反射的取样源；`texture(colortex4, uv*0.5)` 因此是**对的**）。
+- `world0/deferred20.fsh` = `DeferredLight.frag:947`：**唯一可见**的反射，门槛
+  `material.metalness >= 0.5 || materialID == 10050u`。
+- `world0/deferred21.fsh` = `specular/SpecularIndirect.frag`：跑第二趟 SSR 写 colortex3（`RENDERTARGETS: 3`），
+  **无 `.enabled` 规则 ⇒ 默认开**。
+- `world0/composite4.csh` = `Translucent.comp`：自带**另一份** `rayTraceScene`，对**所有**像素
+  `imageStore(colorimg3)` 覆盖 colortex3；`composite4.fsh` = `IntegrateScene.frag:317` 才把 colortex3
+  当 specular 项合成。⇒ 见"待实测"第 1 条。
+- `deferred30/31/32` 已显式关闭（`shaders.properties:1091-1099`），`SpecularFilter()` 本身是空 no-op
+  ⇒ **反射目前没有任何专用降噪器**，只靠 TAA。
+
+## 本轮已改（纯缺陷修复，工作区改动，**待实测**；尚未提交）
+- `SSRT.glsl`：
+  1. **推进量改为每轮必加**。原来只在"射线在表面前方"时推进 `t`；厚度测试失败（已穿过但超容差）
+     时既不 break 也不推进 ⇒ 同一个 `rayPos` 被重复评估，剩余迭代全部空转（最多 steps-1 次全分辨率
+     深度读取白付），且该射线**此后永远找不到命中**（薄遮挡后面的交点被跳过）。
+  2. **同像素重复采样跳过深度读取**（jiaozi158 的亚像素早退），并照常按名义步长推进。
+  3. **厚度判据加绝对上限** `SSRT_MAX_THICKNESS`（默认 1.5 格）。原判据 `|Δz| < 0.2×|视深|` 是纯相对量，
+     30 格外等价于允许 6 格厚的"墙" ⇒ 远处假命中（幽灵反射/漏光）。
+  4. **命中点按深度差线性插值**（`SSRT_HIT_INTERPOLATION`，默认 1）：在"前一点（表面前方，差>0）"
+     与"当前点（表面后方，差<0）"之间插值出深度差为零的位置，作为二分细化的起点，替代"跨面那格中心"。
+- `Reflection.glsl`：
+  5. **半坐标 bug**：`uvToTexel(hitCoord*0.5)` 去索引**全分辨率** `depthtex0`，
+     `ScreenToViewPos(vec3(hitCoord*0.5, ...))` 的 ndc = `hitCoord-1 ∈ [-1,0]` 只对屏幕左上象限成立
+     ⇒ `reflectionDist` 全错（`*0.5` 只该用于 colortex4 象限画布）。已改为 `hitCoord`（并 clamp 到
+     `1 - viewPixelSize` 防越界）。
+  6. 删除恒不成立的 `if (dot(worldNormal, skyLightDir) < EPS) return`（`skyLightDir` 与 `ssrRayDir`
+     是同一向量，`dot(N,R) = NdotV > 0`），及其误导性注释。
+
+## 待实测 / 未做
+- **deferred21 是否整趟白做**：临时在 `shaders.properties` 加
+  `program.world{0,-1,1}/deferred21.enabled = false`，画面若完全一致 ⇒ 该 pass 与其 fragment
+  应删除；若有差异 ⇒ 反向处理（让 `Translucent.comp` 只写 colortex0）。两种情形下都有一整趟
+  全屏 SSR 是白跑的。
+- **修复 1 会改变部分反射结果**（原本因空转而不出现的命中会开始出现）：需实测是否引入"穿透薄墙"的观感。
+- `edgeFade` 实际是硬边（`*= 1e2 + ...` 让中景恒饱和）+ `REFLECTION_SKY`/`SSRT_SKY_TRACING`/`TRANSLUCENT_SKY_REF`
+  默认全关 ⇒ trace 失败即黑、金属 miss 被 `DeferredLight.frag:959-961` 当非金属。**修法必须等
+  "miss 回退到预过滤天空/环境"到位**，否则单纯把边缘淡出改软只会让黑边更宽。
+- 粗糙反射模糊半径 `roughness²×0.04×20`（`Reflection.glsl:244`）：roughness 0.5 即 0.2 画布 UV、
+  0.9 即 0.65 再被 clamp 到 0.499 ⇒ 等于取半分辨率历史平均，不是 GGX 叶瓣。修法见审查文档 §四 P0。
+- `Translucent.comp` 与 `Reflection.glsl` 的两份 `rayTraceScene` / `CalculateSpecularReflections` 已漂移
+  （后者注释还写着"mode 2 default"而实际默认 1），建议把公共部分收回 `lib/surface/SSRT.glsl`。
+- 死选项：`SSPT_ENABLED`（全仓无引用）、`SSPT_BLENDED_LIMBMAP` 的 lang 文案
+  （"屏幕空间路径追踪结果与原版光照贴图混合"）证明本包历史上做过 **voxagon 式 SSPT 漫反射 GI**，
+  后被 SSILVB/VXGI/IRC 取代 ⇒ 三个 `SSPT_*` 选项可直接清。
+
+## 避免误引（文献核查结论）
+- **SSPT 是 2018 年博客技术名，不是论文**：Dennis Gustafsson (Voxagon) 2018-01-03
+  《Screen Space Path Tracing – Diffuse》+ 前置《A better depth buffer for raymarching》(2017-11-22)。
+  Luksch et al. 2014《Real-Time Rendering of Glossy Materials with Regular Sampling》是环境贴图 MIP 过滤，
+  **不是 SSPT 出处**；Ray Tracing Gems/RTG2 **没有** SSPT 章节。事实标准实现 = jiaozi158
+  *UnitySSPathTracingURP*。
+- **McGuire & Mara 2014 = 透视校正 2D DDA，不是 Hi-Z**（`SSRT.glsl` 顶部引了它但实现是线性步进；
+  Hi-Z 是后续工业实践，本包 `6ac5ce9d` 试过、`efa5ff94` 因 CAS 下重编报 preprocess 失败而回退，
+  **不是算法本身的问题**）。
+- 查无此文，不要引：「Karis/Chen 2021 Reflection reprojection with implicit ray」、
+  「NVIDIA specular denoising with the ratio estimator」（应写为 NRD/ReBLUR 的 pdf 加权与比值形式）。
+
