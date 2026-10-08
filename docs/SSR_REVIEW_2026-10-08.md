@@ -140,6 +140,13 @@ roughness 0.5 → **0.2**（画布 UV 的 20 %）、0.9 → 0.65，再被 `clamp
 而不是所有 miss。分析问题时必须先查这个文件。
 金属 miss 时 `DeferredLight.frag:959-961` 直接把 `metalness = 0` 当非金属着色（"金属变塑料"）。
 **修法**：miss 回退到按粗糙度预过滤的天空/环境（§5.4），并把淡出改成真正的 `smoothstep` 边缘带。
+**落点（2026-10-08 已实现，开关 `SSR_ENV_FALLBACK`，默认 0 = 行为不变）**：与 `REFLECTION_SKY`
+互斥（后者是用户的"方块是否反射天空"审美开关，优先）；回退色 = `mix(锐利环境 skyMapTex,
+CosineConvolvedSH3(global.skySH, N), roughness²)`（本包 colortex5 无 mip 链，这是廉价版 split-sum），
+门控沿用原 `smoothstep(0.3,0.7,skylight)` 防洞穴被 SH 抬亮。
+**关键配套**：仅有环境回退（无 SSR 命中）时必须返回**有限**的 `reflectionDist`，否则
+`DeferredLight.frag:948` 的 `reflectHit = (reflection.a < FP16_MAX && ...)` 判 false，
+金属仍会被 `metalness = 0` 当非金属着色 —— 回退色算了也用不上。
 
 ### P0-7（附带）两份实现已漂移
 

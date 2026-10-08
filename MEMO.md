@@ -1315,6 +1315,40 @@ VoxelClear 每帧清空 + 体素瓦片 1 格 1 纹素精确光栅化，除此之
      上限（拍平远处）错、下限（覆盖近处一步）对。** 本仓同类先例：`VoxelTracing.glsl:99-103`
      记的"STBN 空间 tile 整齐密集斑纹"及 Cranley–Patterson 平移（备选手段）。
 
+## 后续改动（同日，工作区未提交，待实测）
+  6. **环境回退** `SSR_ENV_FALLBACK`（`Reflection.glsl`，默认 0 = 行为不变；实机选项文件里已置 1）：
+     trace miss（射线出屏/命中校验失败）时给反射兜底环境色，解决"屏幕边缘反射变黑"与
+     "金属 miss 被 `DeferredLight.frag:959-961` 当非金属着色（金属变塑料）"。
+     回退色 = `mix(skyMapTex 锐利环境, ConvolvedReconstructSH3(global.skySH, N), roughness²)`
+     × `smoothstep(0.3,0.7,skylight)` × `REFLECTION_FALLBACK_BRIGHTNESS`
+     —— colortex5 **没有 mip 链**，所以用"锐利 ↔ 余弦卷积 SH"插值当廉价 split-sum。
+     与 `REFLECTION_SKY` 互斥（后者优先，它是用户的审美开关）。
+     **配套要点**：仅环境回退时必须返回**有限** `reflectionDist`，否则消费端
+     `reflectHit` 判 false，回退色算了也用不上（原 `.a = FP16_MAX` 是"无 SSR 命中"哨兵）。
+  7. ~~**对照开关** `SSRT_DITHER_CP`（`SSRT.glsl`/`Reflection.glsl`，默认 0）~~：给射线起点抖动加
+     per-pixel 固定平移（Cranley–Patterson），破坏 STBN 空间 tile 的整齐条纹；抄自本仓
+     `VoxelTracing.glsl:99-103` 的既有先例。用于追残余闪烁条纹（用户暂缓该问题）⇒ **代码已从工作区
+     撤回**，配方留档：`ssrDither = fract(SampleStbnVec2(pixel, frameCounter).x
+     + fract(sin(pixel.x*0.1591549)*43758.5453 + sin(pixel.y*0.1591549)*78.233))`。
+
+## 用户裁定不需要（同日撤回）
+  6. ~~**环境回退** `SSR_ENV_FALLBACK`（`Reflection.glsl`）~~：trace miss 时用
+     `mix(skyMapTex 锐利环境, ConvolvedReconstructSH3(global.skySH, N), roughness²)` 兜底，
+     解决"屏幕边缘反射变黑 / 金属 miss 被当非金属（变塑料）"。
+     **用户裁定"原本这方面我已经满足了"** —— 他的 `SSRT_SKY_TRACING=true` + `TRANSLUCENT_SKY_REF=true`
+     已覆盖绝大多数 miss（屏幕内天空命中即命中），实测"看不出变化"也印证覆盖面很窄。
+     代码与选项文件均已撤回。**但实现要点留档**（将来做随机采样反射/半分辨率追踪时 miss 率大涨，
+     这个兜底会重新必要）：仅有环境回退时必须返回**有限** `reflectionDist`，否则消费端
+     `reflectHit = (reflection.a < FP16_MAX && ...)`（`DeferredLight.frag:948`）判 false ⇒ 回退色白算。
+
+## 未验证的前提（以后做 A/B 前先钉死）
+- **不在任何 `screen.*` 列表里的选项，从 `Revelation-AD-edit.txt` 设定后是否真的生效？** 本轮新加的开关
+  （`SSRT_THICK_FLOOR`/`SSRT_HIT_INTERPOLATION`/`SSRT_STALL_FIX`/`SSRT_DITHER_CP`/`SSR_ENV_FALLBACK`）
+  全属这一类；"打开环境回退看不出变化"当时无法区分"机制不生效"与"没有覆盖像素"。
+  ⇒ **规则：凡是要 A/B 的开关，一律按本仓"选项四件套"（settings / properties / lang×2 / profile）
+  接进 GUI，否则对照实验不可信。** 已知的另一条 Iris 行为：选项文件只写回**与源码默认值不同**的项
+  （等于默认值的会被清掉）。
+
 ## 实测回归记录（2026-10-08，一次）
 第一次落地时把两处"顺手的性能优化"和缺陷修复混在同一个补丁里 ⇒ 用户实测出现两类回归（见上 2、3），
 无法归因，只能整批回退重来。**教训**：此后每条新改动都带独立对照开关（或独立提交），先 A/B 再收口。
