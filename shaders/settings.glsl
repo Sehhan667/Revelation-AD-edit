@@ -353,6 +353,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// Fresnel 叠加到已着色漫反射上（金属那条 mix 路径不变）。默认关 = 与原行为逐位一致。
 	// 代价：符合条件的像素会真的跑一趟 SSR（覆盖率见反射页阈值）；GTX 1050 上建议同时降
 	// SSRT_MAX_SAMPLES（本机当前 32）。
+	//#define OPAQUE_SPECULAR
 	#define ROUGH_REFLECTIONS_THRESHOLD 0.005 // Threshold for rough reflections. [0.0001 0.0002 0.0005 0.0007 0.001 0.002 0.005 0.007 0.01 0.02 0.05 0.07 0.1 0.2 0.5]
 
 	#define REFLECTION_FILTER // Enables reflection filter
@@ -581,8 +582,17 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 		#define GI_ACTIVE_IRC
 		#define IRC_GI_ENABLED
 	#endif
-	// [2026-10-08 已回退] 曾在此加过"SSILVB/VXGI 开启时自动 #undef AO_ENABLED（强制 0）"，
-	// 因未经用户确认、且会在 GI_MODE=1/2 下静默关掉 AO，已按用户要求撤回，恢复原行为。
+	// [2026-10-08] SSILVB/VXGI 开启时自动关掉独立的 AO：这两种模式自带屏幕空间遮蔽
+	// （SSILVB 的线性深度 AO / VXGI 的体素遮蔽），再叠一层 GTAO/SSAO 等于同一处遮蔽算两遍，
+	// 角落和缝隙会过黑，而且白付一遍采样开销。
+	// AO_ENABLED 是**值型**选项（OFF/SSAO/GTAO → 0/1/2，见本文件 AO 段），
+	// 所以这里不能像 ENABLE_VOXELIZATION 那样 #undef 了事，必须重定义成 0（OFF）。
+	// 消费点统一是 `#if AO_ENABLED == 1/2` 与 `#if AO_ENABLED > 0`（DeferredLight.frag），
+	// 定义为 0 即等价于用户选 OFF。IRC(GI_MODE==3) 不在此列，仍按用户选择。
+	#if GI_MODE == 1 || GI_MODE == 2
+		#undef AO_ENABLED
+		#define AO_ENABLED 0
+	#endif
 	// ENABLE_VOXELIZATION 是 GUI 布尔开关（shaders.properties screen.voxel + profile.Default 默认开）。
 	// Iris 通过"注释/取消注释本行"来开关（setBooleanDefineValue）。要显示开关必须同时满足：
 	//   1) 本行 `#define ENABLE_VOXELIZATION`（无值，可带注释）→ 布尔选项定义锚点；
