@@ -184,6 +184,28 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
             break;
         }
 
+        // [2026-10-02 补「方块光的零厚度接触线」] 与 VoxelSunShadow.glsl 的阳光 DDA 同款补测。
+        // 本步若多轴同时推进（tie），说明光线是贴着格与格共用的**棱/角**过去的：DDA 直接
+        // 跳到对角格 ⇒ 中间那几个侧格从不被采样。两个方块斜向贴着时接触面积为 0，
+        // 光线就从这条缝穿过去 ⇒ 无光源场景里缝「凭空发光」（用户实测：斜放两块，缝自己发亮；
+        // 机理 = 穿缝的射线一路走到出界，拿到 NOLIGHT 兜底底光，而旁边射线的都命中方块 = 0）。
+        // 补测：把本步发生 tie 的每个轴各自回退一格得到侧格，任一格是**整块固体**即判遮挡 ——
+        // 只返回已累积的 contrib（不含 NOLIGHT 兜底、不含该格反弹），口径与阳光端一致。
+        // 只测整块（abs(z) <= 154）：它们没有子盒、命中语义无歧义；形状块交给 IsHitBlock 主路径。
+        if (i > 0 && dot(tracingNext, tracingNext) > 1.0) {
+            vec3 prevVC = voxelCoord - tracingNext * sdir;   // 步进前的格
+            for (int a = 0; a < 3; ++a) {
+                if (tracingNext[a] > 0.5) {
+                    vec3 cand = voxelCoord;
+                    cand[a] = prevVC[a];                     // 仅回退 a 轴 → 侧格
+                    if (any(lessThan(cand, vec3(0.0))) || any(greaterThanEqual(cand, vec3(VOXEL_AREA))))
+                        continue;
+                    float cz = texelFetch(voxelDataSampler, ivec3(cand), 0).z;
+                    if (cz > 0.5 && abs(cz) <= 154.0) return contrib * weight;
+                }
+            }
+        }
+
         ivec3 vc = ivec3(voxelCoord);
         #if defined VOXEL_COARSE_ACCEL || defined VOXEL_FINE_ACCEL
             // ---- coarse 空洞链跳（"空气链跳"，2026-09-06）：所在 4³ 粗块全空时，沿射线方向在
@@ -225,7 +247,9 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
 #endif
             vec4 hvd = texelFetch(voxelDataSampler, vc, 0);
         // 判空：voxelID 原值整数（>0 即固体，0=空气；半精度浮点整数精确）
-        if (hvd.z <= 0.5) {
+        // [2026-10-02 NaN 防护] 原 `hvd.z <= 0.5` 对 NaN 为 false ⇒ NaN 格被当固体 → 垃圾
+        // albedo 进光照 → 单像素极亮点。改 `!(hvd.z > 0.5)` 归入空气（有效数据下逐位等价）。
+        if (!(hvd.z > 0.5)) {
             // 透明体素：水/玻璃/树叶单层吸收着色（isTranslucent，只吸收一次；
             // 植物/传送门纯穿透）。hvd.xy = 图集中心 UV，采样取方块颜色与不透明度。
             if (traceTranslucent && VoxelIsTranslucentAbsorb(abs(hvd.z))) {
@@ -277,7 +301,9 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
 
         // 反弹 albedo：固体格 r/g=染过色中心色 RG、w 高 8 位=染过色 B（Shadow.frag 草方块
         // tint 修复）；不再采样 atlas2D（64³ 无法表达 16px 细节，中心色=体素平均反照率）。
-        vec3 alb = vec3(hvd.r, hvd.g, VoxelUnpack2xU8X(hvd.w));
+        // [2026-10-02 极值防护] saturate：合法数据本就是 0-1（写入端 2026-10-02 起也已收口），
+        // 这里只防「垃圾 / 半精度残留」把 albedo 放大成极值 → 经阳光/自反弹成为单像素亮点。
+        vec3 alb = saturate(vec3(hvd.r, hvd.g, VoxelUnpack2xU8X(hvd.w)));
 
         // 方块光兜底（普通固体格带原版方块光）
         // [FIX 2026-08-06] 薄片/流体光源（发光地衣/岩浆）voxelData 中心色可能为 0 →
@@ -292,7 +318,15 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 的 voxelDataW.y 语义，也对应本项目 IRC 的 VoxelUnpack2xU8Y）：lD.x 来自 voxelLightData 的
         // imageAtomicMax（sky 是最低字节，max 比较被 block/emissive 高位压掉 → 门限常为 0
         // → 阳光反弹全无，这是最终根因）。hvd = 命中体素数据（voxelDataSampler）。
-        vec3 sunDir = mat3(shadowModelViewInverse) * vec3(0.0, 0.0, 1.0);
+        // [2026-10-02 修复「看不到阳光反弹」] 原式 `mat3(shadowModelViewInverse) * vec3(0,0,1)` 在
+        // **compute** 里取不到正确值（本项目另一处早已踩过并记在 MEMO：DDGI 探针端注释
+        // "sunDir 用标准 worldSunDir（shadowModelViewInverse 在 compute 无效）"）。
+        // 本文件只被 DiffuseIndirect.comp（compute）包含 ⇒ sunDir 恒为垃圾 ⇒
+        // saturate(dot(sunDir, hitNormal)) ≈ 0 ⇒ 阳光反弹整体乘 0 ⇒ 完全看不到。
+        // 改用 worldSunDir：世界空间、指向太阳，白天 y>0 / 夜晚 y<0，fragment/compute 都有效
+        //（GlobalStorage.comp 本身就用 worldSunDir/worldLightDir，是 compute 可用的实证）。
+        // 注入端（VoxelGI.frag 是 fragment）沿用原式即可，不受此影响。
+        vec3 sunDir = worldSunDir;
         // [2026-08-19 恢复 lightmap 门控] 阳光门限用命中体素 sky（写胜 skylight），半遮挡按比例放行。
         float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
         // [2026-09-23 修复] ×444 是「atomicMax 字节序 bug 时期」的遗留补丁：当时 hitSkylight
@@ -302,6 +336,11 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 且降噪压不住因为是成片大值）。
         // 该字节序 bug 已修（sky 现在放 R 字节），门控可恢复实际语义：天光低处屏蔽阳光反弹。
         // 用 smoothstep 而非硬阈值，避免阈值处突变。
+        // [2026-10-02 门控维持原式] 曾试过改成"只用像素 MC lightmap"来堵室内漏光，
+        // 但用户实测会引出很多奇异景象（MC lightmap 与体素/光追两套光照语义不一致）⇒ 撤回。
+        // 室内漏光的**根因按用户指认从几何侧解决**：阳光光线沿两方块"零厚度接触线"穿过
+        // 体素网格缝隙 → 已在 VoxelSunShadow.glsl 的 VoxelSunShadowTracing 里补测 tie 步的
+        // 接触格（棱/角上确实相接的两格算遮挡）。门控保持原式不动。
         float sunLighting = saturate(dot(sunDir, hitNormal))
                           * smoothstep(0.25, 0.55, max(hitSkylight, skyLightmap));
         // [FIX 2026-08-05] 阳光项改用本地重算的直射辐照度：诊断确认 global.directIlluminance
@@ -334,8 +373,12 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 保证只有被太阳直射的体素才反弹阳光，洞穴/背阴处不会产生阳光散射。
         // [2026-08-20] 下界（worldId == -1）无太阳：屏蔽阳光反弹
         if (worldId != -1) {
+            // [2026-10-02] 乘 VOXEL_SUN_BOUNCE_GAIN（代码侧增益，见 VoxelLighting.glsl 注释）：
+            // 追踪端是"半球 1 采样 + 时域平均"，收敛值 = 命中率 × 单次量级；开阔地命中率低
+            // ⇒ 平均下来天然很弱，且强度滑条只放大单次量级、改不了命中率。增益直接抬结果。
             contrib += alb * (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
-                     * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * absorption;
+                     * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * VOXEL_SUN_BOUNCE_GAIN
+                     * absorption;
         }
         // [2026-08-19] 夜晚月光反弹：directIlluminance 里的 moon 项受 moonlightMult(~0.001)
         // 压到近 0 → 体素 GI 夜晚无间接月光。独立补方向化月光弹射：
@@ -356,17 +399,24 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // B = lightmap 门控(saturate(max(hitSkylight,skyLightmap)*444))。
         // 到"反弹消失"的视角看各自变哪个通道变黑。
         // #define DEBUG_SUNBOUNCE_VIS
-        #if defined DEBUG_SUNBOUNCE_VIS
+        #if defined DEBUG_SUNBOUNCE_VIS && defined DEBUG_SUNBOUNCE_FACTORS
+        // [2026-10-02 诊断·因子视图] 需要额外打开 DEBUG_SUNBOUNCE_FACTORS 才生效（默认不定义，
+        // 以保持画面为正常观感，只靠 DeferredLight 角落读数取数）。
+        // ×4 放大：本值后面还要经 DeferredLight 乘 albedo，不放大颜色会被压暗看不清。
         return vec3(max(max(sunVis.r, sunVis.g), sunVis.b),
                     saturate(dot(sunDir, hitNormal)),
-                    saturate(max(hitSkylight, skyLightmap) * 444.0));
+                    saturate(max(hitSkylight, skyLightmap) * 444.0)) * 4.0;
         #endif
         // 间接光：命中体素处的 IRC 前帧缓存（相机重投影 +cDi，与注入端同款）
         // 三线性平滑读取（消除 1m 体素块状/表面冲突）。DISABLE_IRC 时不做自反弹。
         #ifndef DISABLE_IRC
-        ivec3 ircHit = vc + (cameraPositionInt - previousCameraPositionInt);
+        ivec3 cDi = cameraPositionInt - previousCameraPositionInt;
+        ivec3 ircHit = vc + cDi;
         if (all(greaterThanEqual(ircHit, ivec3(0))) && all(lessThan(ircHit, ivec3(VOXEL_AREA)))) {
-            contrib += alb * FetchVoxelRadianceTrilinear(ircHit) * VOXEL_GI_SELF_BOUNCE * absorption;
+            // [2026-10-02] 传**连续**命中点（重投影到上一帧缓存位置）而不是整数格坐标：
+            // 旧实现传整数 → 采样点落在 2×2×2 的格角上，退化成 2 格盒糊 + 半格偏移
+            // （详见 VoxelGI.glsl 的 FetchVoxelRadianceTrilinear 注释）。
+            contrib += alb * FetchVoxelRadianceTrilinear(hitVoxelPos + vec3(cDi)) * VOXEL_GI_SELF_BOUNCE * absorption;
         } else {
             // [2026-08-19 恢复] IRC 查询越界（新暴露/网格边缘）时按命中法线补解析下限，避免越界黑死。
             contrib += alb * SimpleSkyLighting(skyColor, sunIrradiance * rcp(max(luminance(sunIrradiance), 1e-4)),
@@ -410,6 +460,13 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 路径负责，与此处无关。
         // contrib += blocklightColor * blockLightmap * VOXEL_GI_BLOCK_STRENGTH * absorption;
     }
-    contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS * saturate(rayLength * 0.2) * absorption;
+    // [2026-10-02 FIX 凭空发光] NOLIGHT 兜底底光必须乘像素自身的天光门控。
+    // 它是"没有任何光源时唯一的非零加法项"，暗场（+自动曝光）会被放大成可见辉光；
+    // 而"穿缝的射线一路走到出界拿到它、旁边射线全命中方块=0"的对比，
+    // 表现就是「两个方块之间的缝自己在发光」（用户实测）。
+    // 门控口径与 DeferredLight 的最小环境光底一致（smoothstep(0.03,0.15,lightmap.y)）：
+    // 有天光的地方保留兜底，真正无光（洞穴/暗室，lightmap≈0）归 0 —— 不再凭空发光。
+    contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS * saturate(rayLength * 0.2)
+             * smoothstep(0.03, 0.15, skyLightmap) * absorption;
     return contrib * weight;
 }

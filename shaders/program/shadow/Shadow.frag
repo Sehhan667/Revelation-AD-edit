@@ -91,8 +91,16 @@ void main() {
             // w 保持 texRes+skylight。反弹端按 ID 区分解包（VoxelUnpack2xU8X）。
             vec2 rgStore;
             float wPack;
+            // [2026-10-02 源头收口] 原实现只 clamp 了 .b（以及 skylight），rgStore 是**原样**
+            // 写进 rgba16f 的（半浮点上限 65504）⇒ 只要采样/顶点色出现非有限值或 >1，
+            // 超大或 NaN 的 albedo 就会进体素缓冲；读取端把它原样乘进 方块光 / 阳光反弹 /
+            // IRC 自反弹 ⇒ **单像素极亮点**（钉在体素格上 → 固定世界位置复现；被降噪放大）。
+            // 这正是 2026-09-30~10-02 反复调倍率都无效的那个亮斑的最终来源。
+            // 反照率按定义就是 0-1 且有界，两端都收口：
+            //   - saturate UV/tint：UV 越界或非有限时 texture() 属 UB（可能返回 NaN）；
+            //   - 结果再查 isnan/isinf（clamp 对 NaN 的行为依赖实现，不能只靠 saturate）→ 归 0。
             if (v_voxelID > 0.5) {
-                vec3 tintedAlbedo = texture(tex, v_midCoord).rgb * vectorDataOut;
+                vec3 tintedAlbedo = texture(tex, saturate(v_midCoord)).rgb * saturate(vectorDataOut);
                 rgStore = tintedAlbedo.rg;
                 wPack = (floor(clamp(tintedAlbedo.b, 0.0, 1.0) * 255.0) * 256.0
                        + floor(clamp(v_skylight, 0.0, 1.0) * 255.0)) / 65535.0;
@@ -101,6 +109,9 @@ void main() {
                 wPack = (floor(clamp(16.0 / 255.0, 0.0, 1.0) * 255.0) * 256.0
                        + floor(clamp(v_skylight, 0.0, 1.0) * 255.0)) / 65535.0;
             }
+            // 透明格存的是图集 UV、固体格存的是反照率 RG，两者都应落在 [0,1]。
+            if (any(isnan(rgStore)) || any(isinf(rgStore))) rgStore = vec2(0.0);
+            rgStore = saturate(rgStore);
             imageStore(voxelData, ivec3(v_voxelCoord), vec4(rgStore, v_voxelID, wPack));
             // 亮度类光数据仍 atomicMax。旧字节序 packUnorm4x8(emissive,sky,block,0)：
             // R=emissive(byte0) G=sky(byte8) B=block(byte16) → block光(uint高位) 压掉发射光(uint低位)

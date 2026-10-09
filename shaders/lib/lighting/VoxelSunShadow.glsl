@@ -147,6 +147,7 @@ float VoxelSunShadowTracing(vec3 voxelPos, vec3 sunDir) {
         // 先步进到下一格（起点格已在上方形状检查中处理，不算遮挡）
         float rayLength = VoxelMin3(totalStep);
         vec3 tracingNext = step(totalStep, vec3(rayLength));
+        vec3 prevVC = voxelCoord;                       // [2026-10-02] 记下步进前的格（供接触格补测）
         voxelCoord += tracingNext * sdir;
         totalStep += tracingNext * abs(rdir);
         if (any(lessThan(voxelCoord, vec3(0.0))) || any(greaterThanEqual(voxelCoord, vec3(float(VOXEL_AREA))))) break;
@@ -162,6 +163,28 @@ float VoxelSunShadowTracing(vec3 voxelPos, vec3 sunDir) {
             float hitLength = rayLength;
             if (IsHitBlock(vray, totalStep, tracingNext, voxelCoord, abs(hvd.z), hitLength, hitNormal)) {
                 return 0.0;
+            }
+        }
+
+        // [2026-10-02 根治"零厚度接触线漏光"] 本步若多轴同时推进（tie），说明光线恰好穿过
+        // 格与格共用的**棱或角**：此时 DDA 只跳到了对角格，中间那几格**从不被采样**。
+        // 若两个方块是斜向贴着的（接触面积 = 0，只剩一条零宽度的棱/一个点），这块"接触处"
+        // 就永远测不到 ⇒ 阳光顺着这条缝漏进室内（用户实测）。
+        // 补测：把本步发生 tie 的每个轴各自回退一格，得到光线真正擦过的那些"侧格"
+        //（2 轴 tie → 2 个侧格；3 轴 tie → 3 个棱格，恰好构成角点周围除对角格以外的全部格），
+        // 其中任一格是**整块固体**即判遮挡 —— 物理上两格在棱/点上确实相接，光不该穿过。
+        // 只测整块（abs(z)<=154）：它们没有子盒，命中语义无歧义；形状块（楼梯/半砖等）
+        // 的子盒在棱接触时不构成封闭，交给 IsHitBlock 主路径，不在此重复判定。
+        if (dot(tracingNext, tracingNext) > 1.0) {
+            for (int a = 0; a < 3; ++a) {
+                if (tracingNext[a] > 0.5) {
+                    vec3 cand = voxelCoord;
+                    cand[a] = prevVC[a];                // 仅回退 a 轴 → 侧格
+                    if (any(lessThan(cand, vec3(0.0))) || any(greaterThanEqual(cand, vec3(float(VOXEL_AREA)))))
+                        continue;
+                    vec4 chvd = texelFetch(voxelDataSampler, ivec3(cand), 0);
+                    if (chvd.z > 0.5 && abs(chvd.z) <= 154.0) return 0.0;
+                }
             }
         }
     }

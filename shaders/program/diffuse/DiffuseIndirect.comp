@@ -144,7 +144,9 @@ vec4 PingReusePrev(ivec2 p) {
 
             ivec3 vc = ivec3(voxelCoord);
             vec4 hvd = texelFetch(voxelDataSampler, vc, 0);
-            if (hvd.z <= 0.5) continue;
+            // [2026-10-02 NaN 防护] `<= 0.5` 对 NaN 为 false → NaN 格被当固体 → 垃圾 albedo
+            // 进光照 → 单像素极亮点（同 VoxelTracing.glsl）。改 `!(hvd.z > 0.5)` 归入空气。
+            if (!(hvd.z > 0.5)) continue;
 
             vec3 lD = unpackUnorm4x8(texelFetch(voxelLightSampler, vc, 0).r).rgb;
             if (lD.z > VOXEL_GI_EMISSIVE_THRESHOLD) {
@@ -168,7 +170,8 @@ vec4 PingReusePrev(ivec2 p) {
             }
             outDist = rayLength;
 
-            vec3 alb = vec3(hvd.r, hvd.g, VoxelUnpack2xU8X(hvd.w));
+            // [2026-10-02 极值防护] saturate（见 VoxelTracing.glsl 同处注释）。
+            vec3 alb = saturate(vec3(hvd.r, hvd.g, VoxelUnpack2xU8X(hvd.w)));
             vec3 v = vec3(0.0);
             float hitSkylight = VoxelUnpack2xU8Y(hvd.w);
 
@@ -819,6 +822,10 @@ void main() {
 				}
 				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_SPP)) * VOXEL_GI_TRACE_STRENGTH, 1.0);
 			#endif
+			// [2026-10-02] 上限从 8.0 提到 32.0：加了 VOXEL_SUN_BOUNCE_GAIN 之后，正常反弹
+			// 也可能到 10 的量级，8.0 会把它截平（表现为"加了增益没变化"）。
+			// 提到 32.0 只放开合法区间，仍然拦住"垃圾值极亮点"（合法 GI 到不了 32）。
+			result.rgb = min(result.rgb, vec3(32.0));
 		#else
 			vec3 worldNormal = FetchSurfaceNormal(renderTexel);
 			float lightmapSky = Unpack2x8UY(loadMaterialPack(renderTexel).x);

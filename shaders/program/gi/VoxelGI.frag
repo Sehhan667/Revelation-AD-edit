@@ -230,10 +230,33 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
                 break;
             }
 
+            // [2026-10-02 补「方块光的零厚度接触线」] 与 VoxelTracing.glsl / VoxelSunShadow.glsl 同款补测：
+            // 本步多轴同时推进（tie）= 光线贴着格与格共用的棱/角过去，DDA 直接跳对角格，
+            // 中间侧格从不被采样。两个方块斜向贴着时接触面积为 0 → 光线沿缝穿过去 → 出界后
+            // 拿到 NOLIGHT/天光兜底 ⇒ 无光源场景里缝「凭空发光」。
+            // 侧格任一是整块固体 → 判遮挡：hitSolid = true（阻止走"出界"路径，不加 NOLIGHT/天光），
+            // contrib 保留已累积部分。注入端与追踪端口径必须一致（本项目血泪教训）。
+            if (dot(tracingNext, tracingNext) > 1.0) {
+                vec3 hprevVC = hvoxel - tracingNext * hsdir;   // 步进前的格
+                for (int a = 0; a < 3; ++a) {
+                    if (tracingNext[a] > 0.5) {
+                        vec3 cand = hvoxel;
+                        cand[a] = hprevVC[a];                  // 仅回退 a 轴 → 侧格
+                        if (any(lessThan(cand, vec3(0.0))) || any(greaterThanEqual(cand, vec3(VOXEL_AREA))))
+                            continue;
+                        float cz = texelFetch(voxelDataSampler, ivec3(cand), 0).z;
+                        if (cz > 0.5 && abs(cz) <= 154.0) { hitSolid = true; break; }
+                    }
+                }
+                if (hitSolid) break;
+            }
+
             ivec3 hc = ivec3(hvoxel);
             vec4 hvd = texelFetch(voxelDataSampler, hc, 0);
             // 判空：voxelID 原值整数（>0 即固体，0=空气/负 ID 透明）
-            if (hvd.z <= 0.5) {
+            // [2026-10-02 NaN 防护] 同 VoxelTracing.glsl：`<= 0.5` 对 NaN 为 false → NaN 格被
+            // 当固体 → 垃圾 albedo 进光照 → 单像素极亮点。改 `!(hvd.z > 0.5)` 归入空气。
+            if (!(hvd.z > 0.5)) {
                 // 透明体素：水/玻璃/树叶单层吸收着色（isTranslucent，只吸收一次；
                 // 植物/传送门纯穿透）。hvd.xy = 图集中心 UV，采样取方块颜色与不透明度。
                 if (traceTranslucent && VoxelIsTranslucentAbsorb(abs(hvd.z))) {
@@ -274,7 +297,8 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // → "又贴了一块黑曜石在旁边"的印子；中心色 = 该体素平均反照率。
             hit = hc;
             // 反弹 albedo：固体格 r/g=染过色中心色 RG、w 高 8 位=染过色 B（草方块 tint 修复）
-            vec3 alb = vec3(hvd.r, hvd.g, VoxelUnpack2xU8X(hvd.w));
+            // [2026-10-02 极值防护] saturate，见 VoxelTracing.glsl 同处注释。
+            vec3 alb = saturate(vec3(hvd.r, hvd.g, VoxelUnpack2xU8X(hvd.w)));
 
             // 方块光兜底（仅非发射光源体素，避免白色方块光盖掉彩色发射色）
             // [FIX 2026-08-06] 薄片/流体光源中心色可能为 0 → 用 min albedo 底（同追踪端）
@@ -372,8 +396,16 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             #endif
             // NOLIGHT 底光（出界路径专有：NOLIGHT_BRIGHTNESS * saturate(rayLength*0.2)；
             // 命中路径无此项，闭塞处底光由自反弹/方块光链路提供）
+            // [2026-10-02 FIX 凭空发光] 同 VoxelTracing.glsl：注入端也要把这条兜底底光乘天空可见度门控。
+            // 否则它会写进 IRC，再经自反弹把"无光源场景凭空冒出的底光"传遍全场。
+            // 门控用**上一帧曝光度**（voxelRadiance.a = 射线真实出界比例，封闭/暗室≈0）——
+            // 体素 vd.w 的 skylight 是写胜残留（封闭空间 0.2~0.5），不可靠（本项目血泪教训）。
+            // [2026-10-06 修编译错误] 这里原写 FetchPrevRadiance(c + cDi).a：该函数返回 **vec3 辐照度**，
+            // 没有 .a 分量 ⇒ 编译器报 C1031（swizzle mask element not present）+ C1068（对 vec3 取第 4 个
+            // 分量=下标越界）。曝光度要用 FetchPrevExposure()（同文件 L107，读的正是 voxelRadiance.a）。
+            float nolightGate = smoothstep(0.03, 0.15, FetchPrevExposure(c + cDi));
             contrib += vec3(0.97, 0.99, 1.18) * VOXEL_NOLIGHT_BRIGHTNESS
-                     * saturate(rayLen * 0.2) * absorption;
+                     * saturate(rayLen * 0.2) * nolightGate * absorption;
             // Phase 1：该样本向上出界即计入曝光度（乘 ircSkyVis 门控，封闭空间不计数）。
             #ifndef GI_ACTIVE_IRC
             if (dir.y > 0.1) exposure += ircSkyVis;

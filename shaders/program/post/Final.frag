@@ -220,16 +220,22 @@ void main() {
         finalOut = LoadChromaticScene(texelPos);
     #endif
 
-    // 启动 logo（矢量绘制 + 逐笔描画 + 淡出）
+    // 启动 logo（[2026-10-08] 整幅淡入 → 保持 → 整幅淡出；不再逐笔描画）
     #ifdef STARTUP_LOGO
-        // 时间轴：主字形 0~48 帧扫出来，文字 34~58 帧接上，
-        // 画完后**停 110 帧**再开始淡出，180 帧结束。
-        // （停顿时长就是这里的 logoFadeStart；原来是 80，按要求多了 0.5 秒 = 30 帧。）
-        const int logoDuration = 180, logoFadeStart = 110;
+        // 时间轴（帧）：0 → LOGO_FADE_IN_FRAMES 淡入，(logoDuration - LOGO_FADE_OUT_FRAMES)
+        // → logoDuration 淡出，中间是保持段。两条常量在 lib/post/StartupLogo.glsl 里（#ifndef 兜底）。
+        // 总时长 180 帧 = 3 秒 @60fps；默认淡入 24 帧、淡出 60 帧 ⇒ 保持 96 帧。
+        const int logoDuration = 180;
         if (frameCounter < logoDuration) {
-            float fade = 1.0 - smoothstep(float(logoFadeStart), float(logoDuration), float(frameCounter));
+            float logoFrame = float(frameCounter);
+            float fadeIn  = LOGO_FADE_IN_FRAMES  > 0.0 ? smoothstep(0.0, LOGO_FADE_IN_FRAMES, logoFrame) : 1.0;
+            float fadeOut = 1.0 - smoothstep(float(logoDuration) - LOGO_FADE_OUT_FRAMES,
+                                             float(logoDuration), logoFrame);
+            float fade = fadeIn * fadeOut;
             vec2 screenUV = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
-            float logoCoverage = StartupLogoMask(screenUV, vec2(viewWidth, viewHeight), float(frameCounter)).x;
+            // 覆盖率：StartupLogoMask 现在返回"完整字形"（描画类动画时长都是 0）——
+            // 时间上的变化全部由上面的 fade 负责，两者相互独立。
+            float logoCoverage = StartupLogoMask(screenUV, vec2(viewWidth, viewHeight), logoFrame).x;
             // 纯白（按需求：与截图里的白色一致）
             finalOut = mix(finalOut, vec3(1.0), logoCoverage * fade);
         }
@@ -320,6 +326,8 @@ void main() {
     #endif
 
     // ========== 全屏受伤故障（支持始终显示） ==========
+    // [2026-10-06 按用户要求] 本段**不做**距离衰减：全屏受击屏闪是镜头/画面级效果，
+    // 保持全屏等幅（近处远处一样），只有实体区域故障（上面那段）按距离衰减。
     #ifdef GLITCH_VISUAL
         // ALWAYS_GLITCH 开启时无视 is_hurt，强制显示故障
         #ifdef ALWAYS_GLITCH
@@ -437,6 +445,21 @@ void main() {
     // 改为逐帧 STBN 时空蓝噪声：帧间图案去相关 → 无固定条纹，同时压 8-bit 量化带。
     // 若静止画面仍有可见量化带，把振幅 rcp255 后乘 1.5~2.0；若嫌时间噪声明显则乘 0.75。
     finalOut += (SampleStbnVec1(texelPos, frameCounter) - 0.5) * rcp255;
+
+    // [2026-10-02 临时诊断] 顶左角 64×64：把**编译期宏值**画成确定颜色。
+    // 放在最后一个 pass ⇒ 不受"天空像素提前返回 / 曝光 / 色调映射 / TAA"影响，颜色是准的。
+    //   纯黑 (0,0,0) = 宏 = 默认 1.0（选项文件里的值没进 shader）
+    //   纯红 (1,0,0) = 宏 ≥ 2 但 < 5
+    //   纯黄 (1,1,0) = 宏 ≥ 5 但 < 24
+    //   纯白 (1,1,1) = 宏 ≥ 24（即 txt 里的 32 已生效）
+    //   紫 (1,0,1) 等其它组合按三个 step 叠加理解（R:≥2 G:≥5 B:≥24）
+    #ifdef DEBUG_SUNBOUNCE_VIS
+        if (all(lessThan(gl_FragCoord.xy, vec2(64.0)))) {
+            finalOut = vec3(step(1.5, VOXEL_TRACE_SUN_STRENGTH),
+                            step(4.0, VOXEL_TRACE_SUN_STRENGTH),
+                            step(16.0, VOXEL_TRACE_SUN_STRENGTH));
+        }
+    #endif
 
     // [2026-10-06 调试] 撕裂距离衰减读数（GUI「调试」页可开，源码里也能取消注释）。
     //   R = 视距/64 m（越红越远）  G = 撕裂位移系数（亮=满幅、黑=完全不撕）  B = 材质标志位（实体+0.5 / 受伤+0.5）

@@ -148,11 +148,11 @@ float VoxelUnpack2xU8X(float packedValue) {
     return floor(scaled / 256.0) / 255.0;
 }
 
-// 光线对光源球（球心=格中心，半径 VOXEL_GI_LIGHT_RADIUS，默认 1.0）的命中强度（
+// 光线对光源球（球心=格中心，半径 VOXEL_GI_LIGHT_RADIUS，默认 0.5 = 格内切球）的命中强度（
 // SphereIntersectionLength）：光线穿过球心 → 1.0；擦边 → 平滑衰减到 0（余弦平滑，
 // 无 0/1 命中跳变——"贴着光源方块表面移动闪烁"根因：旧实现 DDA 命中发射体素 = 0/1
 // 全强度开关）。弦长按半径归一化 → 0~1 与 的 r=0.5 弦长同尺度。
-// 半径放大（VOXEL_GI_LIGHT_RADIUS=1.0，2026-08-04）：提高命中率 → 平均贡献提高
+// 半径历史（VOXEL_GI_LIGHT_RADIUS，2026-08-04 曾抬到 1.0）：提高命中率 → 平均贡献提高
 //（修"走亮停灭"：TAA/IRC 收敛后火把近场平均亮度太低），相对噪声 sqrt((1-p)/p) 下降。
 // rayOri = 光线起点（体素空间连续坐标）、rayDir = 单位方向、voxelCoord = 光源格坐标。
 float VoxelSphereHit(vec3 rayOri, vec3 rayDir, vec3 voxelCoord) {

@@ -41,10 +41,17 @@ vec4 FetchVoxelRadiance(ivec3 c) {
 }
 
 
-vec3 FetchVoxelRadianceTrilinear(ivec3 c) {
-    vec3 f = vec3(c) + 0.5;
-    ivec3 i = ivec3(floor(f));
-    vec3 t = f - vec3(i);
+// 真·三线性读取：入参是**连续**的体素空间位置（整数 = 格边界、+0.5 = 格心）。
+// [2026-10-02 修 bug] 旧签名收 ivec3 整数格坐标：f = c + 0.5 → i = c → t 恒为 0.5，
+// 插值根本插不起来 —— 实际是「命中格 + 其 +X/+Y/+Z 八分体」共 8 格等权平均：
+//   等效半格偏移（方向还不对称）+ 2 格模糊，命中格自己的辐射被稀释成 1/8。
+// 后果：方块光沿格边界/一格薄墙渗出来（自反弹是它唯一调用点，无光源场景里这条就是
+// 唯一的方块光链路），光照中心整体偏向 +XYZ。改法：先减 0.5 对齐纹素中心再插值，
+// t 随位置连续变化；格心处 t = 0 → 命中格权重 1（不再稀释），平滑只发生在 ±半格内。
+vec3 FetchVoxelRadianceTrilinear(vec3 pos) {
+    vec3 q = pos - 0.5;                 // texel c 的中心在纹理坐标 c + 0.5，减 0.5 后整数即纹素中心
+    ivec3 i = ivec3(floor(q));
+    vec3 t = q - vec3(i);
     vec3 acc = vec3(0.0);
     for (int k = 0; k < 8; ++k) {
         ivec3 off = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);

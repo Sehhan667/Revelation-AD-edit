@@ -222,6 +222,70 @@ Projection → DistortShadowSpace → 体素平铺 Shift → shadowtex1 硬件�
 
 ## 启动 Logo：改成矢量绘制 + 逐笔描画（2026-09-11）
 
+### [2026-10-08] 启动 logo 改成"整幅淡入 → 保持 → 整幅淡出"（不再逐笔描画）
+
+按要求把启动 logo 换成简单的淡入淡出。做法是**不删描画代码、只把它的时长置 0** ——
+这样一行就能改回旧观感，`rdc_analysis/make_logo_gameview.js` 的逐帧预览也依然有效：
+
+| 常量（`shaders/lib/post/StartupLogo.glsl`） | 现在 | 旧值 | 含义 |
+|---|---|---|---|
+| `LOGO_MARK_DRAW_FRAMES` | **0.0** | 48.0 | 0 ⇒ `markProgress = 1.0`，`RenderStartupMark` 里 `sweep = mix(-0.02, vMax+0.02, progress)` 直接落到最远端之外 ⇒ 整幅字形一次出现 |
+| `LOGO_AD_FADE_FRAMES` | **0.0** | 30.0 | 0 ⇒ 文字不单独淡入，与主字形同相 |
+| `LOGO_FADE_IN_FRAMES` | **24.0** | — | 新增：整体淡入时长（0.4s @60fps），`smoothstep(0, 24, frame)` |
+| `LOGO_FADE_OUT_FRAMES` | **60.0** | — | 新增：整体淡出时长（1.0s @60fps） |
+
+时间轴（`program/post/Final.frag`，`logoDuration = 180` 帧 = 3s 不变）：
+淡出起点 = `logoDuration - LOGO_FADE_OUT_FRAMES` = 120 ⇒ 淡入 0–24、保持 24–120、淡出 120–180；
+`fade = fadeIn * fadeOut`，覆盖率由 `StartupLogoMask` 给"完整字形"。
+**时间轴与形状因此彻底解耦**：调速只碰上面两条 FADE 常量，改形状只碰几何/顶点表。
+
+想恢复逐笔描画：`LOGO_MARK_DRAW_FRAMES` 设回 `48.0`、`LOGO_AD_FADE_FRAMES` 设回 `30.0`，
+并把两条 FADE 常量调到贴合旧时间轴（旧淡出起点是 110）。
+
+### [2026-10-08] 移除 "AD Edit" 字母；顺带查清"字底缺一点"的成因
+
+按要求启动 logo 只保留主字形（ZV 标志）。
+
+- **开关**：`LOGO_SHOW_TEXT`（默认 `0`）。文字整段（含 `adOpacity` 的计算与 `cov = max(..., RenderStartupText(...))`）
+  都在 `#if LOGO_SHOW_TEXT` 里，置 1 即调回来；字形表 `AD_STROKES` / `RenderStartupText` 保留未删。
+- **总高跟着变**：`contentH` 在文字关闭时就是 `LOGO_BOX_H`（只有主字形，居中按它算），
+  开启时是 `LOGO_BOX_H + LOGO_AD_GAP + LOGO_AD_INK_H * LOGO_AD_H`。
+
+**"AD Edit 底部缺了一点"的成因（已查清，两处叠加）**：
+
+1. 字形墨迹**越过基线 16.7%**：`AD_STROKES` 里 y 值域是 `[-0.0556, 1.1667]`，而字形空间约定是
+   `y=0 大写顶、y=1 基线` ⇒ 圆角底部落在 `1.1667 * LOGO_AD_H`。原 `contentH` 只算到基线
+   （`H + GAP + AD_H`），所以这部分从一开始就落在设计框外、不被计入居中，也很容易被裁。
+2. 上一条性能优化里我加的包围盒余量只有 **3 屏幕像素**，又把它多切掉几像素（这笔是我的锅）。
+
+修法：新增 `LOGO_AD_INK_H = 1.1667`（从字形表实测），总高与文字的横带早退边界都按它算
+—— 以后把文字调回来不会被裁。
+
+### [2026-10-08] 性能修复：logo 显示期间帧率骤降
+
+现象：logo 在屏的这 3 秒里帧率明显下降（GTX 1050 @1080p）。根因是**逐像素成本**，
+和淡入淡出无关（旧的逐笔描画同样贵）：
+
+- `RenderStartupText`：每像素 **7 字形 × `AD_GLYPH_SLOTS`(16) = 112 次**线段距离场，
+  **每次还带一个 `fwidth(d)`** —— 在带 `continue` 的内层循环里求导，既慢又是规范上的未定义行为；
+- `RenderStartupMark`：再加 28 次多边形边距离 + 1 次 `fwidth`；
+- 全部在 `program/post/Final.frag` 里**全屏每像素**执行、持续 `logoDuration` = 180 帧
+  ⇒ 2.07M px × ≈3700 ops ≈ **每帧 ~7×10⁹ 次运算**。
+
+改法（三处，视觉目标不变：边缘仍是"一个屏幕像素"的抗锯齿过渡）：
+
+| 改动 | 效果 |
+|---|---|
+| 整幅内容包围盒早退（`padU` = 3 个屏幕像素） | 1080p 下只算中间约 504×320 px（全屏 ~7.8%）⇒ 省掉 ~92% 像素的全部计算 |
+| 抗锯齿宽度改解析值 `0.5 / pxPerUnit`（标记与文字各一处），**删掉全部 `fwidth`** | 每像素 113 次导数 → 0；早退也因此才安全（否则 quad 内其它 lane 的导数未定义，盒子边缘会渗一圈半亮细线） |
+| 文字加"横带早退 + 逐字形横向早退" | 文字部分由 112 次/像素降到约 16 次/像素（只有该字形覆盖到的像素才算） |
+
+顺带做的等价化：标记的距离从"各向异性归一化空间"改到**源像素各向同性空间**
+（顶点表本来就是"源像素 ÷(W,H) − 0.5"来的，乘回去即可）—— 形状逐点等价，
+但距离变成真正的欧氏距离，AA 半宽才能解析算出来。
+
+形状/AA 仍可用 `node rdc_analysis/make_logo_gameview.js --frame=N` 逐帧校验。
+
 原来的做法是在 `program/post/Final.frag` 里采样 `shaders/texture/logo.png`（128×128、一共 3 种
 颜色）再放大贴到屏幕上 —— 等于把位图硬拉大，边缘全是方块。
 现在整段换成**解析式矢量绘制**：`shaders/lib/post/StartupLogo.glsl`，

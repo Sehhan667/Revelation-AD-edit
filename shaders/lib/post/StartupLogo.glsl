@@ -50,19 +50,44 @@
     #define LOGO_FLIP_Y 1
 #endif
 
-// 逐笔绘制节奏（帧）
-// 主字形用 48 帧扫完（约 0.8 秒 @60fps）—— 再长的话开头会有明显的一段空屏。
+// [2026-10-08 改成"简单的淡入淡出"] 启动 logo 现在整幅（主字形 + 文字）一起淡入、保持、一起淡出，
+// 不再逐笔描画。做法是把下面两个"描画类"动画的时长置 0：
+//   - LOGO_MARK_DRAW_FRAMES = 0 ⇒ markProgress = 1.0 ⇒ StartupLogoMask 直接返回完整覆盖率
+//     （RenderStartupMark 的 sweep 是 mix(-0.02, vMax+0.02, progress)，progress=1 时扫掠线
+//      已在最远端之外，等于整幅都画好了）；
+//   - LOGO_AD_FADE_FRAMES = 0 ⇒ 文字不单独淡入（与主字形同相）。
+// 时间轴改由 Final.frag 的两条淡入淡出常量控制（LOGO_FADE_IN_FRAMES / LOGO_FADE_OUT_FRAMES）。
+// 想把逐笔描画调回来：LOGO_MARK_DRAW_FRAMES 设回 48.0、LOGO_AD_FADE_FRAMES 设回 30.0 即可
+// （配 rdc_analysis/make_logo_gameview.js --frame=N 预览）。
 #ifndef LOGO_MARK_DRAW_FRAMES
-    #define LOGO_MARK_DRAW_FRAMES 48.0
+    #define LOGO_MARK_DRAW_FRAMES 0.0     // 0 = 不做逐笔描画（整幅一起淡入）；48 = 旧行为
 #endif
-// 文字在主字形画到约 3/4 时接上
-// 文字：和主字形**同时**开始，整行一起淡入（不再逐段描画、也不等主字形）
 #ifndef LOGO_AD_START_FRAME
     #define LOGO_AD_START_FRAME 0.0
 #endif
-// 淡入时长（帧）。30 帧 ≈ 0.5 秒 @60fps
 #ifndef LOGO_AD_FADE_FRAMES
-    #define LOGO_AD_FADE_FRAMES 30.0
+    #define LOGO_AD_FADE_FRAMES 0.0       // 0 = 文字不单独淡入（整幅一起）；30 = 旧行为
+#endif
+
+// [2026-10-08 按需求移除字母] 启动 logo 只保留主字形（ZV 标志），不再绘制底下的 "AD Edit"。
+// 置 1 即调回来：字形表 AD_STROKES 与 RenderStartupText 都还在，只是默认不参与绘制。
+#ifndef LOGO_SHOW_TEXT
+    #define LOGO_SHOW_TEXT 0
+#endif
+
+// 字形墨迹的真实下边界（单位 = LOGO_AD_H 的倍数）：AD_STROKES 里最大 y = 1.1667，
+// 即圆角底部**越过基线 16.7%**（字形空间约定 y=0 大写顶、y=1 基线）。
+// 总高与包围盒必须按它算，否则字底会被裁 —— 2026-10-08 用户实测"AD Edit 底部缺了一点"
+// 就是这个（当时 contentH 只算到基线），叠加之后包围盒余量只有 3px 又切掉几像素。
+#define LOGO_AD_INK_H 1.1667
+
+// 整体淡入 / 淡出时长（帧）。总时长与"开始淡出的帧"在 Final.frag 里（logoDuration=180）：
+// 淡出起点 = logoDuration - LOGO_FADE_OUT_FRAMES，所以两者之和必须小于 180 才有"保持"段。
+#ifndef LOGO_FADE_IN_FRAMES
+    #define LOGO_FADE_IN_FRAMES 24.0      // 淡入 0.4s @60fps
+#endif
+#ifndef LOGO_FADE_OUT_FRAMES
+    #define LOGO_FADE_OUT_FRAMES 60.0     // 淡出 1.0s @60fps
 #endif
 
 // 绘制速度曲线：先快后慢。
@@ -335,27 +360,34 @@ void RWPolyEdge(in vec2 q, in vec2 a, in vec2 b, inout float minSq, inout bool i
 // 形状 = 两个多边形的**并集**。并集的有符号距离：
 //   - 到边界的最短欧氏距离取所有边的 min；
 //   - 内部判定取所有多边形的异或（两个多边形不相交，等价于并集）。
-// 边缘靠 fwidth 抗锯齿。
-float RenderStartupMark(in vec2 p, in float progress) {
-    // 设计框内坐标 -> 归一化居中坐标
-    vec2 q = vec2(p.x / LOGO_BOX_W - 0.5, p.y / LOGO_BOX_H - 0.5);
+//
+// [2026-10-08 性能] 距离改在**源像素的各向同性空间**里算，抗锯齿宽度改解析值：
+//   · 顶点表 LOGO_POLY* 本来就是"源像素轮廓 ÷(W,H) − 0.5"归一化来的，这里乘回去
+//     ((v + 0.5) * (W,H)) 就精确还原轮廓 —— 形状逐点等价，但距离变回真正的欧氏距离；
+//   · 于是 AA 半宽可以直接算：半个屏幕像素 = 0.5 / pxPerUnit（源像素单位）。
+//   原实现是 `fwidth(signedD * LOGO_BOX_H) * 0.5`：每像素一次导数，而且**会挡住包围盒早退**
+//   —— 早退后 quad 内其它 lane 没执行，导数未定义，盒子边缘会渗出半亮细线。
+//   去掉 fwidth 之后整套 logo 计算与屏幕导数无关，早退/跳格才是安全的。
+float RenderStartupMark(in vec2 p, in float progress, in float pxPerUnit) {
+    vec2 scale = vec2(LOGO_BOX_W, LOGO_BOX_H);
 
     float minSq = 1e9;
     bool inside = false;
 
     for (int i = 0; i < LOGO_POLY0_COUNT; i++) {
-        RWPolyEdge(q, LOGO_POLY0[i], LOGO_POLY0[(i + 1) % LOGO_POLY0_COUNT], minSq, inside);
+        RWPolyEdge(p, (LOGO_POLY0[i] + 0.5) * scale,
+                      (LOGO_POLY0[(i + 1) % LOGO_POLY0_COUNT] + 0.5) * scale, minSq, inside);
     }
     for (int i = 0; i < LOGO_POLY1_COUNT; i++) {
-        RWPolyEdge(q, LOGO_POLY1[i], LOGO_POLY1[(i + 1) % LOGO_POLY1_COUNT], minSq, inside);
+        RWPolyEdge(p, (LOGO_POLY1[i] + 0.5) * scale,
+                      (LOGO_POLY1[(i + 1) % LOGO_POLY1_COUNT] + 0.5) * scale, minSq, inside);
     }
 
     float d = sqrt(minSq);
     float signedD = inside ? -d : d;
 
-    // 归一化坐标里 1 单位 = 设计框高；换回"源像素"尺度做抗锯齿
-    float aa = fwidth(signedD * LOGO_BOX_H) * 0.5 + 1e-6;
-    float cov = 1.0 - smoothstep(-aa, aa, signedD * LOGO_BOX_H);
+    float aa = 0.5 / pxPerUnit + 1e-6;      // 半个屏幕像素，源像素单位
+    float cov = 1.0 - smoothstep(-aa, aa, signedD);
 
     // ---- 绘制动画：沿斜向（v = x + y）自上而下把字形扫出来 ----
     // 用斜向而不是竖直，是为了贴合标志本身的剪切方向（每个笔画的起笔都在左上）。
@@ -382,12 +414,17 @@ float RenderStartupMark(in vec2 p, in float progress) {
 //
 // 这里**不**做逐段描画：整行同时淡入，由调用方传 opacity。
 // （之前是每个字形、每段按序号依次长出来，和主字形的扫掠叠在一起显得很碎。）
-float RenderStartupText(in vec2 p, in float opacity) {
+float RenderStartupText(in vec2 p, in float opacity, in float pxPerUnit) {
     if (opacity <= 0.0) return 0.0;
 
     // 笔画半宽直接由 LOGO_AD_STROKE 决定（源像素），不用"字号的比例"——
     // 那样一改字号粗细就跟着变，容易和主字形的笔画对不上。
     const float halfPx = LOGO_AD_STROKE * 0.5;
+    // [2026-10-08 性能] AA 半宽解析值 = 半个屏幕像素（源像素单位）。
+    // 原实现 `fwidth(d) * 0.5` 是在**内层循环里、还带着 continue** 求导：每像素 112 次导数，
+    // 既慢又是规范上的未定义行为。d 本来就以源像素为单位，所以直接算即可（缩放均匀，两者等价）。
+    float aaT = 0.5 / pxPerUnit + 1e-6;
+    float padT = halfPx + 2.0 / pxPerUnit;    // 早退余量：笔画半宽 + 2 个屏幕像素
 
     // 先按各格字距算出总宽，用来做整体居中
     float totalAdvance = 0.0;
@@ -397,10 +434,19 @@ float RenderStartupText(in vec2 p, in float opacity) {
     float penX = LOGO_BOX_W * 0.5 - totalW * 0.5;
     float y0 = LOGO_BOX_H + LOGO_AD_GAP;
 
+    // [2026-10-08 性能] 这一行字只占一条横带；带外像素（也就是主字形那一大片）直接返回。
+    // 下边界用 LOGO_AD_INK_H 而不是 1.0：圆角底部越过基线 16.7%，按 1.0 会把它切掉。
+    // 去掉 fwidth 之后这里的 return 不再牵涉导数，安全。
+    if (p.y < y0 - padT || p.y > y0 + LOGO_AD_INK_H * LOGO_AD_H + padT) return 0.0;
+
     float cov = 0.0;
     for (int g = 0; g < AD_GLYPH_COUNT; g++) {
         vec2 origin = vec2(penX, y0);
-        penX += AD_ADVANCE[g] * LOGO_AD_H;
+        float gw = AD_ADVANCE[g] * LOGO_AD_H;
+        // [2026-10-08 性能] 逐字形横向早退：本像素不在该格的 x 区间（含余量）内就整格跳过
+        bool gHit = (p.x >= penX - padT) && (p.x <= penX + gw + padT);
+        penX += gw;
+        if (!gHit) continue;
 
         for (int s = 0; s < AD_GLYPH_SLOTS; s++) {
             vec4 st = AD_STROKES[g * AD_GLYPH_SLOTS + s];
@@ -411,7 +457,7 @@ float RenderStartupText(in vec2 p, in float opacity) {
             vec2 pb = origin + b * LOGO_AD_H;
 
             float d = RWSegDist(p, pa, pb);
-            cov = max(cov, RWCoverage(d, halfPx, fwidth(d) * 0.5 + 1e-6));
+            cov = max(cov, RWCoverage(d, halfPx, aaT));
         }
     }
     return cov * opacity;
@@ -426,8 +472,12 @@ vec2 StartupLogoMask(in vec2 screenUV, in vec2 viewSize, in float frame) {
     // 每源像素对应多少屏幕像素（主字形与文字共用同一个缩放，保证相对大小不变）
     float pxPerUnit = LOGO_HEIGHT * viewSize.y / LOGO_BOX_H;
 
-    // 完整内容 = 主字形 + 间距 + 一行字，按这个总高做居中
-    float contentH = LOGO_BOX_H + LOGO_AD_GAP + LOGO_AD_H;
+    // 完整内容：主字形 + 间距 + 一行字（含基线以下 16.7% 的圆角墨迹，见 LOGO_AD_INK_H）
+    #if LOGO_SHOW_TEXT
+        float contentH = LOGO_BOX_H + LOGO_AD_GAP + LOGO_AD_INK_H * LOGO_AD_H;
+    #else
+        float contentH = LOGO_BOX_H;      // 只剩主字形：设计框高就是总高（居中也跟着变）
+    #endif
     vec2 boxSize = vec2(LOGO_BOX_W, contentH) * pxPerUnit;
     vec2 boxOrigin = (viewSize - boxSize) * 0.5;
     boxOrigin.y += LOGO_OFFSET_Y * viewSize.y;
@@ -440,14 +490,28 @@ vec2 StartupLogoMask(in vec2 screenUV, in vec2 viewSize, in float frame) {
         p.y = contentH - p.y;
     #endif
 
+    // [2026-10-08 性能·主要优化] 整幅内容（主字形 + 间隔 + 一行字）只占屏幕中间一小块：
+    // 1080p 下约 504×320 px ≈ 全屏的 7.8%。这里直接返回 ⇒ 省掉 ~92% 像素的
+    // （28 次多边形边 + 最多 112 次线段距离）计算（用户实测：logo 在屏上时帧率骤降）。
+    // 余量取 3 个屏幕像素：真正的抗锯齿过渡只有半个像素，且主字形设计框就是它的紧包围盒，
+    // 余量必须盖住 AA 才能保证盒子边缘不会切到过渡（否则会出现一圈细线）。
+    float padU = 3.0 / pxPerUnit;
+    if (p.x < -padU || p.x > LOGO_BOX_W + padU || p.y < -padU || p.y > contentH + padU)
+        return vec2(0.0, 1.0);
+
     // ---- 绘制进度 ----
     // 主字形：线性时间 -> 缓动后的"画到哪"（先快后慢，见 RWDrawEase）
     float markProgress = LOGO_MARK_DRAW_FRAMES > 0.0 ? RWDrawEase(frame / LOGO_MARK_DRAW_FRAMES) : 1.0;
     // 文字：整体淡入，和主字形同时开始（LOGO_AD_START_FRAME 默认 0）
-    float adOpacity = LOGO_AD_FADE_FRAMES > 0.0 ? saturate((frame - LOGO_AD_START_FRAME) / LOGO_AD_FADE_FRAMES) : 1.0;
+    // [2026-10-08] LOGO_SHOW_TEXT = 0 时整段文字（含这条计算）都不参与
+    #if LOGO_SHOW_TEXT
+        float adOpacity = LOGO_AD_FADE_FRAMES > 0.0 ? saturate((frame - LOGO_AD_START_FRAME) / LOGO_AD_FADE_FRAMES) : 1.0;
+    #endif
 
-    float cov = RenderStartupMark(p, markProgress);
-    cov = max(cov, RenderStartupText(p, adOpacity));
+    float cov = RenderStartupMark(p, markProgress, pxPerUnit);
+    #if LOGO_SHOW_TEXT
+        cov = max(cov, RenderStartupText(p, adOpacity, pxPerUnit));
+    #endif
     return vec2(cov, 1.0);
 }
 
