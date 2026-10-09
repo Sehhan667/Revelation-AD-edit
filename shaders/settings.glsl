@@ -353,7 +353,6 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// Fresnel 叠加到已着色漫反射上（金属那条 mix 路径不变）。默认关 = 与原行为逐位一致。
 	// 代价：符合条件的像素会真的跑一趟 SSR（覆盖率见反射页阈值）；GTX 1050 上建议同时降
 	// SSRT_MAX_SAMPLES（本机当前 32）。
-	//#define OPAQUE_SPECULAR
 	#define ROUGH_REFLECTIONS_THRESHOLD 0.005 // Threshold for rough reflections. [0.0001 0.0002 0.0005 0.0007 0.001 0.002 0.005 0.007 0.01 0.02 0.05 0.07 0.1 0.2 0.5]
 
 	#define REFLECTION_FILTER // Enables reflection filter

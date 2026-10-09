@@ -462,19 +462,9 @@ option.SSRT_SKY_TRACING=Raytrace Sky
 option.SPECULAR_IMPORTANCE_SAMPLING_BIAS=Importance Sampling Bias
 
 option.ROUGH_REFLECTIONS=Rough Reflections
-option.OPAQUE_SPECULAR=Opaque Object Reflections
-option.OPAQUE_SPECULAR.comment=Let opaque objects receive screen-space reflections too. Eligibility uses this page's Reflection Mode / Metalness Threshold / Roughness Threshold (default: metals + very smooth dielectrics such as ice, polished stone, wet ground). Off = only metalness >= 0.5 reflects. Those pixels will actually be traced, so lower Raytrace Samples if FPS drops
 option.ROUGH_REFLECTIONS_THRESHOLD=Rough Reflections Threshold
 option.ROUGH_REFLECTIONS_ON_METAL=Rough Blur On Metals
 option.ROUGH_REFLECTIONS_ON_METAL.comment=Also apply the rough-reflection blur to metal surfaces (the old name ROUGH_REFLECTION_ON_METAL did not match the code/config, so this toggle was dead until 2026-10-08)
-option.ROUGH_REFLECTION_SHEEN=Rough Reflection Env Sheen
-option.ROUGH_REFLECTION_SHEEN.comment=Blend factor = roughness x this value: mixes the screen-space blurred result with a low-order environment sheen. Higher = one uniform patch of sheen (at 2.0, roughness >= 0.5 is almost fully blurred); 0 = screen-space blur only. The environment contributes shape/chroma only - **brightness still follows the real reflection** (ratio-corrected), so surfaces that reflect something dark will not get brighter; indoors it is gated by skylight
-option.ROUGH_REFLECTION_DIM=Rough Reflection Dimming
-option.ROUGH_REFLECTION_DIM.comment=Reflection brightness *= (1 - roughness)^this value. 1.0 = original behaviour; higher = rougher surfaces are dimmer (applies to both metals and dielectrics). Use it to make rough reflections clearly dimmer than normal (sharp) reflections - a rough surface should keep only a hint of sheen instead of a blurry glare
-option.ROUGH_REFLECTION_DIR_SAMPLES=Rough Reflection Lobe Samples
-option.ROUGH_REFLECTION_DIR_SAMPLES.comment=Rays traced per pixel inside the GGX lobe, then averaged (1 = off, keeps the old single-mirror-ray + screen-space blur). Only values > 1 can actually erase the OUTLINE of reflected objects: a single mirror ray jumps to a different hit point across an object silhouette, so screen-space blurring flattens the interior while the outline survives. Costs N traces per rough pixel; pair with Importance Sampling Bias (0 = wider lobe) to tune the amount of blur
-option.ROUGH_REFLECTION_PULL=Rough Reflection Blur Recentring
-option.ROUGH_REFLECTION_PULL.comment=How far the blur centre is pulled from the ray HIT point towards this pixel's OWN position: 0 = old behaviour (centred on the hit point - the outline of reflected objects survives); 1 = pure local neighbourhood average (outline gone, brightness and hue come from the real scene, and it costs NO extra tracing); in-between values continuously control how soft the outline is. This is the lightweight route: 1 trace + N texture taps
 option.REFLECTION_FILTER=Reflection Filter
 
 option.RAYTRACED_REFRACTION=Raytraced Refraction
