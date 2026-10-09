@@ -124,6 +124,12 @@ writeonly uniform uimage2D colorimg7;
     // 相比全分辨率源缓冲省掉 15.2 MB -> 3.8 MB 的写入带宽。
     layout (rgba16f) writeonly uniform image2D colorimg18;
 #endif
+
+// [2026-10-08 回退 S2] 反射信号不再写出：反光面空间的 pass 模糊方案在本机 Iris 上始终读不到结果
+// （片元 pass 的 imageStore 半分辨率写、全分辨率 MRT、pass 门控三条路都试过）。粗糙反射已回到
+// "单射线 + 源空间模糊"（lib/surface/Reflection.glsl 的 ROUGH_REFLECTION_PULL 路径）。
+// 相关缓冲（colortex11/21/22）、采样器与 program/specular/ReflectionBlur.comp 保留但**已停用**。
+
 uniform sampler2D cloudOriginTex;
 
 #include "/lib/universal/Uniform.glsl"
@@ -941,7 +947,27 @@ void main() {
     // Final composition
         // ====== 反射获取 ======
     vec4 reflection = vec4(0.0, 0.0, 0.0, FP16_MAX);
-    bool isReflective = (material.metalness >= 0.5 || materialID == 10050u);
+    // [2026-10-08] 反射资格判定。
+    //  原行为（OPAQUE_SPECULAR 关）：硬编码 metalness >= 0.5 或自定义反射 ID 10050 才追踪 —— 门槛在
+    //  **调用点**，所以 Reflection.glsl 内那些 GUI 判定选项（METAL_REFLECT_MODE / METALNESS_THRESHOLD /
+    //  ROUGHNESS_THRESHOLD）对不透明像素实际不可达（能进来的像素必然满足它们 = 选项形同虚设）。
+    //  开启后：改用这些选项判定 ⇒ 非透明金属 + **极光滑电介质**（冰面/抛光石/湿地面）也能拿到反射。
+    #ifdef OPAQUE_SPECULAR
+        #if METAL_REFLECT_MODE == 0
+            bool isReflective = (material.metalness >= METALNESS_THRESHOLD);
+        #elif METAL_REFLECT_MODE == 1
+            bool isReflective = (material.roughness <= ROUGHNESS_THRESHOLD);
+        #else
+            bool isReflective = (material.metalness >= METALNESS_THRESHOLD || material.roughness <= ROUGHNESS_THRESHOLD);
+        #endif
+        #ifdef ROUGH_REFLECTIONS
+            // 非金属但落在粗糙反射区间（ROUGHNESS_THRESHOLD, ROUGH_REFLECTIONS_MAX]
+            isReflective = isReflective || (material.roughness > ROUGHNESS_THRESHOLD && material.roughness <= ROUGH_REFLECTIONS_MAX);
+        #endif
+        isReflective = isReflective || (materialID == 10050u);
+    #else
+        bool isReflective = (material.metalness >= 0.5 || materialID == 10050u);
+    #endif
     bool reflectHit = false;
     if (isReflective) {
         reflection = CalculateSpecularReflections(material, materialID, worldNormal, screenPos, worldDir, viewPos, lightmap.y, dither);
@@ -950,9 +976,17 @@ void main() {
 
     // ====== 最终合成 ======
     if (reflectHit) {
-        // 反射命中：反射与金属自身纹理混合，避免反射完全屏蔽纹理
-        // sceneOut 已包含环境光/发光等累积，乘 albedo 即为带光照的纹理底色
-        sceneOut = mix(sceneOut * albedo, reflection.rgb, REFLECTION_METAL_MIX);
+        // 金属：反射与自身纹理混合（原路径，避免反射完全屏蔽纹理）；
+        // sceneOut 已包含环境光/发光等累积，乘 albedo 即为带光照的纹理底色。
+        // 电介质（OPAQUE_SPECULAR 新增的资格，如冰面/抛光石/湿地面）：反射 rgb 里已含
+        // clampedFresnel(≤0.5) 权重，展开 mix(sceneOut*albedo, 反射色, F) = sceneOut*albedo*(1-F)
+        // + reflection.rgb；并补回直射高光 specularDirect —— 否则光亮的湿面一命中反射就丢掉太阳高光。
+        if (material.metalness >= 0.5 || materialID == 10050u) {
+            sceneOut = mix(sceneOut * albedo, reflection.rgb, REFLECTION_METAL_MIX);
+        } else {
+            float Fd = min(FresnelDielectricN(abs(dot(worldNormal, worldDir)), 1.5), 0.5);
+            sceneOut = sceneOut * albedo * (1.0 - Fd) + reflection.rgb + specularDirect;
+        }
     } else {
         // 反射未命中或非反射块：标准光照
         // 若为金属但无反射，当作非金属着色，使其获得正常漫反射亮度
@@ -999,7 +1033,11 @@ void main() {
                         // 光追降噪关闭：直接读 colortex3 半分辨率棋盘信号（未降噪）
                         voxelGI = YCoCgToRGB(texelFetch(colortex3, texelPos >> 1, 0).rgb);
                     #endif
-                    voxelGI *= albedo * VOXEL_GI_TRACE_STRENGTH;
+                    // [2026-09-30 去重复乘] 这里原本是 `voxelGI *= albedo * VOXEL_GI_TRACE_STRENGTH`，
+                    // 但信号在 DiffuseIndirect.comp 写出时已经乘过一次（result = traceAcc * rcp(SPP)
+                    // * VOXEL_GI_TRACE_STRENGTH）→ GUI 滑条实际是平方（1.0 时看不出来，一调就是 ×N²）。
+                    // 只保留 albedo 转换（信号是入射光，上屏要乘当前像素反照率）。
+                    voxelGI *= albedo;
                 #endif
                 #ifdef DEBUG_VOXEL_GI
                     // [2026-08-19] 调试：按像素所在体素直读 voxelID，定位"目标方块有没有进体素 + ID 对不对 + 在不在正确格"。
@@ -1034,6 +1072,16 @@ void main() {
                     }
                 #else
                     sceneOut += voxelGI;
+                    #ifdef DEBUG_SUNBOUNCE_VIS
+                    // [2026-10-02] 角落读数已挪到 /program/post/Final.frag（最后一 pass）——
+                    // 画在这里会被"天空像素提前返回 / 曝光 / 色调映射"搅得忽深忽浅、颜色不准。
+                    // 此处保留占位，避免与 Final 重复绘制。
+                    #if defined DEBUG_SUNBOUNCE_FACTORS
+                    if (gl_FragCoord.y < 64.0) {
+                        sceneOut = vec3(max(max(voxelGI.r, voxelGI.g), voxelGI.b)) * 4.0;
+                    }
+                    #endif
+                    #endif
                     #ifdef DEBUG_VOXEL_SKY
                     // [2026-08-17] 左上角 64×64 灰阶读数：本像素 voxelGI 亮度（×4 放大，8 级量化）
                     if (all(lessThan(gl_FragCoord.xy, vec2(64.0)))) {
@@ -1091,6 +1139,21 @@ void main() {
     if (((texelPos.x & 1) == 0) && ((texelPos.y & 1) == 0)) {
         imageStore(colorimg18, texelPos >> 1, sssSourceOut);
     }
+#endif
+
+// [2026-10-08 回退 S2] 反射信号不再写出：反光面空间的 pass 模糊方案在用户的 Iris 上始终读不到结果
+// （片元 pass 的 imageStore、MRT、pass 门控三条路都试过）。粗糙反射回到"单射线 + 源空间模糊"，
+// 见 lib/surface/Reflection.glsl；相关缓冲/采样器/pass 代码保留但已停用（见 MEMO 记录）。
+
+// ===== 临时诊断（2026-10-08，用完删除本段 + Reflection.glsl 里的 SSR_DEBUG_SOURCE_MAP）=====
+// Reflection.glsl 已把反射颜色替换成"来源热图"，这里**绝对替换**像素色，避免被受光/菲涅尔/
+// REFLECTION_METAL_MIX 冲淡，使读数可量化：
+//   R = 实际模糊半径 / 300px（整片均匀亮度）
+//   G = 屏幕左侧绿条，条宽 = 实际抽样数 / 64 屏宽  ⇒ 绿条占半屏 = 32 次抽样；只占 ~9% = 6 次
+//   B = 0.05 ⇒ 走了粗糙（模糊）路径；0.7 ⇒ 走了单次锐利路径
+// 没有反射命中的像素保持正常画面（便于对照）。
+#if SSR_DEBUG_SOURCE_MAP != 0
+    if (reflectHit) sceneOut = reflection.rgb;
 #endif
 
 }

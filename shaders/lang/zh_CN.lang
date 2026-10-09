@@ -470,6 +470,8 @@ option.SSRT_SKY_TRACING=追踪天空
 option.SPECULAR_IMPORTANCE_SAMPLING_BIAS=重要性采样偏度
 
 option.ROUGH_REFLECTIONS=粗糙反射支持
+option.OPAQUE_SPECULAR=非透明物体反射
+option.OPAQUE_SPECULAR.comment=让非透明物体也参与屏幕空间反射：资格由本页的"物体反射模式 / 金属度阈值 / 粗糙度阈值"判定（默认 = 金属 + 极光滑电介质，如冰面、抛光石、湿地面）。关闭 = 只有金属度 ≥0.5 的物体反射。开启后这些像素会真的跑追踪，帧率吃紧时请同时降低"反射最大采样数"
 option.ROUGH_REFLECTIONS_THRESHOLD=粗糙反射阈值
 option.ROUGH_REFLECTIONS_MAX=粗糙反射最高粗糙度
 option.ROUGH_REFLECTIONS_MAX.comment=粗糙度低于此值时才应用粗糙反射，超过此界限的物体不再进行粗糙反射
@@ -479,8 +481,16 @@ option.ROUGH_REFLECTION_BLUR_STRENGTH=粗糙反射模糊强度
 option.ROUGH_REFLECTION_BLUR_STRENGTH.comment=粗糙反射的模糊强度倍率，越高越模糊
 option.ROUGH_REFLECTION_BLUR_SAMPLES=粗糙反射模糊采样数
 option.ROUGH_REFLECTION_BLUR_SAMPLES.comment=粗糙反射的泊松圆盘采样数，越多噪点越少，性能开销越大
-option.ROUGH_REFLECTION_ON_METAL=粗糙反射作用于金属
-option.ROUGH_REFLECTION_ON_METAL.comment=开启后粗糙反射的模糊效果同样对金属表面生效
+option.ROUGH_REFLECTIONS_ON_METAL=粗糙反射作用于金属
+option.ROUGH_REFLECTIONS_ON_METAL.comment=开启后粗糙反射的模糊效果同样对金属表面生效（原名 ROUGH_REFLECTION_ON_METAL 与代码/配置拼写不一致，该开关此前无效，2026-10-08 统一）
+option.ROUGH_REFLECTION_SHEEN=粗糙反射环境光泽
+option.ROUGH_REFLECTION_SHEEN.comment=混合系数 = roughness × 本值：把屏幕空间模糊结果与低阶环境光泽按此比例混合，越大越糊成"一片均匀光泽"（2.0 时 roughness≥0.5 基本全糊）；0 = 只用屏幕空间模糊。环境只提供形状与色度，**亮度跟随真实反射画面**（比值修正），所以反射本来就暗的物体不会凭空变亮；室内由天光门控
+option.ROUGH_REFLECTION_DIM=粗糙反射亮度衰减
+option.ROUGH_REFLECTION_DIM.comment=反射亮度 ×= (1 − roughness)^本值：1.0 = 原行为；越大粗糙面越暗（金属与电介质都生效）。用来让粗糙反射明显比普通（光滑）反射暗 —— 粗糙面只留一点光泽，而不是"糊而刺眼"
+option.ROUGH_REFLECTION_DIR_SAMPLES=粗糙反射叶瓣方向采样
+option.ROUGH_REFLECTION_DIR_SAMPLES.comment=每个像素按 GGX 叶瓣投几条射线再平均（1 = 关闭，走旧的"单射线 + 屏幕空间模糊"）。只有 >1 才能真正抹掉**反射物体的轮廓**：单条镜面射线在物体轮廓处的命中点是跳变的，屏幕空间模糊只能把内部摊平、轮廓照旧。代价是每像素 N 次追踪；配合"重要性采样偏度"（调 0 叶瓣更散）可控制模糊程度
+option.ROUGH_REFLECTION_PULL=粗糙反射模糊中心回拉
+option.ROUGH_REFLECTION_PULL.comment=模糊中心从"命中点"朝"本像素自身位置"回拉的比例：0 = 旧行为（以命中点为中心，反射物体的轮廓糊不掉）；1 = 完全按本像素邻域平均（轮廓消失、亮度与色调取自真实场景，且**不增加任何追踪开销**）；中间值连续控制轮廓有多软。这是"轻量低配"路线：1 次追踪 + N 次纹理抽样
 option.REFLECTION_METAL_ATTENUATION=金属反射衰减倍率
 option.REFLECTION_METAL_ATTENUATION.comment=所有金属反射的固定衰减倍率，降低以透出金属本身纹理
 option.REFLECTION_METAL_MIX=金属反射混合权重
@@ -692,6 +702,8 @@ option.DEBUG_VOXEL_SKY=天光路径调试
 option.DEBUG_VOXEL_SKY.comment=天光路径命中时把表面染成红色，用于排查“路径没跑通”还是“值太小看不到”
 option.DEBUG_VOXEL_SKY_LEVEL=GI 天光等级调试
 option.DEBUG_VOXEL_SKY_LEVEL.comment=在方块表面用伪彩色显示该体素的 GI 天光等级（IRC 天空曝光度 alpha）：蓝=无天光（洞穴/闭塞），红=全开（开阔阴影）
+option.DEBUG_SUNBOUNCE_VIS=阳光反弹因子调试
+option.DEBUG_SUNBOUNCE_VIS.comment=定位“看不到阳光反弹”卡在哪一环。红=遮挡可见性（阴影贴图×体素DDA，黑=被判被挡），绿=命中面朝向太阳（黑=太阳方向/法线不对），蓝=天光门控（黑=门控全关）。三色都亮=因子正常，只是量级/观感问题（调滑条）
 option.DEBUG_VOXEL_RADIANCE=体素辐照度可视化
 option.DEBUG_VOXEL_RADIANCE.comment=直接显示传播后的体素辐照度，用于验证"体素化+传播"链路是否通
 

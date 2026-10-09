@@ -341,6 +341,19 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define PHYSICS_OCEAN_SUPPORT
 /* Reflections */
 	//#define ROUGH_REFLECTIONS // Enables rough reflections
+	// [2026-10-08 S2] 粗糙反射的**反光面空间**屏幕空间模糊：以上一帧的锐利反射缓冲（colortex11）为输入，
+	// 用本帧的深度/法线/粗糙度做**边缘感知** gather。这是唯一能真正抹掉"反射物体轮廓"的廉价做法
+	// （单条镜面射线的命中映射在轮廓处跳变，源空间模糊抹不掉）；材质/法线边界因权重≈0 保持锐利，
+	// 所以木板旁的玻璃不会被糊。默认关 = 与原行为逐位一致。需要 shaders.properties 里的
+	// flip.deferred20.colortex11 = true 配合（读上一帧、写本帧）。
+	// [2026-10-08] 非透明物体也参与屏幕空间反射。原先 `DeferredLight` 的**调用点**硬编码
+	// `metalness >= 0.5 || materialID == 10050`，于是反射页那几个判定选项（METAL_REFLECT_MODE /
+	// METALNESS_THRESHOLD / ROUGHNESS_THRESHOLD）对不透明像素实际不可达。开启本开关后改用这些选项
+	// 判定资格（默认 2 / 0.1 / 0.1 ⇒ 金属 + 极光滑电介质：冰面、抛光石、湿地面等），命中后按
+	// Fresnel 叠加到已着色漫反射上（金属那条 mix 路径不变）。默认关 = 与原行为逐位一致。
+	// 代价：符合条件的像素会真的跑一趟 SSR（覆盖率见反射页阈值）；GTX 1050 上建议同时降
+	// SSRT_MAX_SAMPLES（本机当前 32）。
+	//#define OPAQUE_SPECULAR
 	#define ROUGH_REFLECTIONS_THRESHOLD 0.005 // Threshold for rough reflections. [0.0001 0.0002 0.0005 0.0007 0.001 0.002 0.005 0.007 0.01 0.02 0.05 0.07 0.1 0.2 0.5]
 
 	#define REFLECTION_FILTER // Enables reflection filter
@@ -569,6 +582,17 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 		#define GI_ACTIVE_IRC
 		#define IRC_GI_ENABLED
 	#endif
+	// [2026-10-08] SSILVB/VXGI 开启时自动关掉独立的 AO：这两种模式自带屏幕空间遮蔽
+	// （SSILVB 的线性深度 AO / VXGI 的体素遮蔽），再叠一层 GTAO/SSAO 等于同一处遮蔽算两遍，
+	// 角落和缝隙会过黑，而且白付一遍采样开销。
+	// AO_ENABLED 是**值型**选项（OFF/SSAO/GTAO → 0/1/2，见本文件 AO 段），
+	// 所以这里不能像 ENABLE_VOXELIZATION 那样 #undef 了事，必须重定义成 0（OFF）。
+	// 消费点统一是 `#if AO_ENABLED == 1/2` 与 `#if AO_ENABLED > 0`（DeferredLight.frag），
+	// 定义为 0 即等价于用户选 OFF。IRC(GI_MODE==3) 不在此列，仍按用户选择。
+	#if GI_MODE == 1 || GI_MODE == 2
+		#undef AO_ENABLED
+		#define AO_ENABLED 0
+	#endif
 	// ENABLE_VOXELIZATION 是 GUI 布尔开关（shaders.properties screen.voxel + profile.Default 默认开）。
 	// Iris 通过"注释/取消注释本行"来开关（setBooleanDefineValue）。要显示开关必须同时满足：
 	//   1) 本行 `#define ENABLE_VOXELIZATION`（无值，可带注释）→ 布尔选项定义锚点；
@@ -651,6 +675,15 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//#define DEBUG_VOXEL_SKY
 	// 调试：方块表面显示 GI 天光等级（伪彩色 = IRC 天空曝光度 alpha；蓝=无天光 红=全开）
 	//#define DEBUG_VOXEL_SKY_LEVEL
+	// [2026-10-02] 调试：阳光反弹三通道读数（定位"看不到阳光反弹"卡在哪一环）。
+	// R = 遮挡可见性（阴影贴图 × 体素 DDA；0=被判被挡/采样失败）
+	// G = 命中面朝向太阳 saturate(dot(sunDir, hitNormal))（0=太阳方向/法线不对）
+	// B = 天光门控 saturate(max(命中格 sky, 像素 lightmap)×444)（0=天光门控全关）
+	// 哪个通道黑，就卡在哪一环；三通道都亮 ⇒ 因子正常，只是量级/观感问题（调滑条）。
+	// [2026-10-02] 已确认宏值 = 32（角落读数纯白）⇒ 诊断目的达成，关闭读数，恢复干净画面。
+	// 要用时把下面这行取消注释（GUI「调试→体素→阳光反弹因子调试」也能开）。
+	// 因子替换视图需额外再定义 DEBUG_SUNBOUNCE_FACTORS（默认不定义，保持正常观感）。
+	//#define DEBUG_SUNBOUNCE_VIS
 	#include "/lib/lighting/VoxelLighting.glsl"
 	// [2026-08-09] 方块光颜色：光追开启时忽略玩家 BLOCKLIGHT_COLOR_R/G/B 设置，
 	// 全局置 0（体素内无原版方块光）；体素外需要原版方块光时由 DeferredLight 的
