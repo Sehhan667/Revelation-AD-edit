@@ -547,18 +547,27 @@ option.CHROMATIC_ABERRATION_STRENGTH.comment=Peak channel offset in pixels at th
 suffix.CHROMATIC_ABERRATION_STRENGTH=px
 
 option.TAA_ENABLED=Temporal Anti-Aliasing
+option.TAA_QUALITY_MODE=TAA Mode
+value.TAA_QUALITY_MODE.0=Quality
+value.TAA_QUALITY_MODE.1=Performance
+option.TAA_QUALITY_MODE.comment=Quality = Playdead YCoCg temporal accumulation; the knobs marked Quality-only below apply in this mode only. Performance = MakeUp fast RGB convex-hull temporal filter with a fixed 0.9 history weight (~10 frames equivalent), where those knobs have no effect
 option.TAA_PREV_JITTER=History Jitter Alignment (fix)
 option.TAA_PREV_JITTER.comment=Off by default. Samples history at the previous frame jitter phase, fixing the constant half-jitter-pixel misalignment that makes TAA soft and slow to converge on a still frame. Changes the image (sharper); compare on and off before keeping it on
 option.TAA_HISTORY_RESET=Reset History On Time Jump (fix)
 option.TAA_HISTORY_RESET.comment=Off by default. Drops TAA history when world time jumps (/time set) or the dimension changes, avoiding one frame of stale lighting
 option.TAA_CLOSEST_FRAGMENT=Closest Fragment
 option.TAA_SHARPEN=Sharpen
+option.TAA_SHARPEN.comment=Quality mode only (Performance mode always uses convex-hull clipping and never sharpens)
 option.TAA_CLIPPING=Clipping
+option.TAA_CLIPPING.comment=Quality mode only
 option.TAA_AGGRESSION=Clipping Aggression
+option.TAA_AGGRESSION.comment=Quality mode only
 option.TAA_CLIP_STDDEV_MIN=Clipping StdDev Floor
 option.TAA_CLIP_STDDEV_MIN.comment=Quality mode only. 0.0 keeps current behaviour; a flat region (sky, flat wall) with zero stddev hits a 0/0 = NaN path, so 0.001 is a safe floor
 option.TAA_MAX_ACCUM_FRAMES=Max Accumulated Frames
+option.TAA_MAX_ACCUM_FRAMES.comment=Quality mode only (Performance mode uses a fixed 0.9 history weight, ~10 frames equivalent, so this has no effect there)
 option.TAA_ANTIFLICKER=Anti-flicker
+option.TAA_ANTIFLICKER.comment=Quality mode only
 
 option.MOTION_BLUR=Motion Blur
 option.MOTION_BLUR_SAMPLES=Motion Blur Samples

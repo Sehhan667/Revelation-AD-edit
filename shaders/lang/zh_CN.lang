@@ -586,18 +586,24 @@ option.TAA_ENABLED=时域抗锯齿(TAA)
 option.TAA_QUALITY_MODE=taa模式
 value.TAA_QUALITY_MODE.0=质量
 value.TAA_QUALITY_MODE.1=性能
+option.TAA_QUALITY_MODE.comment=质量=原版 Playdead 的 YCoCg 时域累积，下面标了「仅质量」的旋钮只在这一档生效；性能=MakeUp 快速 RGB 凸包时域，固定历史权重 0.9（等效约 10 帧），那些旋钮在这一档不起作用
 option.TAA_PREV_JITTER=历史抖动对齐（修复）
 option.TAA_PREV_JITTER.comment=默认关。开启后按上一帧的抖动相位去取历史，修掉「历史恒差半个抖动像素」造成的偏软、静帧收敛不彻底。会改变观感（更锐），建议开关各看一遍再定
 option.TAA_HISTORY_RESET=时间跳变重置历史（修复）
 option.TAA_HISTORY_RESET.comment=默认关。开启后 /time set、切换维度等世界时间跳变时丢弃 TAA 历史，避免残留一帧旧光照
 option.TAA_CLOSEST_FRAGMENT=片元择邻
 option.TAA_SHARPEN=锐化
+option.TAA_SHARPEN.comment=仅质量模式生效（性能模式恒用凸包裁切，没有锐化）
 option.TAA_CLIPPING=方差裁切
+option.TAA_CLIPPING.comment=仅质量模式生效
 option.TAA_AGGRESSION=裁切容差
+option.TAA_AGGRESSION.comment=仅质量模式生效
 option.TAA_CLIP_STDDEV_MIN=裁切标准差下限
 option.TAA_CLIP_STDDEV_MIN.comment=仅质量模式生效。0.0=现状；但平坦区域（天空、纯色墙）标准差为 0 时存在 0/0=NaN 的入口，填 0.001 之类可兜住
 option.TAA_MAX_ACCUM_FRAMES=最大累积帧数
+option.TAA_MAX_ACCUM_FRAMES.comment=仅质量模式生效（性能模式是固定历史权重 0.9，等效约 10 帧，本项不起作用）
 option.TAA_ANTIFLICKER=抗闪烁
+option.TAA_ANTIFLICKER.comment=仅质量模式生效
 
 option.MOTION_BLUR=动态模糊
 option.MOTION_BLUR_SAMPLES=动态模糊采样数
