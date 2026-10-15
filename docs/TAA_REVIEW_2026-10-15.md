@@ -40,29 +40,30 @@
 |---|---|---|---|
 | P1-1 | 🔴 | 默认档（性能模式）下 5 个 TAA 旋钮是死的：`TAA_MAX_ACCUM_FRAMES` / `TAA_ANTIFLICKER` / `TAA_AGGRESSION` / `TAA_CLIPPING` / `TAA_SHARPEN` | 是（含用户已设的 24.0） |
 | P1-2 | 🔴 | 性能模式的"运动抗拖影"数值上等于空转（UV/像素单位搞错）⇒ 默认档**没有任何**运动降权 | 是 |
-| P1-3 | 🟠 | 历史读**少加 `taaJitterPrev`** ⇒ 与 canonical 写法差半个抖动像素（继承自上游；`Accumulate.frag` 用的是 canonical 写法，两种读法见 P1-3） | 是 |
+| P1-3 | 🟠 | 历史读**少加 `taaJitterPrev`** ⇒ 与 canonical 写法差半个抖动像素（继承自上游；`Accumulate.frag` 用的是 canonical 写法，两种读法见 P1-3。**用户裁定不做**） | 是 |
 | P1-4 | 🟠 | `lang/en_US.lang` 缺 `TAA_QUALITY_MODE` 与 `value.TAA_QUALITY_MODE.0/1`（zh 有） | 英文界面可见 |
 | P2-1 | 🟠 | 运动降权被 `#ifdef MOTION_BLUR` 绑架：关掉"动态模糊"会顺带废掉 TAA 唯一的运动拒绝 | 改设置后 |
-| P2-2 | 🟠 | `historyReset`（仓库自带的"时域重置"信号）**没接进 TAA**，只有 GI 的 `Accumulate.frag` 用了 | `/time set`、切维度 |
+| P2-2 | 🟠 | `historyReset`（仓库自带的"时域重置"信号）**没接进 TAA**，只有 GI 的 `Accumulate.frag` 用了（**用户裁定不做**，见 P2-2） | `/time set`、切维度 |
 | P2-3 | 🟠 | 质量模式的椭球裁切有 `0/0` 入口 `prevData / clipStdDev` ⇒ `saturate(NaN)` 未定义行为 | 切到"质量"档 |
 | P3-1 | 🟡 | 死代码/死文件：`TemporalAA.fragold`（不在 H2 清单里）、`accumFrames`、`historyClipAABB` | 否 |
 | P3-2 | 🟡 | 注释与选项落点：`RENDER_MODE` 0 的注释说成"手持物品模式"（实为离线渲染）；`TAA_QUALITY_MODE` 没写在 `settings.glsl`；`clearOut` 没写"为什么" | 否 |
 | F1-F4 | 🟡 | 完善度缺口：无物体运动矢量、反射无专用时域策略、等效累积只有 ~10 帧、抗闪烁/锐化默认不可用 | 见 §3 |
 
-### 1.5 本次已实施的改动（除 P1-2 外都默认「关 / 0.0」；P1-2 直接生效但静帧逐位不变）
+### 1.5 本次已实施的改动（P1-2 直接生效但静帧逐位不变；TAA_CLIP_STDDEV_MIN 默认 0.0 = 现状）
 
 | 改动 | 位置 | 默认值 | 怎么验 |
 |---|---|---|---|
 | P1-2 运动降权单位修复（UV → 像素，系数 0.01） | `TemporalAA.frag` 模式 1 | 直接生效（**静止镜头逐位不变**：velocityPixels=0 ⇒ 0.9） | 快速平移 / 贴近看生物与树叶边缘 |
 | P1-4 en 文案 + P1-1 的「仅质量模式」标注 | `lang/en_US.lang`、`lang/zh_CN.lang` | 文案 | 切中英文各看一遍 GUI（含 tooltip） |
-| P2-2 `historyReset` 接入 | `TemporalAA.frag` 两个模式 | `//#define TAA_HISTORY_RESET`（关） | `/time set night` 看有没有一帧旧光照残留 |
 | P2-3 裁切标准差下限 | `TemporalAA.frag` 模式 0 | `TAA_CLIP_STDDEV_MIN 0.0`（= 现状） | 切「质量」档 + 平坦天空/纯色墙扫视，填 0.001 对比 |
-| P1-3 历史抖动对齐 | `TemporalAA.frag` 两个模式 | `//#define TAA_PREV_JITTER`（关） | 开关各看一遍：静帧噪点/软硬、慢速平移拖影 |
 | P3-1 删死文件 | `program/post/TemporalAA.fragold` | 已删（`git add` 已暂存删除） | `preproc_check --all` |
 | P3-2 注释纠错（离线渲染分支） | `TemporalAA.frag` `RENDER_MODE 0` 分支 | 注释 | 读 |
 
-三条新选项按 §4 四件套接线完毕：`settings.glsl:507-511`（定义）→ `shaders.properties` 的
-`profile.Default` / `screen.TAA` / `sliders` → 双语 lang（含 `.comment` 说明"仅质量模式生效"）。
+**用户裁定不做（2026-10-15）**：P1-3 历史抖动对齐、P2-2 `historyReset` 接入 —— 两项分析照旧保留在
+§2 对应小节（含修法与被否决方案），只是不落地代码。
+
+剩一条新选项按 §4 四件套接线：`settings.glsl:510`（定义）→ `shaders.properties` 的
+`profile.Default` / `screen.TAA` / `sliders` → 双语 lang（`.comment` 里写明"仅质量模式生效"）。
 「仅质量模式」用**文案标注**而不是 properties 的 `#if` 分组，是因为 `PROGRESS_TODO.md:643` 记着
 「Iris 有时拿不到整型选项值」；且本仓已有同样做法的先例——
 `option.FXAA_ENABLED=FXAA（未接线）`（`lang/zh_CN.lang:977`，FXAA 实现已删，此开关本来就是死的，
@@ -148,7 +149,11 @@ float blendFactor = clamp(historyWeight - velocityPixels * 0.01, 0.0, 1.0);
 不是本次改动引入。但本仓 `Accumulate.frag:152-153` 已经用 `length(prevCoord - currCoord)`（UV）
 配 `smoothstep(0.02, 0.06, …)` 做出了正确量级，说明"正确的做法就在隔壁"。
 
-### P1-3 历史读少加 `taaJitterPrev` ⇒ 整条重投影差半个抖动像素
+### P1-3 历史读少加 `taaJitterPrev` ⇒ 与 canonical 写法差半个抖动像素（**用户裁定：不做**）
+
+> **状态（2026-10-15）**：用户裁定**不引入**此修复（也不做对照开关）。理由：两种读法都自洽、
+> 差异 <0.5 像素、收益需实机 A/B 才能判断，不值得为它加一个旋钮。**本节与分析全部保留作为记录**，
+> 若日后 TAA 偏软/静帧收敛问题被重新提起，从这里接着往下推即可，不必重新论证一遍。
 
 ```glsl
 // TemporalAA.frag:223 / 239 / 119 / 129
@@ -218,7 +223,10 @@ TAA 就退化成固定 0.9 历史权重 ⇒ 拖影变重，而用户完全不会
 **修法**：删掉这个 `#ifdef`，让 `blendFactor` 恒按速度降权；`MOTION_BLUR` 只保留
 "写不写 colortex3"的职责。
 
-### P2-2 `historyReset` 没接进 TAA
+### P2-2 `historyReset` 没接进 TAA（**用户裁定：不做**）
+
+> **状态（2026-10-15）**：用户裁定**不引入**（`historyReset` 仍只由 GI 的 `Accumulate.frag` 消费）。
+> 保留本节记录：3×3 凸包夹逼已经兜住了绝大部分，收益不足以多一个旋钮。
 
 `lib/universal/Uniform.glsl:161` 的定义与注释写得很清楚：
 `uniform bool historyReset; // 世界时间变化/维度切换时 true（时域累积重置信号）`。
@@ -382,21 +390,24 @@ prevData += moment1;
 node scripts/preproc_check.js --all        → 检查了 329 个入口：无新增命中（基线内已知 35 条已忽略）
 shaders.properties 非 ASCII 字节数          → 0
 lang/zh_CN.lang / en_US.lang BOM           → False / False
-shaders/** 的 #if* 与 #endif 计数           → 691 / 691（差 0；改动前 688，新增 3 对来自两个开关）
+shaders/** 的 #if* 与 #endif 计数           → 688 / 688（差 0，与改动前一致；三个开关的版本一度是
+                                              691，撤回 P1-3/P2-2 两项后回到 688）
 改过的 5 个文件换行符                        → 全 LF（CRLF 计数均为 0）
 新注释里的半角双引号                         → 无（按 §5 改用「」）
 git status --porcelain -- shaders docs     → 只出现本次打算提交的文件（另有工作区原有的 MEMO.md 改动与未跟踪文件，未触碰）
 ```
 
-**本次改动的提交拆分（一提交只做一件事，§7；均已落在 `dev` 分支）**：
+**本次改动的提交拆分（一提交只做一件事，§7；均在本地 `dev`，未 push）**：
 
 | 提交 | 内容 |
 |---|---|
 | `4b8c953c` `feat(taa)` | 三个默认关的修复开关 + 四件套接线（同时订正 `RENDER_MODE 0` 分支的旧注释） |
 | `8871a0e0` `fix(taa)` | 性能模式运动降权的单位修复（UV → 像素，1 行 + 标定注释） |
 | `efb08c94` `docs(taa)` | en 的 taa模式文案 + 四个质量模式专属旋钮的「仅质量模式」tooltip |
-| 本条 `docs(taa)` | 本审查报告入库 |
-| 下一条 `chore(taa)` | 删除死文件 `program/post/TemporalAA.fragold` |
+| `73fc196a` `docs(taa)` | 本审查报告入库 |
+| `63c87cd9` `chore(taa)` | 删除死文件 `program/post/TemporalAA.fragold` |
+| `revert(taa)` | 撤回 `TAA_PREV_JITTER` / `TAA_HISTORY_RESET`（用户裁定不需要），只留 `TAA_CLIP_STDDEV_MIN` |
+| `docs(taa)` | 报告同步：P1-3 / P2-2 标记为用户裁定不做 |
 
 **审查用到的旁证（仓库外）**：`shaderpacks/Revelation-AD-edit.txt`（Iris 记住值，2026-10-15 21:48）
 里 TAA 相关只有 `TAA_MAX_ACCUM_FRAMES=24.0` ⇒ 用户从未切过 `TAA_QUALITY_MODE`，
