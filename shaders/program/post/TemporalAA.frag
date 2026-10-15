@@ -119,14 +119,37 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
     ivec2 texel = uvToTexel(screenCoord + taaJitter * 0.5);
     vec2 prevCoord = screenCoord - motionVector;
 
+    // [2026-10-15 TAA_PREV_JITTER] 历史采样位置对齐开关。历史缓冲里存的是上一帧的**抖动采样**
+    // （像素 k 的内容 = 采样点 c_k + taaJitterPrev*0.5 处的着色；抖动是子像素的、不跨像素），
+    // 而 prevCoord 是未抖动网格坐标。两种自洽约定只差不到半个像素：
+    //   A) 按「上一帧实际采样位置」取历史 = 加 taaJitterPrev*0.5（canonical TAA 写法，与
+    //      program/diffuse/Accumulate.frag 里 prevNDCPos += taaJitterPrev 同源）⇒ 本开关；
+    //   B) 按「同一像素索引」取历史 = 现状（子像素抖动下像素索引基本不变，等价于取该像素上
+    //      一次采样）。
+    // 默认关（= B，逐位不变现状）。A 与 B 谁更干净必须实机 A/B：A 的顾虑是双线性坐标的偏移会
+    // 把邻居权重带进来（等价于多一点模糊）。推理与证据见 docs/TAA_REVIEW_2026-10-15.md P1-3。
+    // 本开关只改历史采样位置；重投影原点仍按未抖动的像素中心处理（与 Main 的 motionVector 一致）。
+    #ifdef TAA_PREV_JITTER
+        vec2 prevSampleCoord = prevCoord + taaJitterPrev * 0.5;
+    #else
+        vec2 prevSampleCoord = prevCoord;
+    #endif
+
     // --- 模式 1：高性能 MakeUp Fast TAA（固定高历史权重） ---
     #if TAA_QUALITY_MODE == 1
         vec3 currentRGB = YCoCgToRGB(loadSceneMain(texel));   // colortex0 存 YCoCg，转回 RGB
 
-        if (saturate(prevCoord) != prevCoord)
+        // [2026-10-15 TAA_HISTORY_RESET] historyReset = 世界时间跳变/维度切换（Uniform.glsl 的
+        // 定义与注释）。此时历史整段作废：与越界早退同形，计数归 1 → 下一帧从当前帧重新累积。
+        // 不接这段时默认档会按固定 0.9 混入上一帧历史（凸包夹逼能挡住大部分，但不是全部）。
+        #ifdef TAA_HISTORY_RESET
+            if (historyReset) return vec4(currentRGB, 1.0);
+        #endif
+
+        if (saturate(prevSampleCoord) != prevSampleCoord)
             return vec4(currentRGB, 1.0);
 
-        vec4 temporalData = texture(colortex1, prevCoord);
+        vec4 temporalData = texture(colortex1, prevSampleCoord);
         vec3 previousRGB = temporalData.rgb;                  // colortex1 存 RGB
 
         // [2026-09-03 修复凸包色彩] colortex0 存 YCoCg；邻居与中心同样要 YCoCg->RGB
@@ -163,13 +186,18 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
     #else
         vec3 currData = loadSceneMain(texel);
 
-        if (saturate(prevCoord) != prevCoord) 
+        // [2026-10-15 TAA_HISTORY_RESET] 同模式 1：世界时间跳变/维度切换时丢弃历史（计数归 1）。
+        #ifdef TAA_HISTORY_RESET
+            if (historyReset) return vec4(YCoCgToRGB(currData), 1.0);
+        #endif
+
+        if (saturate(prevSampleCoord) != prevSampleCoord) 
             return vec4(YCoCgToRGB(currData), 1.0);
 
         #ifdef TAA_SHARPEN
-            vec4 temporalData = textureCatmullRomFastAntiRing(colortex1, prevCoord);
+            vec4 temporalData = textureCatmullRomFastAntiRing(colortex1, prevSampleCoord);
         #else
-            vec4 temporalData = texture(colortex1, prevCoord);
+            vec4 temporalData = texture(colortex1, prevSampleCoord);
         #endif
 
         vec3 prevData = RGBToYCoCg(temporalData.rgb);
@@ -192,14 +220,20 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
 
             vec3 clipStdDev = sqrt(abs(moment2 - moment1 * moment1)) * TAA_AGGRESSION;
 
+            // [2026-10-15 裁切标准差下限] 平坦 3x3 邻域（天空、纯色墙面；fp16 下很常见）标准差
+            // 逐通道可为 0，收敛后 prevData == moment1 时下面 prevData / clipStdDev 就是 0/0 = NaN，
+            // 而 saturate(NaN) 在 GLSL 里未定义（不同 GPU 可能返回 NaN 并顺着后面的除法扩散成
+            // 局部黑/白噪点）。默认 0.0 ⇒ max(x, 0) 对非负的 clipStdDev 逐位恒等，默认观感不变。
+            clipStdDev = max(clipStdDev, vec3(TAA_CLIP_STDDEV_MIN));
+
             // 椭球交集裁剪
             prevData -= moment1;
             prevData *= saturate(inversesqrt(sdot(prevData / clipStdDev)));
             prevData += moment1;
         #endif
 
-        // 次像素锐化
-        prevData = mix(prevData, currData, sdot(fract(prevCoord * viewSize) - 0.5) * 0.5);
+        // 次像素锐化（用实际采样位置算亚像素相位，与历史取样位置保持同一套坐标）
+        prevData = mix(prevData, currData, sdot(fract(prevSampleCoord * viewSize) - 0.5) * 0.5);
 
         float blendWeight = min(++temporalData.a, TAA_MAX_ACCUM_FRAMES);
         // [2026-09-02] 抗闪烁：contrast 增大时抱紧历史（blendWeight 增大 → rcp 减小）。
@@ -250,7 +284,10 @@ void main() {
             temporalOut = vec4(loadSceneMain(screenTexel), 1.0);
         #endif
     #else
-        // 手持物品等特殊渲染模式的快速混合逻辑
+        // RENDER_MODE 0（离线渲染/出图）的静止相机累积路径。
+        // 注：这里**故意不**套用 TAA_PREV_JITTER 的历史偏移——本路径只在相机完全不动的帧生效，
+        // 未抖动的像素中心恰好命中同一个纹素（distance < EPS），让每个像素累积自己的抖动相位
+        // 才是「抖动超采样」的本意；加上半个抖动像素的双线性偏移只会把邻居权重带进来、把静帧搞糊。
         ivec2 srcTexel = uvToTexel(screenCoord + taaJitter * 0.5);
         temporalOut = vec4(loadSceneMain(srcTexel), 1.0);
 

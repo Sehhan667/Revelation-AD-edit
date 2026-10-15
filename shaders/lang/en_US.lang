@@ -547,10 +547,16 @@ option.CHROMATIC_ABERRATION_STRENGTH.comment=Peak channel offset in pixels at th
 suffix.CHROMATIC_ABERRATION_STRENGTH=px
 
 option.TAA_ENABLED=Temporal Anti-Aliasing
+option.TAA_PREV_JITTER=History Jitter Alignment (fix)
+option.TAA_PREV_JITTER.comment=Off by default. Samples history at the previous frame jitter phase, fixing the constant half-jitter-pixel misalignment that makes TAA soft and slow to converge on a still frame. Changes the image (sharper); compare on and off before keeping it on
+option.TAA_HISTORY_RESET=Reset History On Time Jump (fix)
+option.TAA_HISTORY_RESET.comment=Off by default. Drops TAA history when world time jumps (/time set) or the dimension changes, avoiding one frame of stale lighting
 option.TAA_CLOSEST_FRAGMENT=Closest Fragment
 option.TAA_SHARPEN=Sharpen
 option.TAA_CLIPPING=Clipping
 option.TAA_AGGRESSION=Clipping Aggression
+option.TAA_CLIP_STDDEV_MIN=Clipping StdDev Floor
+option.TAA_CLIP_STDDEV_MIN.comment=Quality mode only. 0.0 keeps current behaviour; a flat region (sky, flat wall) with zero stddev hits a 0/0 = NaN path, so 0.001 is a safe floor
 option.TAA_MAX_ACCUM_FRAMES=Max Accumulated Frames
 option.TAA_ANTIFLICKER=Anti-flicker
 
