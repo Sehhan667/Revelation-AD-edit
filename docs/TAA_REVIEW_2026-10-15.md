@@ -38,37 +38,41 @@
 
 | # | 严重度 | 问题 | 默认配置下生效？ |
 |---|---|---|---|
-| P1-1 | 🔴 | 默认档（性能模式）下 5 个 TAA 旋钮是死的：`TAA_MAX_ACCUM_FRAMES` / `TAA_ANTIFLICKER` / `TAA_AGGRESSION` / `TAA_CLIPPING` / `TAA_SHARPEN` | 是（含用户已设的 24.0） |
+| P1-1 | 🔴 | 默认档（性能模式）下 5 个 TAA 旋钮是死的：`TAA_MAX_ACCUM_FRAMES` / `TAA_ANTIFLICKER` / `TAA_AGGRESSION` / `TAA_CLIPPING` / `TAA_SHARPEN`（**已处置**：文案标注 + 新增 `TAA_HISTORY_WEIGHT` 给性能模式一个真旋钮） | 是（含用户已设的 24.0） |
 | P1-2 | 🔴 | 性能模式的"运动抗拖影"数值上等于空转（UV/像素单位搞错）⇒ 默认档**没有任何**运动降权 | 是 |
 | P1-3 | 🟠 | 历史读**少加 `taaJitterPrev`** ⇒ 与 canonical 写法差半个抖动像素（继承自上游；`Accumulate.frag` 用的是 canonical 写法，两种读法见 P1-3。**用户裁定不做**） | 是 |
 | P1-4 | 🟠 | `lang/en_US.lang` 缺 `TAA_QUALITY_MODE` 与 `value.TAA_QUALITY_MODE.0/1`（zh 有） | 英文界面可见 |
-| P2-1 | 🟠 | 运动降权被 `#ifdef MOTION_BLUR` 绑架：关掉"动态模糊"会顺带废掉 TAA 唯一的运动拒绝 | 改设置后 |
+| P2-1 | 🟠 | 运动降权被 `#ifdef MOTION_BLUR` 绑架：关掉"动态模糊"会顺带废掉 TAA 唯一的运动拒绝（**已实施**：去掉门控） | 改设置后 |
 | P2-2 | 🟠 | `historyReset`（仓库自带的"时域重置"信号）**没接进 TAA**，只有 GI 的 `Accumulate.frag` 用了（**用户裁定不做**，见 P2-2） | `/time set`、切维度 |
-| P2-3 | 🟠 | 质量模式的椭球裁切有 `0/0` 入口 `prevData / clipStdDev` ⇒ `saturate(NaN)` 未定义行为 | 切到"质量"档 |
+| P2-3 | 🟠 | 质量模式的椭球裁切有 `0/0` 入口 `prevData / clipStdDev` ⇒ `saturate(NaN)` 未定义行为（已加默认 0.0 的下限旋钮） | 切到"质量"档 |
 | P3-1 | 🟡 | 死代码/死文件：`TemporalAA.fragold`（不在 H2 清单里）、`accumFrames`、`historyClipAABB` | 否 |
 | P3-2 | 🟡 | 注释与选项落点：`RENDER_MODE` 0 的注释说成"手持物品模式"（实为离线渲染）；`TAA_QUALITY_MODE` 没写在 `settings.glsl`；`clearOut` 没写"为什么" | 否 |
-| F1-F4 | 🟡 | 完善度缺口：无物体运动矢量、反射无专用时域策略、等效累积只有 ~10 帧、抗闪烁/锐化默认不可用 | 见 §3 |
+| F1 | 🟡 | 无物体运动矢量（**用户裁定不加**，改用 `TAA_CLOSEST_FRAGMENT` 默认开启；实体类有平台级限制，见 F1） | 见 §3 |
+| F2-F4 | 🟡 | 反射无专用时域策略、等效累积只有 ~10 帧（**已可调**：`TAA_HISTORY_WEIGHT`）、抗闪烁/锐化默认不可用 | 见 §3 |
 
-### 1.5 本次已实施的改动（P1-2 直接生效但静帧逐位不变；TAA_CLIP_STDDEV_MIN 默认 0.0 = 现状）
+### 1.5 本次已实施的改动
 
 | 改动 | 位置 | 默认值 | 怎么验 |
 |---|---|---|---|
-| P1-2 运动降权单位修复（UV → 像素，系数 0.01） | `TemporalAA.frag` 模式 1 | 直接生效（**静止镜头逐位不变**：velocityPixels=0 ⇒ 0.9） | 快速平移 / 贴近看生物与树叶边缘 |
+| P1-2 运动降权单位修复（UV → 像素，系数 0.01） | `TemporalAA.frag` 模式 1 | 直接生效（**静止镜头逐位不变**：velocityPixels=0 ⇒ 权重原值） | 快速平移 / 贴近看生物与树叶边缘 |
+| P2-1 运动降权去掉 `MOTION_BLUR` 门控 | `TemporalAA.frag` 模式 1 | 直接生效（**默认档逐位不变**：动态模糊开着时表达式一字未改） | 把「动态模糊」关掉再快速平移，拖影应短于改动前 |
+| P1-1 补丁：性能模式历史权重可调 | `TemporalAA.frag` + `TAA_HISTORY_WEIGHT` | `0.9`（= 旧写死值，逐位不变） | GUI 拖「历史权重」：0.95 更干净、0.8 更跟手 |
+| F1 替代方案：`TAA_CLOSEST_FRAGMENT` 默认开 | `settings.glsl` + `profile.Default` | **开**（上游默认也是开；AD-edit 此前为性能关） | 生物/粒子轮廓拖影是否减轻 + FPS 掉多少 |
 | P1-4 en 文案 + P1-1 的「仅质量模式」标注 | `lang/en_US.lang`、`lang/zh_CN.lang` | 文案 | 切中英文各看一遍 GUI（含 tooltip） |
 | P2-3 裁切标准差下限 | `TemporalAA.frag` 模式 0 | `TAA_CLIP_STDDEV_MIN 0.0`（= 现状） | 切「质量」档 + 平坦天空/纯色墙扫视，填 0.001 对比 |
-| P3-1 删死文件 | `program/post/TemporalAA.fragold` | 已删（`git add` 已暂存删除） | `preproc_check --all` |
+| P3-1 删死文件 | `program/post/TemporalAA.fragold` | 已删 | `preproc_check --all` |
 | P3-2 注释纠错（离线渲染分支） | `TemporalAA.frag` `RENDER_MODE 0` 分支 | 注释 | 读 |
 
-**用户裁定不做（2026-10-15）**：P1-3 历史抖动对齐、P2-2 `historyReset` 接入 —— 两项分析照旧保留在
-§2 对应小节（含修法与被否决方案），只是不落地代码。
+**用户裁定不做（2026-10-15）**：P1-3 历史抖动对齐、P2-2 `historyReset` 接入（分析照旧保留在 §2 对应
+小节）、F1 物体运动矢量（**改用 `TAA_CLOSEST_FRAGMENT` 默认开来替代**，理由与平台限制见 §3 F1）、
+P1-1 修法 2（**改用 `TAA_HISTORY_WEIGHT` 旋钮替代**：用户要的是"可调"，而不是改变默认累积语义）。
 
-剩一条新选项按 §4 四件套接线：`settings.glsl:510`（定义）→ `shaders.properties` 的
-`profile.Default` / `screen.TAA` / `sliders` → 双语 lang（`.comment` 里写明"仅质量模式生效"）。
+两条新选项按 §4 四件套接线：`settings.glsl`（定义）→ `shaders.properties` 的 `profile.Default` /
+`screen.TAA` / `sliders` → 双语 lang（`.comment` 写明「仅质量模式 / 仅性能模式生效」）。
 「仅质量模式」用**文案标注**而不是 properties 的 `#if` 分组，是因为 `PROGRESS_TODO.md:643` 记着
 「Iris 有时拿不到整型选项值」；且本仓已有同样做法的先例——
 `option.FXAA_ENABLED=FXAA（未接线）`（`lang/zh_CN.lang:977`，FXAA 实现已删，此开关本来就是死的，
-属于既有已知项，不是本次发现）。**仍待用户裁定**：P1-1 修法 2（让性能模式吃累加权重，会改变观感）、
-P2-1（去掉 `MOTION_BLUR` 门控）、F1（物体运动矢量）。
+属于既有已知项，不是本次发现）。**至此评审提出的待裁定项已全部收口**，没有遗留决策。
 
 ---
 
@@ -212,7 +216,10 @@ vec2 prevCoord = sampleCoord - motionVector + taaJitterPrev * 0.5;              
 不在原清单里。修法：补 3 条（`option.TAA_QUALITY_MODE` / `value.TAA_QUALITY_MODE.0` / `.1`），
 顺手可把 `#if` 分组方案（P1-1 修法 1）的"仅质量模式"提示一起加进文案。
 
-### P2-1 运动降权被 `#ifdef MOTION_BLUR` 绑架
+### P2-1 运动降权被 `#ifdef MOTION_BLUR` 绑架（**已实施：去掉门控**）
+
+> **状态（2026-10-15）**：已按用户裁定实施（提交 `fix(taa): 运动降权不再由 MOTION_BLUR 门控`）。
+> 表达式一字未动，所以默认档（动态模糊开）逐位不变；只有"关掉动态模糊"这种配置会看到拖影变短。
 
 `TemporalAA.frag:153-158`：TAA 的运动拒绝只在**动态模糊开着**时才编译进去。
 把"动态模糊"这个**后处理**开关关掉（`settings.glsl:508`，Default 档默认开），
@@ -221,7 +228,7 @@ TAA 就退化成固定 0.9 历史权重 ⇒ 拖影变重，而用户完全不会
 它现在也确实由它门控，所以两件事本来可以干净分开。）
 
 **修法**：删掉这个 `#ifdef`，让 `blendFactor` 恒按速度降权；`MOTION_BLUR` 只保留
-"写不写 colortex3"的职责。
+"写不写 colortex3"的职责。（已照此实施，见节首状态。）
 
 ### P2-2 `historyReset` 没接进 TAA（**用户裁定：不做**）
 
@@ -291,7 +298,11 @@ prevData += moment1;
 
 ## 3. 完善度缺口（feature 级）
 
-### F1 没有物体运动矢量（最大缺口）
+### F1 没有物体运动矢量（**用户裁定：不加，改用 `TAA_CLOSEST_FRAGMENT` 默认开启**）
+
+> **状态（2026-10-15）**：用户裁定**不做**运动矢量。处置方式：把 `TAA_CLOSEST_FRAGMENT` 在
+> `profile.Default` 里**默认打开**（`settings.glsl:501` 取消注释）作为缓解，代价每像素 4 次深度
+> tap。**下面的"可做/不可做"分析全部保留作为记录**，尤其"平台限制"那条，避免以后重复研究。
 
 运动矢量完全由"深度 + 相机矩阵"重投影得到（`:239`），**只覆盖相机运动**。
 会动的几何体在 TAA 眼里全是静止的 ⇒ 用错历史 ⇒ 拖影/闪烁：
@@ -302,17 +313,25 @@ prevData += moment1;
 - 动画纹理（熔岩/水/传送门）本身没有位移，但会改变亮度 ⇒ 靠夹逼兜底
 
 上游把 `TAA_CLOSEST_FRAGMENT`（`TemporalAA.frag:48-68`，只取 4 个**对角**深度）当作
-"改善运动物体拖影"的缓解手段，而 AD-edit 的 Default 档明确 `!TAA_CLOSEST_FRAGMENT`
-（`shaders.properties:8`，性能考虑）⇒ **默认档连这个缓解都没有**。
+"改善运动物体拖影"的缓解手段，而 AD-edit 的 Default 档此前明确 `!TAA_CLOSEST_FRAGMENT`
+（`shaders.properties:8`，性能考虑）⇒ 默认档连这个缓解都没有（本项已按用户裁定改为默认开）。
 
-**建议**：
-- 便宜档：给"位移是时间闭式函数"的两类几何补上一帧位置——树叶摆动与水面波浪都能解析求
-  上一帧相位，在 `Terrain.vert`/`Water.vert` 里把 `(本帧屏幕位置 - 上一帧屏幕位置)` 写进
-  运动矢量缓冲。收益直接落在最显眼的两个场景（树叶/水面边缘）。
-- 完整档：加一张速度 G-buffer（实体用 `gbufferPreviousModelView`，其它用 `.vert` 里的
-  上一帧位移），TAA 优先读它、缺省才回落到深度重投影。成本中等，建议单独立项进 `TODO.md`。
-- 另外：`TAA_CLOSEST_FRAGMENT` 若要在 GUI 里作为"抗拖影"选项推给用户，
-  建议文案注明代价（4 次深度采样），并考虑把 4 对角扩成 4 邻域（对角会漏掉水平/垂直边缘）。
+**当时评估过的三条路（全部未采纳，留档）**：
+
+- **可做**：给"位移是时间闭式函数"的两类几何补上一帧位置——树叶摆动与水面波浪都能解析求
+  上一帧相位（`Terrain.vert:109` 的 `time = frameTimeCounter * WAVING_FOLIAGE_SPEED`、
+  `WaterWave.glsl:32` 的 `waveTime`，都可用 `frameTimeCounter - frameTime` 重算），再
+  `prevClip = projMAD(gbufferPreviousProjection, transMAD(gbufferPreviousModelView, prevWorldRelPos))`
+  写入速度缓冲（`prevWorldRelPos = prevWorldPos + cameraMovement`）。成本：一张全分辨率速度缓冲的
+  三处接线（§6）+ 两个 `.vert` 各多算一次位移 + `Terrain.frag`/`Water.frag` 各加一个输出。
+  **未采纳原因**：用户认为现有 `TAA_CLOSEST_FRAGMENT` 已够用，不值得为此加缓冲。
+  另注：本仓顶点着色器**从未用过** `gbufferPrevious*`，落地前需先验证 Iris 在顶点阶段确实暴露它。
+- **明确做不了**：实体/粒子/手臂没有"上一帧模型矩阵"——Iris 只暴露**相机**的
+  `gbufferPreviousModelView/Projection`，而 Minecraft 每帧给每个实体单独设 `gl_ModelViewMatrix`
+  （`Entities.vert:54`），没有上一帧对应物 ⇒ 想要正确速度需要逐实体历史数据，光影包拿不到。
+  **这条是结论性记录**：以后不必再尝试为实体做速度矢量，只能靠择邻/夹逼这类近似。
+- **旁路缓解（未采纳）**：收紧或放宽邻域夹逼、计数器按置信度复位（让 `accumFrames` 反映"历史可不可信"
+  而非"连续在屏多少帧"）。两者都会连带影响静态画面的抗锯齿强度，属另一类取舍。
 
 ### F2 反射/半透明没有专用运动矢量或时域策略
 
@@ -323,7 +342,10 @@ prevData += moment1;
 
 ### F3 "噪声靠 TAA 磨"的模块，实际只有 ~10 帧等效累积
 
-默认档固定 `historyWeight = 0.9`（指数平均，等效 ~10 帧，且**不收敛到极限值**），
+> **状态（2026-10-15）**：已提供旋钮 `TAA_HISTORY_WEIGHT`（仅性能模式，默认 0.9 = 现状）：调大
+> 即可提高等效累积（0.95 ⇒ 当前帧 5%、约 20 帧），把"抗噪"这一侧交给用户按需换。默认值不变。
+
+默认档固定 `historyWeight = 0.9`（指数平均，响应 ~10 帧、噪声等效 ~19 帧，且**不收敛到极限值**），
 而大量模块的设计前提是"TAA 会把它磨掉"：体积光光束（`VOLUMETRIC_LIGHT`/`VF_VOLUME_SHADOW_SAMPLES`
 文案直接写"噪声交给 TAA 平均"）、云时域升采样、DOF 的随机 gather、SSR 的 STBN 抖动。
 把等效累积提高（P1-1 修法 2 上 `TAA_MAX_ACCUM_FRAMES`）比给每个模块各配一个降噪器便宜得多，
@@ -390,9 +412,9 @@ prevData += moment1;
 node scripts/preproc_check.js --all        → 检查了 329 个入口：无新增命中（基线内已知 35 条已忽略）
 shaders.properties 非 ASCII 字节数          → 0
 lang/zh_CN.lang / en_US.lang BOM           → False / False
-shaders/** 的 #if* 与 #endif 计数           → 688 / 688（差 0，与改动前一致；三个开关的版本一度是
-                                              691，撤回 P1-3/P2-2 两项后回到 688）
-改过的 5 个文件换行符                        → 全 LF（CRLF 计数均为 0）
+shaders/** 的 #if* 与 #endif 计数           → 687 / 687（差 0。改动前 688；三个开关的版本一度是 691，
+                                              撤回 P1-3/P2-2 两项后 688，再去掉 MOTION_BLUR 门控一对后 687）
+改过的文件换行符                             → 全 LF（CRLF 计数均为 0）
 新注释里的半角双引号                         → 无（按 §5 改用「」）
 git status --porcelain -- shaders docs     → 只出现本次打算提交的文件（另有工作区原有的 MEMO.md 改动与未跟踪文件，未触碰）
 ```
@@ -406,8 +428,12 @@ git status --porcelain -- shaders docs     → 只出现本次打算提交的文
 | `efb08c94` `docs(taa)` | en 的 taa模式文案 + 四个质量模式专属旋钮的「仅质量模式」tooltip |
 | `73fc196a` `docs(taa)` | 本审查报告入库 |
 | `63c87cd9` `chore(taa)` | 删除死文件 `program/post/TemporalAA.fragold` |
-| `revert(taa)` | 撤回 `TAA_PREV_JITTER` / `TAA_HISTORY_RESET`（用户裁定不需要），只留 `TAA_CLIP_STDDEV_MIN` |
-| `docs(taa)` | 报告同步：P1-3 / P2-2 标记为用户裁定不做 |
+| `7b709f90` `revert(taa)` | 撤回 `TAA_PREV_JITTER` / `TAA_HISTORY_RESET`（用户裁定不需要） |
+| `8f108c6b` `docs(taa)` | 报告同步：P1-3 / P2-2 标记为用户裁定不做 |
+| `36495217` `fix(taa)` | 运动降权不再由 `MOTION_BLUR` 门控 |
+| `bc6ef6c8` `feat(taa)` | 新增 `TAA_HISTORY_WEIGHT`（性能模式历史权重可调，默认 0.9 = 现状） |
+| `1d921599` `feat(taa)` | Default 档开启 `TAA_CLOSEST_FRAGMENT`（不加物体运动矢量的替代） |
+| 本条 `docs(taa)` | 报告同步：P2-1 / F1 / F3 的最终处置 |
 
 **审查用到的旁证（仓库外）**：`shaderpacks/Revelation-AD-edit.txt`（Iris 记住值，2026-10-15 21:48）
 里 TAA 相关只有 `TAA_MAX_ACCUM_FRAMES=24.0` ⇒ 用户从未切过 `TAA_QUALITY_MODE`，
