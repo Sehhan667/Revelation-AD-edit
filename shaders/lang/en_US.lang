@@ -552,6 +552,7 @@ value.TAA_QUALITY_MODE.0=Quality
 value.TAA_QUALITY_MODE.1=Performance
 option.TAA_QUALITY_MODE.comment=Quality = Playdead YCoCg temporal accumulation; the knobs marked Quality-only below apply in this mode only. Performance = MakeUp fast RGB convex-hull temporal filter with a fixed 0.9 history weight (~10 frames equivalent), where those knobs have no effect
 option.TAA_CLOSEST_FRAGMENT=Closest Fragment
+option.TAA_CLOSEST_FRAGMENT.comment=Uses the closest fragment in the 3x3 neighbourhood to build the motion vector, improving ghosting on moving objects (TAA motion vectors only carry camera motion). On by default; costs 4 extra depth samples per pixel, turn it off if you need the frames
 option.TAA_SHARPEN=Sharpen
 option.TAA_SHARPEN.comment=Quality mode only (Performance mode always uses convex-hull clipping and never sharpens)
 option.TAA_CLIPPING=Clipping

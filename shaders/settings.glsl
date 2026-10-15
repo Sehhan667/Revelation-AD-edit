@@ -495,7 +495,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 /* TAA */
 	#define TAA_ENABLED // Enables temporal Anti-Aliasing
-	//#define TAA_CLOSEST_FRAGMENT // Caclulates the closest fragment for TAA. Improves ghosting in the motion objects
+	// [2026-10-15] 经用户裁定默认开启：TAA 的运动矢量只含相机运动（无物体运动矢量，见评审 F1），
+	// 运动物体靠这一个开关治轮廓拖影。代价 = 每像素 4 次深度 tap（CrossClosestFragment 取 4 个对角
+	// 邻域的最近片元来算运动矢量）。上游 1reve-main 也默认开，AD-edit 此前为性能关掉。
+	#define TAA_CLOSEST_FRAGMENT // Caclulates the closest fragment for TAA. Improves ghosting in the motion objects
 	#define TAA_MAX_ACCUM_FRAMES 64.0 // Maximum number of accumulated frames for TAA. [20.0 24.0 28.0 32.0 36.0 40.0 48.0 56.0 64.0 72.0 80.0 96.0 112.0 128.0 144.0 160.0 192.0 224.0 256.0 320.0 384.0 448.0 512.0 640.0 768.0 896.0 1024.0]
 	// [2026-10-15] 性能模式（默认档）此前把历史权重写死成 0.9，用户无从调整「拖影 ↔ 噪点」。
 	// 现改为可调，默认 0.9 = 改动前逐位一致。标定：权重 w ⇒ 当前帧权重 1-w、响应约 1/(1-w) 帧、

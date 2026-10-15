@@ -588,6 +588,7 @@ value.TAA_QUALITY_MODE.0=质量
 value.TAA_QUALITY_MODE.1=性能
 option.TAA_QUALITY_MODE.comment=质量=原版 Playdead 的 YCoCg 时域累积，下面标了「仅质量」的旋钮只在这一档生效；性能=MakeUp 快速 RGB 凸包时域，固定历史权重 0.9（等效约 10 帧），那些旋钮在这一档不起作用
 option.TAA_CLOSEST_FRAGMENT=片元择邻
+option.TAA_CLOSEST_FRAGMENT.comment=用 3x3 邻域里最近的片元来算运动矢量，改善运动物体的轮廓拖影（TAA 的运动矢量只含相机运动）。默认开；每像素多 4 次深度采样，嫌卡可关
 option.TAA_SHARPEN=锐化
 option.TAA_SHARPEN.comment=仅质量模式生效（性能模式恒用凸包裁切，没有锐化）
 option.TAA_CLIPPING=方差裁切
