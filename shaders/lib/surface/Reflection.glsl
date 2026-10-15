@@ -98,6 +98,13 @@
 #ifndef NONMETAL_REFLECTION_BRIGHTNESS
     #define NONMETAL_REFLECTION_BRIGHTNESS 2.5 // [1.0 1.5 2.0 2.5 3.0 4.0 5.0]  增强非金属反射亮度
 #endif
+
+// 反射权重上限（防自激）：反射源 colortex4 存的是**上一帧已含反射**的画面，权重 ≥1 时
+// 「反射自己 / 反射另一个反光面」的光路每帧放大一次（增益 >1 发散，表现为掠射带爆亮）。
+// 0.85 ⇒ 回路增益 <1、极限放大 1/(1-0.85)≈6.7 倍；调小更稳、调到 1.0 以上则不复位。
+#ifndef REFLECTION_LOOP_WEIGHT_MAX
+    #define REFLECTION_LOOP_WEIGHT_MAX 0.85
+#endif
 #ifndef REFLECTION_FALLBACK_BASE
     #define REFLECTION_FALLBACK_BASE 0.0 // 不再使用
 #endif
@@ -430,6 +437,9 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
                 if (isRoughReflective) {
                     clampedFresnel *= roughDim;
                 }
+                // 下面统一乘 NONMETAL_REFLECTION_BRIGHTNESS（非金属增强），这里按那个倍率预先折算，
+                // 使画布项的最终权重不超过上限 —— 否则增强会把权重顶到 1.25 而自激（见该宏处注释）。
+                clampedFresnel = min(clampedFresnel, REFLECTION_LOOP_WEIGHT_MAX * rcp(NONMETAL_REFLECTION_BRIGHTNESS));
             }
             
             // SSR 颜色：叶瓣多方向平均 / 粗糙圆盘模糊 / 常规单次采样
