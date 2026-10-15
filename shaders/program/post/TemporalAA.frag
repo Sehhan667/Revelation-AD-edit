@@ -148,13 +148,17 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
 
         float accumFrames = min(++temporalData.a, TAA_MAX_ACCUM_FRAMES);
 
-        // 固定历史权重 0.9（新帧 0.1，等效约 10 帧指数平均，抗噪优先）
-        const float historyWeight = 0.9;
+        // [2026-10-15 历史可调] 权重改由 TAA_HISTORY_WEIGHT 提供（默认 0.9 = 改动前逐位一致）。
+        // 本模式只有这一个旋钮能调「拖影 ↔ 噪点」：w ⇒ 当前帧权重 1-w、响应约 1/(1-w) 帧、
+        // 噪声等效累积约 (1+w)/(1-w) 帧（0.9 ⇒ 0.10 / 约 10 帧 / 约 19 帧）。下方 clamp 上界 1.0
+        // 保证 mix 不外插。
+        const float historyWeight = TAA_HISTORY_WEIGHT;
         // [2026-10-15 单位修复] 原式 length(prevCoord - screenCoord) * 10.0 * 0.02 是 UV 单位的量级：
         // 1920 宽、10 像素/帧的运动只把 0.9 降到 0.899（万分之几）= 等于没有抗拖影（质量模式同一意图
-        // 用的是像素单位 length(motionVector * viewSize)，那是有效的）。改为像素单位并按 0.01 标定：
-        // 10 像素/帧 ⇒ 0.80、20 ⇒ 0.70、50 ⇒ 0.40、90 ⇒ 0.0（历史权重表；当前帧权重随之由 0.10 升到
-        // 0.20/0.30/0.60/1.00）。静止镜头 velocityPixels = 0 ⇒ blendFactor 恰为 0.9，逐位不变。
+        // 用的是像素单位 length(motionVector * viewSize)，那是有效的）。改为像素单位并按 0.01 标定
+        // （下面的数字以默认权重 0.9 计）：10 像素/帧 ⇒ 0.80、20 ⇒ 0.70、50 ⇒ 0.40、90 ⇒ 0.0
+        // （当前帧权重随之由 0.10 升到 0.20/0.30/0.60/1.00）。静止镜头 velocityPixels = 0 ⇒ blendFactor
+        // 恰为 TAA_HISTORY_WEIGHT 本身，不动一格。
         // [2026-10-15 去门控] 本段原先包在 #ifdef MOTION_BLUR 里 ⇒ 用户关掉「动态模糊」这个后处理
         // 开关会连带关掉 TAA 唯一的运动拒绝（隐藏耦合，见评审 P2-1）。该由 MOTION_BLUR 门控的是
         // 运动矢量的写出（motionVectorOut / colortex3，只服务运动模糊），不是 TAA 的抗拖影。

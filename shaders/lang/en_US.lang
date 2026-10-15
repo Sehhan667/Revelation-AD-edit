@@ -564,6 +564,8 @@ option.TAA_MAX_ACCUM_FRAMES=Max Accumulated Frames
 option.TAA_MAX_ACCUM_FRAMES.comment=Quality mode only (Performance mode uses a fixed 0.9 history weight, ~10 frames equivalent, so this has no effect there)
 option.TAA_ANTIFLICKER=Anti-flicker
 option.TAA_ANTIFLICKER.comment=Quality mode only
+option.TAA_HISTORY_WEIGHT=History Weight
+option.TAA_HISTORY_WEIGHT.comment=Performance mode only. Trades ghosting against noise: higher = cleaner but longer trails (0.9 = 10 percent current frame, ~10 frame response; 0.95 = 5 percent, ~20 frames). The default 0.9 is identical to the old fixed value; the weight is reduced automatically with motion
 
 option.MOTION_BLUR=Motion Blur
 option.MOTION_BLUR_SAMPLES=Motion Blur Samples

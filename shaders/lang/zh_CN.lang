@@ -600,6 +600,8 @@ option.TAA_MAX_ACCUM_FRAMES=最大累积帧数
 option.TAA_MAX_ACCUM_FRAMES.comment=仅质量模式生效（性能模式是固定历史权重 0.9，等效约 10 帧，本项不起作用）
 option.TAA_ANTIFLICKER=抗闪烁
 option.TAA_ANTIFLICKER.comment=仅质量模式生效
+option.TAA_HISTORY_WEIGHT=历史权重
+option.TAA_HISTORY_WEIGHT.comment=仅性能模式生效。调的是「拖影 ↔ 噪点」：越大越干净、拖影越长（0.9=当前帧只占 10%、响应约 10 帧；0.95=当前帧 5%、约 20 帧）。默认 0.9 与旧版完全一致；运动时权重会按速度自动下调
 
 option.MOTION_BLUR=动态模糊
 option.MOTION_BLUR_SAMPLES=动态模糊采样数

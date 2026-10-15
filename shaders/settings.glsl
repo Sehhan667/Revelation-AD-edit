@@ -497,6 +497,11 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define TAA_ENABLED // Enables temporal Anti-Aliasing
 	//#define TAA_CLOSEST_FRAGMENT // Caclulates the closest fragment for TAA. Improves ghosting in the motion objects
 	#define TAA_MAX_ACCUM_FRAMES 64.0 // Maximum number of accumulated frames for TAA. [20.0 24.0 28.0 32.0 36.0 40.0 48.0 56.0 64.0 72.0 80.0 96.0 112.0 128.0 144.0 160.0 192.0 224.0 256.0 320.0 384.0 448.0 512.0 640.0 768.0 896.0 1024.0]
+	// [2026-10-15] 性能模式（默认档）此前把历史权重写死成 0.9，用户无从调整「拖影 ↔ 噪点」。
+	// 现改为可调，默认 0.9 = 改动前逐位一致。标定：权重 w ⇒ 当前帧权重 1-w、响应约 1/(1-w) 帧、
+	// 噪声等效累积约 (1+w)/(1-w) 帧（0.9 ⇒ 当前帧 0.10 / 约 10 帧 / 约 19 帧；0.95 ⇒ 0.05/20/39）。
+	// 上界被 BLEND 的 clamp 收在 1.0 内，故 mix 不会外插（呼应 2026-09-02 那条蓝溢出教训）。
+	#define TAA_HISTORY_WEIGHT 0.9 // 性能模式的历史权重（越大越干净、拖影越长）[0.5 0.6 0.7 0.75 0.8 0.85 0.875 0.9 0.925 0.95 0.975 0.99]
 
 	#define TAA_CLIPPING
 	#define TAA_AGGRESSION 2.0 // [1.0 1.05 1.1 1.15 1.2 1.25 1.3 1.35 1.4 1.45 1.5 1.55 1.6 1.65 1.7 1.75 1.8 1.85 1.9 1.95 2.0 2.05 2.1 2.15 2.2 2.25 2.3 2.35 2.4 2.45 2.5 2.55 2.6 2.65 2.7 2.75 2.8 2.85 2.9 2.95 3.0]
