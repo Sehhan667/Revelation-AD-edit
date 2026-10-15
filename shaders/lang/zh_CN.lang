@@ -586,23 +586,23 @@ option.TAA_ENABLED=时域抗锯齿(TAA)
 option.TAA_QUALITY_MODE=taa模式
 value.TAA_QUALITY_MODE.0=质量
 value.TAA_QUALITY_MODE.1=性能
-option.TAA_QUALITY_MODE.comment=质量=原版 Playdead 的 YCoCg 时域累积，下面标了「仅质量」的旋钮只在这一档生效；性能=MakeUp 快速 RGB 凸包时域，固定历史权重 0.9（等效约 10 帧），那些旋钮在这一档不起作用
+option.TAA_QUALITY_MODE.comment=质量=原版 Playdead 的 YCoCg 时域累积，标了「仅质量」的旋钮只在这一档生效；性能=MakeUp 快速 RGB 凸包时域（固定权重），那些旋钮不起作用
 option.TAA_CLOSEST_FRAGMENT=片元择邻
-option.TAA_CLOSEST_FRAGMENT.comment=用 3x3 邻域里最近的片元来算运动矢量，改善运动物体的轮廓拖影（TAA 的运动矢量只含相机运动）。默认开；每像素多 4 次深度采样，嫌卡可关
+option.TAA_CLOSEST_FRAGMENT.comment=用邻域最近片元算运动矢量，改善运动物体轮廓拖影。默认开；每像素多 4 次深度采样，嫌卡可关
 option.TAA_SHARPEN=锐化
-option.TAA_SHARPEN.comment=仅质量模式生效（性能模式恒用凸包裁切，没有锐化）
+option.TAA_SHARPEN.comment=仅质量模式生效
 option.TAA_CLIPPING=方差裁切
 option.TAA_CLIPPING.comment=仅质量模式生效
 option.TAA_AGGRESSION=裁切容差
 option.TAA_AGGRESSION.comment=仅质量模式生效
 option.TAA_CLIP_STDDEV_MIN=裁切标准差下限
-option.TAA_CLIP_STDDEV_MIN.comment=仅质量模式生效。0.0=现状；但平坦区域（天空、纯色墙）标准差为 0 时存在 0/0=NaN 的入口，填 0.001 之类可兜住
+option.TAA_CLIP_STDDEV_MIN.comment=仅质量模式生效。0.0=现状；平坦区域（天空、纯色墙）标准差为 0 时会出 0/0=NaN，可填 0.001
 option.TAA_MAX_ACCUM_FRAMES=最大累积帧数
-option.TAA_MAX_ACCUM_FRAMES.comment=仅质量模式生效（性能模式是固定历史权重 0.9，等效约 10 帧，本项不起作用）
+option.TAA_MAX_ACCUM_FRAMES.comment=仅质量模式生效（性能模式用「历史权重」）
 option.TAA_ANTIFLICKER=抗闪烁
 option.TAA_ANTIFLICKER.comment=仅质量模式生效
 option.TAA_HISTORY_WEIGHT=历史权重
-option.TAA_HISTORY_WEIGHT.comment=仅性能模式生效。调的是「拖影 ↔ 噪点」：越大越干净、拖影越长（0.9=当前帧只占 10%、响应约 10 帧；0.95=当前帧 5%、约 20 帧）。默认 0.9 与旧版完全一致；运动时权重会按速度自动下调
+option.TAA_HISTORY_WEIGHT.comment=仅性能模式生效。越大越干净、拖影越长（0.9=当前帧占 10%，0.95=5%）；运动时按速度自动下调
 
 option.MOTION_BLUR=动态模糊
 option.MOTION_BLUR_SAMPLES=动态模糊采样数

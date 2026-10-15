@@ -2,7 +2,7 @@
 --------------------------------------------------------------------------------
     Revelation Shaders - Hybrid Temporal Reprojection Anti-Aliasing
     Mode 0 (High Quality): Playdead's variance-clipping & perceptual YCoCg TAA
-    Mode 1 (High Performance): MakeUp Fast RGB TAA (fixed history weight)
+    Mode 1 (High Performance): MakeUp Fast RGB TAA
 --------------------------------------------------------------------------------
 
 
@@ -16,15 +16,10 @@
 
 //======// 配置与宏定义 //=======================================================================//
 
-// [2026-09-02] GUI/profile 的 TAA_QUALITY_MODE 应优先生效：改为 #ifndef 包裹的默认值，
-// 仅当编译行/profile 未注入时才用此处默认 1。原裸 #define 会覆盖 profile 注入的 0 →
-// GUI 选"高画质"不生效、始终跑高性能模式。
+// #ifndef 包裹：让 GUI/profile 注入的值优先，裸 #define 会盖掉它
 #ifndef TAA_QUALITY_MODE
     #define TAA_QUALITY_MODE 1 // [0 1] 0: 高画质模式 (原版 Playdead) | 1: 高性能模式 (MakeUp Fast TAA)
 #endif
-
-// [2026-09-02] 移除硬性 #undef：TAA_SHARPEN 曾被此段强制锁死，无论 GUI/profile 如何设置都不生效。
-// 现交由 settings/profile 的 TAA_SHARPEN 开关控制，开启时历史采样走 Catmull-Rom 抗振铃锐化。
 
 //======// 基础引用 //===========================================================================//
 
@@ -93,7 +88,6 @@ vec3 historyClipAABB(in vec3 history, in vec3 center, in vec3 extent) {
 //======// 方案 1：高性能模式专属函数 (MakeUp RGB ConvexHull，优化版) //===================================//
 #if TAA_QUALITY_MODE == 1
 
-// 直接返回裁剪后的 RGB，不再需要 a 通道
 vec3 convexHull(
     vec3 c, vec3 previous, vec3 up, vec3 down, vec3 left, vec3 right,
     vec3 ul, vec3 ur, vec3 dl, vec3 dr
@@ -119,7 +113,7 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
     ivec2 texel = uvToTexel(screenCoord + taaJitter * 0.5);
     vec2 prevCoord = screenCoord - motionVector;
 
-    // --- 模式 1：高性能 MakeUp Fast TAA（固定高历史权重） ---
+    // --- 模式 1：高性能 MakeUp Fast TAA ---
     #if TAA_QUALITY_MODE == 1
         vec3 currentRGB = YCoCgToRGB(loadSceneMain(texel));   // colortex0 存 YCoCg，转回 RGB
 
@@ -129,10 +123,7 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
         vec4 temporalData = texture(colortex1, prevCoord);
         vec3 previousRGB = temporalData.rgb;                  // colortex1 存 RGB
 
-        // [2026-09-03 修复凸包色彩] colortex0 存 YCoCg；邻居与中心同样要 YCoCg->RGB
-        // 后再做凸包裁剪。凸包是逐通道 clamp，必须在 RGB（感知线性）空间进行——
-        // 在 YCoCg 空间对各通道独立 clamp 会破坏 RGB 耦合，低亮度红区(R高/B≈0)时
-        // Co/Cg 被强夹，转回 RGB 后 B 被挤出成蓝色拖影（性能模式专有）。
+        // 凸包是逐通道 clamp，必须转回 RGB 再做：在 YCoCg 空间夹会把 B 挤成蓝色拖影
         #define FETCH_NEIGHBOUR(off) YCoCgToRGB(texelFetch(colortex0, texel + (off), 0).rgb)
         vec3 up    = FETCH_NEIGHBOUR(ivec2( 0,  1));
         vec3 down  = FETCH_NEIGHBOUR(ivec2( 0, -1));
@@ -148,26 +139,15 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
 
         float accumFrames = min(++temporalData.a, TAA_MAX_ACCUM_FRAMES);
 
-        // [2026-10-15 历史可调] 权重改由 TAA_HISTORY_WEIGHT 提供（默认 0.9 = 改动前逐位一致）。
-        // 本模式只有这一个旋钮能调「拖影 ↔ 噪点」：w ⇒ 当前帧权重 1-w、响应约 1/(1-w) 帧、
-        // 噪声等效累积约 (1+w)/(1-w) 帧（0.9 ⇒ 0.10 / 约 10 帧 / 约 19 帧）。下方 clamp 上界 1.0
-        // 保证 mix 不外插。
+        // 历史权重：越大越干净、拖影越长（0.9 = 当前帧占 10%）
         const float historyWeight = TAA_HISTORY_WEIGHT;
-        // [2026-10-15 单位修复] 原式 length(prevCoord - screenCoord) * 10.0 * 0.02 是 UV 单位的量级：
-        // 1920 宽、10 像素/帧的运动只把 0.9 降到 0.899（万分之几）= 等于没有抗拖影（质量模式同一意图
-        // 用的是像素单位 length(motionVector * viewSize)，那是有效的）。改为像素单位并按 0.01 标定
-        // （下面的数字以默认权重 0.9 计）：10 像素/帧 ⇒ 0.80、20 ⇒ 0.70、50 ⇒ 0.40、90 ⇒ 0.0
-        // （当前帧权重随之由 0.10 升到 0.20/0.30/0.60/1.00）。静止镜头 velocityPixels = 0 ⇒ blendFactor
-        // 恰为 TAA_HISTORY_WEIGHT 本身，不动一格。
-        // [2026-10-15 去门控] 本段原先包在 #ifdef MOTION_BLUR 里 ⇒ 用户关掉「动态模糊」这个后处理
-        // 开关会连带关掉 TAA 唯一的运动拒绝（隐藏耦合，见评审 P2-1）。该由 MOTION_BLUR 门控的是
-        // 运动矢量的写出（motionVectorOut / colortex3，只服务运动模糊），不是 TAA 的抗拖影。
+        // 运动越快越少混历史（像素单位；20 像素/帧 ⇒ 权重降 0.2）
         float velocityPixels = length((prevCoord - screenCoord) * viewSize);
         float blendFactor = clamp(historyWeight - velocityPixels * 0.01, 0.0, 1.0);
 
         return vec4(mix(currentRGB, previousClipped, blendFactor), temporalData.a);
 
-    // --- 模式 0：高画质 Playdead YCoCg TAA（裁剪默认关闭） ---
+    // --- 模式 0：高画质 Playdead YCoCg TAA ---
     #else
         vec3 currData = loadSceneMain(texel);
 
@@ -185,7 +165,6 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
         float currLum = currData.x, prevLum = prevData.x;
         float temporalContrast = saturate(abs(currLum - prevLum) / max(currLum, prevLum));
 
-        // 默认不裁剪（原版行为），拖影问题因此消失
         #ifdef TAA_CLIPPING
             vec3 moment1 = currData;
             vec3 moment2 = currData * currData;
@@ -200,10 +179,7 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
 
             vec3 clipStdDev = sqrt(abs(moment2 - moment1 * moment1)) * TAA_AGGRESSION;
 
-            // [2026-10-15 裁切标准差下限] 平坦 3x3 邻域（天空、纯色墙面；fp16 下很常见）标准差
-            // 逐通道可为 0，收敛后 prevData == moment1 时下面 prevData / clipStdDev 就是 0/0 = NaN，
-            // 而 saturate(NaN) 在 GLSL 里未定义（不同 GPU 可能返回 NaN 并顺着后面的除法扩散成
-            // 局部黑/白噪点）。默认 0.0 ⇒ max(x, 0) 对非负的 clipStdDev 逐位恒等，默认观感不变。
+            // 下限防 0/0：平坦邻域 stdDev 为 0 时 prevData / clipStdDev 会出 NaN
             clipStdDev = max(clipStdDev, vec3(TAA_CLIP_STDDEV_MIN));
 
             // 椭球交集裁剪
@@ -216,10 +192,9 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
         prevData = mix(prevData, currData, sdot(fract(prevCoord * viewSize) - 0.5) * 0.5);
 
         float blendWeight = min(++temporalData.a, TAA_MAX_ACCUM_FRAMES);
-        // [2026-09-02] 抗闪烁：contrast 增大时抱紧历史（blendWeight 增大 → rcp 减小）。
+        // 对比度大时抱紧历史（抗闪烁）
         blendWeight *= 1.0 + sqr(temporalContrast) * TAA_ANTIFLICKER;
-        // [2026-09-02 运动抗拖影] 运动速度大时降低历史权重、加速让位当前帧，缓解动
-        // 物体拖影。clamp 下界 1.0 保证 rcp(blendWeight)<=1，mix 不会外插 → 不重复蓝溢。
+        // 运动时降低历史权重；下界 1.0 保证 rcp(blendWeight) <= 1，mix 不外插
         float motionPixels = length(motionVector * viewSize);
         blendWeight = max(blendWeight * (1.0 - saturate(motionPixels * 0.02)), 1.0);
 
@@ -264,9 +239,7 @@ void main() {
             temporalOut = vec4(loadSceneMain(screenTexel), 1.0);
         #endif
     #else
-        // RENDER_MODE 0（离线渲染/出图）的静止相机累积路径。
-        // 本路径只在相机完全不动的帧生效，未抖动的像素中心恰好命中同一个纹素（distance < EPS），
-        // 让每个像素累积自己的抖动相位才是「抖动超采样」的本意；这里不做任何历史坐标偏移。
+        // RENDER_MODE 0（离线渲染）：只在相机完全静止的帧累积，让每个像素累自己的抖动相位
         ivec2 srcTexel = uvToTexel(screenCoord + taaJitter * 0.5);
         temporalOut = vec4(loadSceneMain(srcTexel), 1.0);
 

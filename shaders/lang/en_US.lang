@@ -550,23 +550,23 @@ option.TAA_ENABLED=Temporal Anti-Aliasing
 option.TAA_QUALITY_MODE=TAA Mode
 value.TAA_QUALITY_MODE.0=Quality
 value.TAA_QUALITY_MODE.1=Performance
-option.TAA_QUALITY_MODE.comment=Quality = Playdead YCoCg temporal accumulation; the knobs marked Quality-only below apply in this mode only. Performance = MakeUp fast RGB convex-hull temporal filter with a fixed 0.9 history weight (~10 frames equivalent), where those knobs have no effect
+option.TAA_QUALITY_MODE.comment=Quality = Playdead YCoCg temporal accumulation; the knobs marked Quality-only apply in this mode only. Performance = MakeUp fast RGB convex-hull temporal filter, where those knobs have no effect
 option.TAA_CLOSEST_FRAGMENT=Closest Fragment
-option.TAA_CLOSEST_FRAGMENT.comment=Uses the closest fragment in the 3x3 neighbourhood to build the motion vector, improving ghosting on moving objects (TAA motion vectors only carry camera motion). On by default; costs 4 extra depth samples per pixel, turn it off if you need the frames
+option.TAA_CLOSEST_FRAGMENT.comment=Builds the motion vector from the closest fragment in the neighbourhood, improving ghosting on moving objects. On by default; costs 4 extra depth samples per pixel
 option.TAA_SHARPEN=Sharpen
-option.TAA_SHARPEN.comment=Quality mode only (Performance mode always uses convex-hull clipping and never sharpens)
+option.TAA_SHARPEN.comment=Quality mode only
 option.TAA_CLIPPING=Clipping
 option.TAA_CLIPPING.comment=Quality mode only
 option.TAA_AGGRESSION=Clipping Aggression
 option.TAA_AGGRESSION.comment=Quality mode only
 option.TAA_CLIP_STDDEV_MIN=Clipping StdDev Floor
-option.TAA_CLIP_STDDEV_MIN.comment=Quality mode only. 0.0 keeps current behaviour; a flat region (sky, flat wall) with zero stddev hits a 0/0 = NaN path, so 0.001 is a safe floor
+option.TAA_CLIP_STDDEV_MIN.comment=Quality mode only. 0.0 keeps current behaviour; a flat region with zero stddev hits a 0/0 = NaN path, so 0.001 is a safe floor
 option.TAA_MAX_ACCUM_FRAMES=Max Accumulated Frames
-option.TAA_MAX_ACCUM_FRAMES.comment=Quality mode only (Performance mode uses a fixed 0.9 history weight, ~10 frames equivalent, so this has no effect there)
+option.TAA_MAX_ACCUM_FRAMES.comment=Quality mode only (Performance mode uses History Weight instead)
 option.TAA_ANTIFLICKER=Anti-flicker
 option.TAA_ANTIFLICKER.comment=Quality mode only
 option.TAA_HISTORY_WEIGHT=History Weight
-option.TAA_HISTORY_WEIGHT.comment=Performance mode only. Trades ghosting against noise: higher = cleaner but longer trails (0.9 = 10 percent current frame, ~10 frame response; 0.95 = 5 percent, ~20 frames). The default 0.9 is identical to the old fixed value; the weight is reduced automatically with motion
+option.TAA_HISTORY_WEIGHT.comment=Performance mode only. Higher = cleaner but longer trails (0.9 = 10 percent current frame, 0.95 = 5 percent); reduced automatically with motion
 
 option.MOTION_BLUR=Motion Blur
 option.MOTION_BLUR_SAMPLES=Motion Blur Samples
