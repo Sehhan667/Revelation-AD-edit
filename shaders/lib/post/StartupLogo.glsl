@@ -69,10 +69,12 @@
     #define LOGO_AD_FADE_FRAMES 0.0       // 0 = 文字不单独淡入（整幅一起）；30 = 旧行为
 #endif
 
-// [2026-10-08 按需求移除字母] 启动 logo 只保留主字形（ZV 标志），不再绘制底下的 "AD Edit"。
-// 置 1 即调回来：字形表 AD_STROKES 与 RenderStartupText 都还在，只是默认不参与绘制。
+// [2026-10-09 按需求恢复字母] 启动 logo = 主字形（ZV 标志）+ 正下方的 "AD Edit"。
+// 置 0 即回到 2026-10-08 那版"只画主字形"：字形表 AD_STROKES 与 RenderStartupText 都还在。
+// 打开后 contentH 会多出"间距 + 文字墨迹高"（LOGO_AD_INK_H 那个 16.7% 的圆角下探），
+// 居中与包围盒早退都跟着变（见 StartupLogoMask）——这也是当初文字底部被裁的原因。
 #ifndef LOGO_SHOW_TEXT
-    #define LOGO_SHOW_TEXT 0
+    #define LOGO_SHOW_TEXT 1
 #endif
 
 // 字形墨迹的真实下边界（单位 = LOGO_AD_H 的倍数）：AD_STROKES 里最大 y = 1.1667，
