@@ -150,20 +150,16 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
 
         // 固定历史权重 0.9（新帧 0.1，等效约 10 帧指数平均，抗噪优先）
         const float historyWeight = 0.9;
-        #ifdef MOTION_BLUR
-            // [2026-10-15 单位修复] 原式 length(prevCoord - screenCoord) * 10.0 * 0.02 是 UV 单位的
-            // 量级：1920 宽、10 像素/帧的运动只把 0.9 降到 0.899（万分之几）= 等于没有抗拖影
-            // （质量模式同一意图用的是像素单位 length(motionVector * viewSize)，那是有效的）。
-            // 改为像素单位并按 0.01 标定：10 像素/帧 ⇒ 0.80、20 ⇒ 0.70、50 ⇒ 0.40、90 ⇒ 0.0
-            // （历史权重表；mix 的当前帧权重随之由 0.10 升到 0.20/0.30/0.60/1.00）。
-            // 静止镜头 velocityPixels = 0 ⇒ blendFactor 恰为 0.9，与改动前逐位一致（静帧不受影响）。
-            // 注：本段仍由 MOTION_BLUR 门控（关掉动态模糊会同时关掉 TAA 的运动降权，见报告 P2-1，
-            // 本次未改，留给用户裁定后单独提交）。
-            float velocityPixels = length((prevCoord - screenCoord) * viewSize);
-            float blendFactor = clamp(historyWeight - velocityPixels * 0.01, 0.0, 1.0);
-        #else
-            float blendFactor = historyWeight;
-        #endif
+        // [2026-10-15 单位修复] 原式 length(prevCoord - screenCoord) * 10.0 * 0.02 是 UV 单位的量级：
+        // 1920 宽、10 像素/帧的运动只把 0.9 降到 0.899（万分之几）= 等于没有抗拖影（质量模式同一意图
+        // 用的是像素单位 length(motionVector * viewSize)，那是有效的）。改为像素单位并按 0.01 标定：
+        // 10 像素/帧 ⇒ 0.80、20 ⇒ 0.70、50 ⇒ 0.40、90 ⇒ 0.0（历史权重表；当前帧权重随之由 0.10 升到
+        // 0.20/0.30/0.60/1.00）。静止镜头 velocityPixels = 0 ⇒ blendFactor 恰为 0.9，逐位不变。
+        // [2026-10-15 去门控] 本段原先包在 #ifdef MOTION_BLUR 里 ⇒ 用户关掉「动态模糊」这个后处理
+        // 开关会连带关掉 TAA 唯一的运动拒绝（隐藏耦合，见评审 P2-1）。该由 MOTION_BLUR 门控的是
+        // 运动矢量的写出（motionVectorOut / colortex3，只服务运动模糊），不是 TAA 的抗拖影。
+        float velocityPixels = length((prevCoord - screenCoord) * viewSize);
+        float blendFactor = clamp(historyWeight - velocityPixels * 0.01, 0.0, 1.0);
 
         return vec4(mix(currentRGB, previousClipped, blendFactor), temporalData.a);
 
