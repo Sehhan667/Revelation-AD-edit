@@ -149,7 +149,9 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
             // 几何剧变骤降少混合历史），这里不再重复调 alpha。仅保留：运动时对该像素做一次
             // 3×3 当前帧邻域平均（前置空间滤波），再进 EAWF，缓解转动脏污。
             {
-                float _motion = length(prevCoord - currCoord);
+                // 用全分辨率 UV 与 screenPos.xy（本帧 renderCoord）比：currCoord 是象限空间 UV，
+                // 两者相减自带 ≈0.25 的假底盘 ⇒ _preSmooth 恒为 1，前置滤波变成每帧无条件执行。
+                float _motion = length(prevCoord - screenPos.xy);
                 float _preSmooth = smoothstep(0.02, 0.06, _motion);
                 if (_preSmooth > 0.0) {
                     vec3 _sum = integratedDiffuse.rgb;
