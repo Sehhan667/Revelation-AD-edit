@@ -1030,8 +1030,9 @@ void main() {
                             voxelGI = YCoCgToRGB(texelFetch(colortex3, texelPos >> 1, 0).rgb);
                         #endif
                     #else
-                        // 光追降噪关闭：直接读 colortex3 半分辨率棋盘信号（未降噪）
-                        voxelGI = YCoCgToRGB(texelFetch(colortex3, texelPos >> 1, 0).rgb);
+                        // 光追降噪关闭：只跳过空间滤波（VarianceEstimate/EAWF），仍读时域累积结果
+                        // （colortex2，Accumulate 写入，含 4 相位棋盘重建）→ 未降噪 = 收敛后的原始信号
+                        voxelGI = YCoCgToRGB(UpscaleDiffuseIndirectAccum(texelPos, worldNormal, length(viewPos), abs(dot(worldNormal, worldDir))));
                     #endif
                     // [2026-09-30 去重复乘] 这里原本是 `voxelGI *= albedo * VOXEL_GI_TRACE_STRENGTH`，
                     // 但信号在 DiffuseIndirect.comp 写出时已经乘过一次（result = traceAcc * rcp(SPP)

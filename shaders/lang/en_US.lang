@@ -710,7 +710,7 @@ option.DEBUG_SUNBOUNCE_VIS.comment=Pinpoints which factor kills the sun bounce. 
 option.DEBUG_VOXEL_RADIANCE=DEBUG_VOXEL_RADIANCE
 
 option.VOXEL_GI_DENOISE=Voxel GI Denoise
-option.VOXEL_GI_DENOISE.comment=Spatio-temporal variance-guided filtering for voxel GI ray tracing. Disable to show raw half-res checkerboard signal (noisy).
+option.VOXEL_GI_DENOISE.comment=Spatial variance-guided filtering for voxel GI ray tracing. Disable to keep temporal accumulation (checkerboard phase reconstruction) while skipping the spatial filter: sharper but noisier.
 option.VOXEL_GI_DENOISE_MODE=Denoise Scheme
 option.VOXEL_GI_DENOISE_MODE.comment=0=SVGF (EAWF a-trous spatial x4, reuses temporal accumulation); 1=PTGI style (single median + depth/normal edge, cheaper). Only affects VXGI; SSILVB unaffected
 option.PTGI_MEDIAN_RADIUS=Median Radius

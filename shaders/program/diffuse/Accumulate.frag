@@ -224,14 +224,9 @@ void main() {
     integratedDiffuse = vec4(0.0);
     encodedNormalDepth = vec4(0.0);
 
-    // [FIX 2026-08-06] 光追降噪关闭（settings.glsl 注释 VOXEL_GI_DENOISE）时跳过时域累积：
-    // 不写 colortex2/14（DeferredLight 走 texelFetch 半分辨率棋盘，不依赖它们）。
-    #ifdef GI_ACTIVE_VXGI
-        #ifndef VOXEL_GI_DENOISE
-            return;
-        #endif
-    #endif
-
+    // 关降噪（VOXEL_GI_DENOISE 未定义）时本 pass 仍要跑：它才是 4 相位棋盘的重建 +
+    // 时域累积（DeferredLight 关降噪时读 colortex2 的累积结果，只跳过 VarianceEstimate/EAWF）。
+    // SSILVB 链（GI_ACTIVE_VXGI 未定义）不受影响。
     if (terrainCheck) {
         #if defined LOD_MOD
             if (lodMask) depth = ViewToScreenDepth(ScreenToViewDepthLod(depth));

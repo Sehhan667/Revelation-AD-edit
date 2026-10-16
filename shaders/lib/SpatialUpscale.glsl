@@ -15,6 +15,11 @@
 #ifdef VOXEL_GI_DENOISE
     #define SVGF_UPSCALE_AVAILABLE
 #endif
+// 关降噪时 VXGI 读的是 colortex2（时域累积结果，不经 VarianceEstimate 搬进 colortex3），
+// 但上采样（含 SVGF_QUALITY=1 的深度感知档）仍要可用 → VXGI 一律标记可用。
+#ifdef GI_ACTIVE_VXGI
+    #define SVGF_UPSCALE_AVAILABLE
+#endif
 #ifdef SVGF_UPSCALE_AVAILABLE
 #ifndef SVGF_QUALITY
     #define SVGF_QUALITY 0 // 半分辨率 GI 的上采样档位：0=仅取中心值（2x2 块状），1=4 邻域深度感知上采样 [0 1]
@@ -30,11 +35,13 @@ float exp2_fast(float x) {
     return uintBitsToFloat(0x3F800000 + int(x * 0x3FB8AA3B));
 }
 
-vec3 UpscaleDiffuseIndirect(in ivec2 texelPos, in vec3 worldNormal, in float viewDistance, in float NdotV) {
+// srcTex：半分辨率 GI 画布（降噪开=colortex3 的滤波结果；降噪关=colortex2 的时域累积结果）。
+// 两者坐标口径一致（都按半分辨率 texel 索引），故只换纹理即可共用同一套上采样。
+vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in vec3 worldNormal, in float viewDistance, in float NdotV) {
     ivec2 halfPos = texelPos >> 1;
     ivec2 texelEnd = ivec2(halfViewEnd) - 1;
 
-    vec3 centerCol = texelFetch(colortex3, halfPos, 0).rgb;
+    vec3 centerCol = texelFetch(srcTex, halfPos, 0).rgb;
     float sumWeight = 1.0;
     vec3 sum = centerCol;
 
@@ -52,7 +59,7 @@ vec3 UpscaleDiffuseIndirect(in ivec2 texelPos, in vec3 worldNormal, in float vie
 
         // 辅助纹理：rg = 八面体编码法线，b = 线性深度
         vec3 aux = texelFetch(colortex14, samplePos, 0).rgb;
-        vec3 color = texelFetch(colortex3, samplePos, 0).rgb;
+        vec3 color = texelFetch(srcTex, samplePos, 0).rgb;
 
         // 深度权重（快速 exp2 近似）
         float depthWeight = exp2_fast(abs(aux.z - viewDistance) * falloff);
@@ -66,6 +73,15 @@ vec3 UpscaleDiffuseIndirect(in ivec2 texelPos, in vec3 worldNormal, in float vie
     }
 
     return sum * rcp(sumWeight);
+}
+
+vec3 UpscaleDiffuseIndirect(in ivec2 texelPos, in vec3 worldNormal, in float viewDistance, in float NdotV) {
+    return UpscaleDiffuseIndirectFrom(colortex3, texelPos, worldNormal, viewDistance, NdotV);
+}
+
+// 关降噪：读时域累积结果（colortex2 由 Accumulate 写入），跳过空间滤波但仍做上采样
+vec3 UpscaleDiffuseIndirectAccum(in ivec2 texelPos, in vec3 worldNormal, in float viewDistance, in float NdotV) {
+    return UpscaleDiffuseIndirectFrom(colortex2, texelPos, worldNormal, viewDistance, NdotV);
 }
 
 #endif
