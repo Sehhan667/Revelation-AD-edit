@@ -1,3 +1,14 @@
+#一些规范（未来逐渐添加）
+不要在文件里写昂长冗余的注释，有必要写简单明了的注释即可。修改记录写在提交里即可，如有要点记入本文件
+工作时遇到以前留下的冗余注释顺手清理掉，不用特意找
+代码要考虑可维护性，不能写出只有ai自己才能看懂的代码
+提交时如无说明，只提交shader本体文件夹，其他文件不进仓库
+
+
+
+
+
+
 # 排查备忘录：天空贴图异常（2026-08-09）
 
 ## 问题现象
@@ -1408,4 +1419,48 @@ VoxelClear 每帧清空 + 体素瓦片 1 格 1 纹素精确光栅化，除此之
   **不是算法本身的问题**）。
 - 查无此文，不要引：「Karis/Chen 2021 Reflection reprojection with implicit ray」、
   「NVIDIA specular denoising with the ratio estimator」（应写为 NRD/ReBLUR 的 pdf 加权与比值形式）。
+
+---
+
+# 备忘：TAA 评审与收口（2026-10-15）
+
+- **结构**：`program/post/TemporalAA.frag` 两个模式。0 质量（Playdead YCoCg + 方差裁切）吃
+  `TAA_MAX_ACCUM_FRAMES` / `TAA_CLIPPING` / `TAA_AGGRESSION` / `TAA_ANTIFLICKER` / `TAA_SHARPEN`；
+  1 性能（MakeUp RGB 凸包）只吃 `TAA_HISTORY_WEIGHT`。默认档是 1（`profile.Default`），质量模式专属
+  旋钮已在 lang 标「仅质量模式生效」。
+- **运动矢量只有相机运动**（深度 + 相机矩阵重投影），全仓没有速度缓冲。**实体/粒子/手臂拿不到
+  「上一帧模型矩阵」**（Iris 只暴露相机的 `gbufferPrevious*`）⇒ 那类只能靠 `TAA_CLOSEST_FRAGMENT`
+  （已默认开）和邻域夹逼兜底，不要再尝试给实体做速度矢量。植物/水面本可解析重算上一帧位移
+  （`Terrain.vert` 的 `frameTimeCounter * WAVING_FOLIAGE_SPEED`、`WaterWave.glsl` 的 `waveTime`
+  都能用 `frameTimeCounter - frameTime` 重算），本次裁定不做。
+- **运动降权必须用像素单位**：`length((prevCoord - screenCoord) * viewSize)`。UV 单位下
+  `* 10.0 * 0.02` 只有万分之几的权重变化，等于没有抗拖影（从上游继承的坑）。该段不再由
+  `MOTION_BLUR` 门控 —— 关掉动态模糊不该关掉 TAA 的抗拖影。
+- 性能模式的历史权重是 `TAA_HISTORY_WEIGHT`（0.9 = 当前帧占 10%，即原写死值），越大越干净、拖影
+  越长；质量模式的 `TAA_MAX_ACCUM_FRAMES` 在性能模式无效，别去拖它。
+- 历史按**未抖动网格**取（不加 `taaJitterPrev`），而 `Accumulate.frag` 用的是加 `taaJitterPrev` 的
+  写法。两种读法都自洽、只差 <0.5 像素，谁更干净要实测 —— 本次裁定不做。
+- 没有接 `historyReset`；`/time set`、切维度后靠凸包夹逼兜底（本次裁定不做）。
+- 反射拖影（`TODO.md` #0）没有专用降噪器，只靠 TAA；运动降权的单位修复对它直接有效。
+- 完整评审（证据、被否决方案、A/B 验法）在历史提交 `73fc196a` 的
+  `docs/TAA_REVIEW_2026-10-15.md`，已按规范 4 移出仓库。
+
+---
+
+# 备忘：反射自激爆亮（2026-10-15）
+
+- **现象**：掠射看水面/冰面/湿地面时反射面"左脚踩右脚"式发白爆表。
+- **根因**：反射源 `colortex4` 是**上一帧已含反射**的画面（`ReprojectScene` ← `colortex1`），而
+  `DeferredLight` 对电介质走**加算**合成，权重 = `min(F,0.5) × NONMETAL_REFLECTION_BRIGHTNESS(2.5)`
+  最高 **1.25** ⇒ 回路增益 ≥1、发散（NdotV ≤ 0.22，入射角 ≳77°）；0.22~0.5 增益 0.5~1.0 ⇒ 放大 2~∞ 倍。
+  水/玻璃的 `F²` 形式（Translucent）与金属的 `REFLECTION_METAL_MIX=0.9` 都严格 <1，**不是**爆表来源。
+- **已修**：`REFLECTION_LOOP_WEIGHT_MAX = 0.85` 封顶（`Reflection.glsl`，按增强倍率预先折算）。
+  对照验证：把它临时改成 1.25，爆表应复现。**2026-10-15 用户实测确认观感 OK**。
+- **未做**（按优先级）：
+  1. **自相交（反射面命中自身）——用户裁定先不处理（2026-10-15），已记入 `TODO.md #7`**。
+     `SSRT_THICK_FLOOR=1.0`（容差 ≥ 一步跨度）与 `REFLECTION_NORMAL_BIAS=0.0`（起点不偏置）叠加，
+     且没有自相交拒绝；封顶只让回路收敛，"镜子照自己"的观感仍在。判据可用现成的 `reflectionDist`。
+  2. `colortex4` 左上象限与泛光 L0 共用，`ReprojectScene` 不写"重投影出屏"的纹素、TAA 清屏又在 SSR
+     消费之后 ⇒ 相机移动时反射会采到上一帧泛光（反射面移动时发亮）。
+  3. `metalness 0.1~0.5` 走加算那条（画布权重≈1.0）增益≈1.0，边际，未一起封顶。
 
