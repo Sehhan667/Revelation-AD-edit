@@ -811,6 +811,7 @@ option.SSILVB_GI_BRIGHTNESS=GI Ray Brightness
 option.SSILVB_HAND_DEPTH_THRESHOLD=GI Hand Culling
 option.SSILVB_HAND_DEPTH_THRESHOLD.comment=Prevents your own hand from affecting the GI; leave at default
 option.SVGF_QUALITY=SVGF Quality
+option.SVGF_QUALITY.comment=Upsampling of the half-res GI: 0 = centre only (visible 2x2 blocks), 1 = 4-tap depth-aware upsampling (smoother)
 option.SVGF_BLUR_RADIUS=SVGF Blur Radius
 option.VISUALIZE_VOXELS=Voxel Visualization
 option.VISUALIZE_VOXELS.comment=Overlays voxel colors on block albedo to inspect the voxelization result

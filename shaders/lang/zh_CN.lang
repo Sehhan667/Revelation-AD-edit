@@ -723,6 +723,7 @@ option.DEBUG_VOXEL_RADIANCE.comment=直接显示传播后的体素辐照度，�
 option.VF_DENSITY_MULT=全局雾气密度
 option.SSS_LOD_ENABLED=lod模组区块内的屏幕空间阴影
 option.SVGF_QUALITY=SVGF质量
+option.SVGF_QUALITY.comment=半分辨率 GI 的上采样档位：0=仅取中心值（会有 2x2 块状），1=4 邻域深度感知上采样（更平滑）
 option.SVGF_BLUR_RADIUS=SVGF模糊半径
 option.SSILVB_GI_BRIGHTNESS=全局光照光线亮度
 option.SSILVB_HAND_DEPTH_THRESHOLD=全局光照手部剔除

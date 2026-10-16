@@ -17,7 +17,7 @@
 #endif
 #ifdef SVGF_UPSCALE_AVAILABLE
 #ifndef SVGF_QUALITY
-    #define SVGF_QUALITY 0 // 未定义（非 SSILVB 菜单配置）时保持原有效行为：仅取中心值
+    #define SVGF_QUALITY 0 // 半分辨率 GI 的上采样档位：0=仅取中心值（2x2 块状），1=4 邻域深度感知上采样 [0 1]
 #endif
 
 // 【唯一保留的可调参数】
