@@ -38,15 +38,9 @@ ivec2 GICanvasCoord(in ivec2 texelPos) {
 // 深度容差平滑度：越接近 0.0 跨越物体的边界越平滑（越不闪），越负则边缘越锐利但易闪烁。
 #define SSILVB_DEPTH_FALLBACK   -0.05   // 推荐范围 [-0.01, -0.10]
 
-// 快速 exp2 近似（替代原生 exp2，大幅降低 ALU 开销，对最终画面影响极小）
-float exp2_fast(float x) {
-    // 位操作近似，适合 x 在 [-1, 1] 区间（此处 depthDiff * fallback 通常在此范围）
-    return uintBitsToFloat(0x3F800000 + int(x * 0x3FB8AA3B));
-}
-
 // srcTex：GI 画布（降噪开=colortex3 的滤波结果；降噪关=colortex2 的时域累积结果）。
 // 两者坐标口径一致（都按 GI 画布 texel 索引），故只换纹理即可共用同一套上采样。
-vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in vec3 worldNormal, in float viewDistance, in float NdotV) {
+vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in vec3 worldNormal, in float viewDistance) {
     ivec2 halfPos = GICanvasCoord(texelPos);
 #ifdef VXGI_FULLRES
     ivec2 texelEnd = ivec2(viewSize) - 2;
@@ -74,8 +68,9 @@ vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in vec3 wor
         vec3 aux = texelFetch(colortex14, samplePos, 0).rgb;
         vec3 color = texelFetch(srcTex, samplePos, 0).rgb;
 
-        // 深度权重（快速 exp2 近似）
-        float depthWeight = exp2_fast(abs(aux.z - viewDistance) * falloff);
+        // 深度权重：原生 exp2（旧的本地位技巧把 log2(e) 的浮点位型当整数比例用，
+        // 深度差 1 格就把权重压到 0.013、差 20 格以上还会溢出成 NaN）
+        float depthWeight = exp2(abs(aux.z - viewDistance) * falloff);
 
         // 法线权重（解码八面体法线并与中心法线点积，保证边缘不跨物体）
         float ndot = saturate(dot(OctDecodeSnorm(aux.xy), worldNormal));
@@ -88,13 +83,13 @@ vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in vec3 wor
     return sum * rcp(sumWeight);
 }
 
-vec3 UpscaleDiffuseIndirect(in ivec2 texelPos, in vec3 worldNormal, in float viewDistance, in float NdotV) {
-    return UpscaleDiffuseIndirectFrom(colortex3, texelPos, worldNormal, viewDistance, NdotV);
+vec3 UpscaleDiffuseIndirect(in ivec2 texelPos, in vec3 worldNormal, in float viewDistance) {
+    return UpscaleDiffuseIndirectFrom(colortex3, texelPos, worldNormal, viewDistance);
 }
 
 // 关降噪：读时域累积结果（colortex2 由 Accumulate 写入），跳过空间滤波但仍做上采样
-vec3 UpscaleDiffuseIndirectAccum(in ivec2 texelPos, in vec3 worldNormal, in float viewDistance, in float NdotV) {
-    return UpscaleDiffuseIndirectFrom(colortex2, texelPos, worldNormal, viewDistance, NdotV);
+vec3 UpscaleDiffuseIndirectAccum(in ivec2 texelPos, in vec3 worldNormal, in float viewDistance) {
+    return UpscaleDiffuseIndirectFrom(colortex2, texelPos, worldNormal, viewDistance);
 }
 
 #endif
