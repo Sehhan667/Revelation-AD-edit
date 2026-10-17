@@ -219,14 +219,21 @@ void main() {
 
     #ifdef VXGI_FULLRES
     ivec2 auxTexel = texelPos;
+    float depth = loadDepth0(auxTexel);
     #else
-    // 固定取 2x2 块的左上像素：跟着棋盘相位轮转会让法线/深度逐帧在 4 个子像素之间跳，
-    // 法线贴图表面上历史几何权重与 EAWF 的法线门限都跟着抖 -> 静止也闪。
-    ivec2 auxTexel = texelPos * 2;
+    // 引导量（法线/深度）必须与棋盘相位解耦，否则法线贴图表面静止也闪。取 2x2 块里
+    // **最近**的子像素：轮廓块里前景胜出，引导量不会落在后面的天空/远墙上（确定性、不随相位变）。
+    ivec2 blockBase = texelPos * 2;
+    ivec2 auxTexel = blockBase;
+    float depth = loadDepth0(auxTexel);
+    for (int _i = 1; _i < 4; ++_i) {
+        ivec2 _t = blockBase + offset2x2[_i];
+        float _d = loadDepth0(_t);
+        if (_d < depth) { depth = _d; auxTexel = _t; }
+    }
     #endif
     vec2 renderCoord = texelToUv(auxTexel);
 
-    float depth = loadDepth0(auxTexel);
     bool terrainCheck = min(GetClosestDepthN(auxTexel), depth) < 1.0;
     #if defined LOD_MOD
         bool lodMask = !terrainCheck;
@@ -248,9 +255,28 @@ void main() {
         #endif
 
         vec3 screenPos = vec3(renderCoord, depth);
+        float viewDepth = ScreenToViewPos(screenPos).z;
         // 用几何法线而非贴图法线：漫反射 GI 的入射光不该被法线贴图的高频细节当成边缘分割
         vec3 checkNormal = FetchGeometryNormal(auxTexel);
 
-        TemporalFilter(texelPos, screenPos, checkNormal);
+        // 轮廓块：本帧样本所在的子像素可能与引导量子像素不在同一层表面（墙 + 后面的天空/远墙）。
+        // 混进去会让 GI 越过轮廓糊过去、并随棋盘相位逐帧跳；EAWF 后几级大步长还会把混合值
+        // 扩散成宽光晕。判据：两者线性视深的相对差 > 2%（用较近的一方做参考，避免远/近量级失真）
+        // ⇒ 丢弃本帧样本、保留历史。
+        bool sameSurface = true;
+        #ifndef VXGI_FULLRES
+            ivec2 sampleTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+            float sampleZ = ScreenToViewPos(vec3(texelToUv(sampleTexel), loadDepth0(sampleTexel))).z;
+            float refZ = max(min(abs(sampleZ), abs(viewDepth)), 0.001);
+            sameSurface = abs(sampleZ - viewDepth) <= 0.02 * refZ;
+        #endif
+
+        if (sameSurface) {
+            TemporalFilter(texelPos, screenPos, checkNormal);
+        } else {
+            // 保留上一帧的累积结果（含帧数 a）与稳定的引导量；不能丢成 0，否则历史被清掉
+            integratedDiffuse  = texelFetch(colortex2, texelPos, 0);
+            encodedNormalDepth = vec4(OctEncodeSnorm(checkNormal), viewDepth, 0.0);
+        }
     }
 }
