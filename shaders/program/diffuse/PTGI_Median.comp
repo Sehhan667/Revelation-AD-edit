@@ -25,11 +25,17 @@
 ---- [EXTRACTED] ---- */
 
 layout (local_size_x = 8, local_size_y = 8) in;
-const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 //======// Utility //=============================================================================//
 
 #include "/lib/Utility.glsl"
+
+// 与 GI 画布同分辨率（默认半分辨率棋盘；VOXEL_GI_FULLRES 全分辨率）。须在 Utility 之后。
+#ifdef VXGI_FULLRES
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+#else
+const vec2 workGroupsRender = vec2(0.5, 0.5);
+#endif
 
 //======// Image //===============================================================================//
 
@@ -48,6 +54,12 @@ layout (rgba16f) restrict uniform image2D colorimg3;
 //======// Main //================================================================================//
 void main() {
 	ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+	// GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
+#ifdef VXGI_FULLRES
+	ivec2 canvasEnd = ivec2(viewSize);
+#else
+	ivec2 canvasEnd = ivec2(halfViewSize);
+#endif
 
 	vec4 center = imageLoad(colorimg3, texel);
 	vec3 centerAux = texelFetch(colortex14, texel, 0).xyz;
@@ -70,7 +82,7 @@ void main() {
 	float invTh = PTGI_EDGE_STRENGTH * 8.0 / centerDepth;
 
 	for (int i = 0; i < 9; ++i) {
-		ivec2 q = clamp(texel + offs[i], ivec2(1), ivec2(halfViewSize) - 2);
+		ivec2 q = clamp(texel + offs[i], ivec2(1), canvasEnd - 2);
 		vec4 cS = imageLoad(colorimg3, q);
 		vec3 aS = texelFetch(colortex14, q, 0).xyz;
 

@@ -1027,7 +1027,7 @@ void main() {
                             // UpscaleDiffuseIndirect 返回 YCoCg 空间信号（colortex3 全链路 YCoCg），须显式转回 RGB
                             voxelGI = YCoCgToRGB(UpscaleDiffuseIndirect(texelPos, worldNormal, length(viewPos), abs(dot(worldNormal, worldDir))));
                         #else
-                            voxelGI = YCoCgToRGB(texelFetch(colortex3, texelPos >> 1, 0).rgb);
+                            voxelGI = YCoCgToRGB(texelFetch(colortex3, GICanvasCoord(texelPos), 0).rgb);
                         #endif
                     #else
                         // 光追降噪关闭：只跳过空间滤波（VarianceEstimate/EAWF），仍读时域累积结果
@@ -1125,7 +1125,7 @@ void main() {
 #ifdef DEBUG_PROBE_GI_VIZ
     // [调试 2026-09-03 探针格覆盖] 纯色覆盖图：绿=探针格内、红=格外。直接 YCoCgToRGB，
     // 不乘强度、不再做伽马(避免双重伽马把绿色压没)——保持覆盖色准。
-    sceneOut = YCoCgToRGB(texelFetch(colortex3, texelPos >> 1, 0).rgb);
+    sceneOut = YCoCgToRGB(texelFetch(colortex3, GICanvasCoord(texelPos), 0).rgb);
 #endif
 
 #ifdef SUBSURFACE_SCATTERING_DIFFUSION

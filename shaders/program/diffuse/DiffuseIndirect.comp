@@ -22,11 +22,18 @@
 //======// Input //===============================================================================//
 
 layout (local_size_x = 16, local_size_y = 16) in;
-const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 //======// Utility //=============================================================================//
 
 #include "/lib/Utility.glsl"
+
+// 追踪分辨率：默认 2x2 棋盘半分辨率（每帧 1/4 像素）；VOXEL_GI_FULLRES 每像素每帧 1 条。
+// 必须放在 Utility.glsl 之后——VXGI_FULLRES 来自 settings.glsl（由 Utility.glsl include）。
+#ifdef VXGI_FULLRES
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+#else
+const vec2 workGroupsRender = vec2(0.5, 0.5);
+#endif
 
 //======// Uniform //=============================================================================//
 
@@ -588,7 +595,12 @@ void main() {
 	#ifdef GI_ACTIVE_IRC
 	ivec2 renderTexel = texelPos * 2;
 	#else
+	#ifdef VXGI_FULLRES
+	// 全分辨率：本像素自己就是采样像素（无棋盘相位）
+	ivec2 renderTexel = texelPos;
+	#else
 	ivec2 renderTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+	#endif
 	#endif
 	float depth = loadDepth0(renderTexel);
 	bool terrainCheck = min(GetClosestDepthN(renderTexel), depth) < 1.0;

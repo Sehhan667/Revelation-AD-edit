@@ -67,6 +67,12 @@ layout (location = 1) out vec4 encodedNormalDepth;
 void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
 	vec3 viewPos = ScreenToViewPos(screenPos);
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
+    // GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
+#ifdef VXGI_FULLRES
+    ivec2 canvasEnd = ivec2(viewSize);
+#else
+    ivec2 canvasEnd = ivec2(halfViewSize);
+#endif
 
 	vec3 prevWorldPos = worldPos + (cameraPosition - previousCameraPosition) * step(0.56, screenPos.z); // To previous frame's world space
     vec3 prevViewPos = transMAD(gbufferPreviousModelView, prevWorldPos); // To previous frame's view space
@@ -89,9 +95,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
         float maxGeometryWeight = 0.0;
 
         // Custom bilinear filter
+        #ifdef VXGI_FULLRES
+        // 全分辨率：历史就是本像素，不需要相位补偿
+        vec2 prevTexel = prevCoord * viewSize - 0.5;
+        #else
         vec2 prevTexel = (prevCoord * viewSize
          - checkerboardOffset2x2[(frameCounter - 1) & 3u]
          - 0.5) * 0.5;
+        #endif
 
         ivec2 floorTexel = ivec2(floor(prevTexel));
         vec2 fractTexel = prevTexel - vec2(floorTexel);
@@ -107,7 +118,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
 
         for (uint i = 0u; i < 4u; ++i) {
             ivec2 sampleTexel = floorTexel + offset2x2[i];
-            if (clamp(sampleTexel, ivec2(0), ivec2(halfViewSize) - 1) == sampleTexel) {
+            if (clamp(sampleTexel, ivec2(0), canvasEnd - 1) == sampleTexel) {
 			    vec3 sampleAux = texelFetch(colortex14, sampleTexel, 0).xyz;
                 vec4 sampleIrradiance = texelFetch(colortex2, sampleTexel, 0);
 
@@ -157,7 +168,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
                     vec3 _sum = integratedDiffuse.rgb;
                     for (int _dy = -1; _dy <= 1; ++_dy) { for (int _dx = -1; _dx <= 1; ++_dx) {
                         ivec2 _t = texelPos + ivec2(_dx, _dy);
-                        if (clamp(_t, ivec2(0), ivec2(halfViewSize) - 1) == _t)
+                        if (clamp(_t, ivec2(0), canvasEnd - 1) == _t)
                             _sum += texelFetch(colortex3, _t, 0).rgb;
                     }}
                     _sum *= 1.0 / 9.0;
@@ -208,7 +219,11 @@ float GetClosestDepthN(in ivec2 texel) {
 void main() {
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
 
+    #ifdef VXGI_FULLRES
+    ivec2 renderTexel = texelPos;
+    #else
     ivec2 renderTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+    #endif
     vec2 renderCoord = texelToUv(renderTexel);
 
     float depth = loadDepth0(renderTexel);

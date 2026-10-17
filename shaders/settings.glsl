@@ -596,6 +596,19 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 		#undef AO_ENABLED
 		#define AO_ENABLED 0
 	#endif
+
+	// ===== 全分辨率 VXGI（默认关；只影响 GI_MODE==2）=====
+	// 关 = 2x2 棋盘半分辨率：每帧只投 1/4 像素，画布存 colortex3 左上象限，时域由
+	//      Accumulate 的 4 相位重建补全（追踪量 1x）。
+	// 开 = 每像素每帧 1 条光线：无棋盘/无象限，GI 缓冲与画面同尺寸（追踪量与缓冲 4x）。
+	// 观感默认不变；开之前看显卡，追踪成本直接 x4。
+	//#define VOXEL_GI_FULLRES
+	#ifdef VOXEL_GI_FULLRES
+		#ifdef GI_ACTIVE_VXGI
+			#define VXGI_FULLRES
+		#endif
+	#endif
+	// GI 画布尺寸/坐标不在这里开宏：各 pass 内部按 VXGI_FULLRES 各取一次局部量，读起来更直观。
 	// ENABLE_VOXELIZATION 是 GUI 布尔开关（shaders.properties screen.voxel + profile.Default 默认开）。
 	// Iris 通过"注释/取消注释本行"来开关（setBooleanDefineValue）。要显示开关必须同时满足：
 	//   1) 本行 `#define ENABLE_VOXELIZATION`（无值，可带注释）→ 布尔选项定义锚点；

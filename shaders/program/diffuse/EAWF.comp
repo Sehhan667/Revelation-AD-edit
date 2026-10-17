@@ -24,11 +24,17 @@
 // #extension GL_NV_compute_shader_derivatives : enable
 
 layout (local_size_x = 8, local_size_y = 8) in;
-const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 //======// Utility //=============================================================================//
 
 #include "/lib/Utility.glsl"
+
+// 与 GI 画布同分辨率（默认半分辨率棋盘；VOXEL_GI_FULLRES 全分辨率）。须在 Utility 之后。
+#ifdef VXGI_FULLRES
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+#else
+const vec2 workGroupsRender = vec2(0.5, 0.5);
+#endif
 
 //======// Image //===============================================================================//
 
@@ -151,6 +157,15 @@ void main() {
 	uvec2 localPos = QuadLayout8x8(gl_LocalInvocationIndex);
 	ivec2 texelPos = ivec2(localPos + gl_WorkGroupID.xy * gl_WorkGroupSize.xy);
 
+	// GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
+#ifdef VXGI_FULLRES
+	ivec2 canvasEnd = ivec2(viewSize);
+	float canvasHeight = viewSize.y;
+#else
+	ivec2 canvasEnd = ivec2(halfViewSize);
+	float canvasHeight = halfViewSize.y;
+#endif
+
 	// [FIX 2026-08-06] 光追降噪关闭（settings.glsl 注释 VOXEL_GI_DENOISE）时：
 	// 透传 colortex3（保持棋盘信号，不做边缘保持滤波）。SSILVB 不受影响（非光追模式正常降噪）。
 	#ifdef GI_ACTIVE_VXGI
@@ -218,7 +233,7 @@ void main() {
 	// gbufferProjection[1][1]=1/tan(fovY/2)，深度1处每世界单位像素 = halfViewSize.y / tanHalfFovY。
 	// NRD_RADIUS=0 → 保持原固定像素步长（不启用）。clamp 防近处爆步长 / 远处趋零。
 	float viewDist = max(-float(normalDepthData.z), 0.25);
-	float pxPerWorldAtZ1 = halfViewSize.y * gbufferProjection[1][1];
+	float pxPerWorldAtZ1 = canvasHeight * gbufferProjection[1][1];
 	float depthFactor = NRD_RADIUS <= 0.0 ? 1.0
 	                    : clamp(NRD_RADIUS * pxPerWorldAtZ1 / viewDist, 0.5, 1.5);
 	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost;
@@ -243,7 +258,7 @@ void main() {
 
 	for (uint i = 0u; i < 9u; ++i) {
 		ivec2 sampleTexel = ivec2(round(sampleTexelBase + offset3x3[i] * offsetScale));
-		if (clamp(sampleTexel, ivec2(1), ivec2(halfViewSize) - 2) == sampleTexel) {
+		if (clamp(sampleTexel, ivec2(1), canvasEnd - 2) == sampleTexel) {
 			f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 
 			f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
@@ -272,7 +287,7 @@ void main() {
 	    else               _axis = vec2( 0.0,  1.0);
 	    for (int _d = 0; _d < 2; ++_d) {
 	        ivec2 sampleTexel = texelPos + ivec2(round(_axis * offsetScale * (_d == 0 ? 1.0 : -1.0)));
-	        if (clamp(sampleTexel, ivec2(1), ivec2(halfViewSize) - 2) == sampleTexel) {
+	        if (clamp(sampleTexel, ivec2(1), canvasEnd - 2) == sampleTexel) {
 	            f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 	            f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
 	            float16_t sampleLuma = sampleColVar.r;
@@ -306,7 +321,7 @@ void main() {
 	        int _k = 0;
 	        for (int _dy = -1; _dy <= 1; ++_dy)
 	        for (int _dx = -1; _dx <= 1; ++_dx) {
-	            ivec2 _t = clamp(texelPos + ivec2(_dx, _dy), ivec2(0), ivec2(halfViewSize) - 1);
+	            ivec2 _t = clamp(texelPos + ivec2(_dx, _dy), ivec2(0), canvasEnd - 1);
 	            _ts[_k] = _t;
 	            _ys[_k] = float(imageLoad(colorimg3, _t).r);
 	            _oi[_k] = _k;

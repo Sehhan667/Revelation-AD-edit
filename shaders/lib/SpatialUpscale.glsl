@@ -4,6 +4,15 @@
 // Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
 // Modified by AnotherCream, 2026.
 #if defined PASS_DEFERRED_LIGHTING
+// GI 画布 texel 坐标（半分辨率 = 全分辨率坐标 >>1，画布在左上象限；全分辨率 = 原样）。
+// 放在上采样可用性宏之外：DeferredLight 的所有 GI 读回都用它（含不走上采样的分支）。
+ivec2 GICanvasCoord(in ivec2 texelPos) {
+#ifdef VXGI_FULLRES
+    return texelPos;
+#else
+    return texelPos >> 1;
+#endif
+}
 // [FIX 2026-08-06] 用简单 #if defined 控制（原复合条件 `#if defined SVGF_ENABLED &&
 // (defined GI_ACTIVE_SSILVB || defined GI_ACTIVE_VXGI)` 会破坏 Iris 对布尔宏 SVGF_ENABLED 的
 // 扫描 → GUI 开关无法真正注释/取消注释 settings.glsl 的 #define → 关掉 SVGF 降噪仍生效）。
@@ -35,11 +44,15 @@ float exp2_fast(float x) {
     return uintBitsToFloat(0x3F800000 + int(x * 0x3FB8AA3B));
 }
 
-// srcTex：半分辨率 GI 画布（降噪开=colortex3 的滤波结果；降噪关=colortex2 的时域累积结果）。
-// 两者坐标口径一致（都按半分辨率 texel 索引），故只换纹理即可共用同一套上采样。
+// srcTex：GI 画布（降噪开=colortex3 的滤波结果；降噪关=colortex2 的时域累积结果）。
+// 两者坐标口径一致（都按 GI 画布 texel 索引），故只换纹理即可共用同一套上采样。
 vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in vec3 worldNormal, in float viewDistance, in float NdotV) {
-    ivec2 halfPos = texelPos >> 1;
+    ivec2 halfPos = GICanvasCoord(texelPos);
+#ifdef VXGI_FULLRES
+    ivec2 texelEnd = ivec2(viewSize) - 2;
+#else
     ivec2 texelEnd = ivec2(halfViewEnd) - 1;
+#endif
 
     vec3 centerCol = texelFetch(srcTex, halfPos, 0).rgb;
     float sumWeight = 1.0;
