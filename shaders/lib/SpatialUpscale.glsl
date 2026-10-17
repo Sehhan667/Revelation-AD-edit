@@ -34,13 +34,13 @@ ivec2 GICanvasCoord(in ivec2 texelPos) {
     #define SVGF_QUALITY 0 // 半分辨率 GI 的上采样档位：0=仅取中心值（2x2 块状），1=4 邻域深度感知上采样 [0 1]
 #endif
 
-// 【唯一保留的可调参数】
-// 深度容差平滑度：越接近 0.0 跨越物体的边界越平滑（越不闪），越负则边缘越锐利但易闪烁。
-#define SSILVB_DEPTH_FALLBACK   -0.05   // 推荐范围 [-0.01, -0.10]
+// 上采样的相对深度阈值陡度：相对视距差 1% → 0.64，3% → 0.13，5% → 0.01
+#define GI_UPSAMPLE_DEPTH_STEEP   64.0
 
 // srcTex：GI 画布（降噪开=colortex3 的滤波结果；降噪关=colortex2 的时域累积结果）。
 // 两者坐标口径一致（都按 GI 画布 texel 索引），故只换纹理即可共用同一套上采样。
-vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in vec3 worldNormal, in float viewDistance) {
+// viewDepth：中心像素的线性视深（= viewPos.z，负值），与 colortex14.z 同口径。
+vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in float viewDepth) {
     ivec2 halfPos = GICanvasCoord(texelPos);
 #ifdef VXGI_FULLRES
     ivec2 texelEnd = ivec2(viewSize) - 2;
@@ -59,21 +59,23 @@ vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in vec3 wor
 
     // 十字采样偏移（4 邻域，保持基本的方向覆盖）
     const ivec2 offsets[4] = ivec2[](ivec2(1,0), ivec2(-1,0), ivec2(0,1), ivec2(0,-1));
-    float falloff = SSILVB_DEPTH_FALLBACK;
+    // 法线基准取画布中心 texel：colortex14 存的是几何法线，不能再拿全分辨率像素的贴图法线来比
+    vec3 centerN = OctDecodeSnorm(texelFetch(colortex14, halfPos, 0).xy);
+    float invDepth = rcp(max(-viewDepth, 0.001));
 
     for (int i = 0; i < 4; ++i) {
         ivec2 samplePos = clamp(halfPos + offsets[i], ivec2(1), texelEnd);
 
-        // 辅助纹理：rg = 八面体编码法线，b = 线性深度
+        // 辅助纹理：rg = 八面体编码（几何）法线，b = 线性视深（负值）
         vec3 aux = texelFetch(colortex14, samplePos, 0).rgb;
         vec3 color = texelFetch(srcTex, samplePos, 0).rgb;
 
-        // 深度权重：原生 exp2（旧的本地位技巧把 log2(e) 的浮点位型当整数比例用，
-        // 深度差 1 格就把权重压到 0.013、差 20 格以上还会溢出成 NaN）
-        float depthWeight = exp2(abs(aux.z - viewDistance) * falloff);
+        // 相对深度权重：两侧都是线性视深（负值），差值再按 |视深| 归一。
+        // 旧写法 `abs(aux.z - 正的视距)` 约等于 2×视距，再乘绝对阈值 ⇒ 权重恒 ≈1、深度感知形同虚设。
+        float depthWeight = exp2(-abs(aux.z - viewDepth) * invDepth * GI_UPSAMPLE_DEPTH_STEEP);
 
-        // 法线权重（解码八面体法线并与中心法线点积，保证边缘不跨物体）
-        float ndot = saturate(dot(OctDecodeSnorm(aux.xy), worldNormal));
+        // 法线权重（两侧同为几何法线，保证边缘不跨物体）
+        float ndot = saturate(dot(OctDecodeSnorm(aux.xy), centerN));
         float weight = ndot * depthWeight;
 
         sum += color * weight;
@@ -83,13 +85,13 @@ vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in vec3 wor
     return sum * rcp(sumWeight);
 }
 
-vec3 UpscaleDiffuseIndirect(in ivec2 texelPos, in vec3 worldNormal, in float viewDistance) {
-    return UpscaleDiffuseIndirectFrom(colortex3, texelPos, worldNormal, viewDistance);
+vec3 UpscaleDiffuseIndirect(in ivec2 texelPos, in float viewDepth) {
+    return UpscaleDiffuseIndirectFrom(colortex3, texelPos, viewDepth);
 }
 
 // 关降噪：读时域累积结果（colortex2 由 Accumulate 写入），跳过空间滤波但仍做上采样
-vec3 UpscaleDiffuseIndirectAccum(in ivec2 texelPos, in vec3 worldNormal, in float viewDistance) {
-    return UpscaleDiffuseIndirectFrom(colortex2, texelPos, worldNormal, viewDistance);
+vec3 UpscaleDiffuseIndirectAccum(in ivec2 texelPos, in float viewDepth) {
+    return UpscaleDiffuseIndirectFrom(colortex2, texelPos, viewDepth);
 }
 
 #endif
