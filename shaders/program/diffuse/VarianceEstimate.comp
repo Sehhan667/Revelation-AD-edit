@@ -51,10 +51,7 @@ writeonly restrict uniform image2D colorimg3;
 const uint padRadius = 1;
 const uvec2 sharedSize = gl_WorkGroupSize.xy + (padRadius << 1);
 
-// 矩用 f32 存：packHalf2x16 在小信号下会把 luma^2 抹成 0（luma <= ~2e-4 时 luma^2 < f16 最小
-// 次正规数 5.96e-8）→ 暗处方差恒为 0 → 空间滤波失去方差引导，而这正是弱光最需要它的地方。
-// 亮处 luma^2 >> 1e-6，半精度相对误差仅 0.05%，改成 f32 在亮处看不出差别。
-shared vec2 sharedMoments[sharedSize.y][sharedSize.x];
+shared uint sharedMoments[sharedSize.y][sharedSize.x];
 
 void SharedPreload() {
     ivec2 groupBase = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy - padRadius);
@@ -76,7 +73,7 @@ void SharedPreload() {
     loadTexel = clamp(loadTexel, ivec2(1), canvasEnd - 2);
 
     float luma = texelFetch(colortex2, loadTexel, 0).r; // We use YCoCg color space
-    sharedMoments[localID.y][localID.x] = vec2(luma, luma * luma);
+    sharedMoments[localID.y][localID.x] = packHalf2x16(vec2(luma, luma * luma));
 
     for (uint stage = 1u; stage < stageNum; ++stage) {
         localIndex = gl_LocalInvocationIndex + stage * groupArea;
@@ -86,7 +83,7 @@ void SharedPreload() {
 
             loadTexel = groupBase + localID;
             luma = texelFetch(colortex2, loadTexel, 0).r; // We use YCoCg color space
-            sharedMoments[localID.y][localID.x] = vec2(luma, luma * luma);
+            sharedMoments[localID.y][localID.x] = packHalf2x16(vec2(luma, luma * luma));
         }
     }
 
@@ -107,12 +104,12 @@ void main() {
     #endif
 
     uvec2 sharedTexel = gl_LocalInvocationID.xy + padRadius;
-    vec2 moments = sharedMoments[sharedTexel.y][sharedTexel.x];
+    vec2 moments = unpackHalf2x16(sharedMoments[sharedTexel.y][sharedTexel.x]);
 
     for (uint i = 0u; i < 8u; ++i) {
         ivec2 sampleOffset = offset3x3N[i];
         uvec2 sampleTexel = sharedTexel + sampleOffset;
-        vec2 sampleMoments = sharedMoments[sampleTexel.y][sampleTexel.x];
+        vec2 sampleMoments = unpackHalf2x16(sharedMoments[sampleTexel.y][sampleTexel.x]);
         moments += sampleMoments;
     }
     moments *= rcp(9.0);
@@ -132,7 +129,5 @@ void main() {
     #endif
 
     float variance = 16.0 * max0(moments.y - moments.x * moments.x);
-    // 存 sigma 而不是 variance：colortex3 是 RGBA16F，暗处方差 1e-8 量级会被半精度抹成 0，
-    // sigma 在 1e-4~1e-2 之间落在 f16 正规区，读回时平方即可还原。
-    imageStore(colorimg3, texelPos, vec4(integratedDiffuse.rgb, sqrt(variance)));
+    imageStore(colorimg3, texelPos, vec4(integratedDiffuse.rgb, variance));
 }

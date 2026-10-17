@@ -64,7 +64,7 @@ layout (location = 1) out vec4 encodedNormalDepth;
     #define SHOULD_APPLY_JITTER
 #endif
 
-void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
+void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, in float accumCap) {
 	vec3 viewPos = ScreenToViewPos(screenPos);
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
     // GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
@@ -144,7 +144,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
             #ifdef OFFLINE_RENDER
                 integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, 1024.0);
             #else
-                integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, SSILVB_MAX_ACCUM_FRAMES);
+                integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, accumCap);
             #endif
 
             if (integratedDiffuse.a < 8.0) {
@@ -250,6 +250,14 @@ void main() {
         vec3 screenPos = vec3(renderCoord, depth);
         vec3 worldNormal = FetchSurfaceNormal(renderTexel);
 
-        TemporalFilter(texelPos, screenPos, worldNormal);
+        // 弱光（只有少量光线照入）：1 SPP 采样太稀疏，32 帧不足以压噪。暗处信号变化慢，
+        // 可以提高时域累积上限——只加长历史、不加大空间模糊，因此不会把画面抹平。
+        float accumCap = SSILVB_MAX_ACCUM_FRAMES;
+        #ifdef VOXEL_GI_DARK_ACCUM
+            float _luma = max(texelFetch(colortex2, texelPos, 0).r, 0.0);
+            float _dark = 1.0 - smoothstep(0.003, 0.06, _luma);
+            accumCap = mix(SSILVB_MAX_ACCUM_FRAMES, SSILVB_MAX_ACCUM_FRAMES * 4.0, _dark);
+        #endif
+        TemporalFilter(texelPos, screenPos, worldNormal, accumCap);
     }
 }

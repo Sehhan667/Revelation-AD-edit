@@ -716,6 +716,8 @@ option.VOXEL_GI_DENOISE_MODE=Denoise Scheme
 option.VOXEL_GI_DENOISE_MODE.comment=0=SVGF (EAWF a-trous spatial x4, reuses temporal accumulation); 1=PTGI style (single median + depth/normal edge, cheaper). Only affects VXGI; SSILVB unaffected
 option.VOXEL_GI_FULLRES=Full Resolution
 option.VOXEL_GI_FULLRES.comment=Off = 2x2 checkerboard half res (1/4 of the pixels traced per frame, filled in over time). On = one ray per pixel per frame (no checkerboard, no quadrant canvas): finer noise, faster convergence. Cost: roughly 4x the tracing and GI buffer size.
+option.VOXEL_GI_DARK_ACCUM=Low-light Denoise
+option.VOXEL_GI_DARK_ACCUM.comment=In dark areas, raise the temporal accumulation cap 4x (32 to 128 frames). Longer history only, no extra spatial blur, so the image is not smeared; the cost is longer trails when lighting changes in the dark.
 option.PTGI_MEDIAN_RADIUS=Median Radius
 option.PTGI_MEDIAN_RADIUS.comment=1=3x3, 2=5x5. Larger = stronger denoise but blurs detail (targets fireflies/single-pixel noise)
 option.PTGI_EDGE_STRENGTH=Edge Preserve Strength

@@ -602,6 +602,8 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//      Accumulate 的 4 相位重建补全（追踪量 1x）。
 	// 开 = 每像素每帧 1 条光线：无棋盘/无象限，GI 缓冲与画面同尺寸（追踪量与缓冲 4x）。
 	// 观感默认不变；开之前看显卡，追踪成本直接 x4。
+	// 弱光降噪：暗处把时域累积上限提高到 4 倍（只加长历史，不加大空间模糊；默认关）
+	//#define VOXEL_GI_DARK_ACCUM
 	//#define VOXEL_GI_FULLRES
 	#ifdef VOXEL_GI_FULLRES
 		#ifdef GI_ACTIVE_VXGI
