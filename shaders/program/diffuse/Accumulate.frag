@@ -64,7 +64,7 @@ layout (location = 1) out vec4 encodedNormalDepth;
     #define SHOULD_APPLY_JITTER
 #endif
 
-void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
+void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 checkNormal) {
 	vec3 viewPos = ScreenToViewPos(screenPos);
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
     // GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
@@ -85,7 +85,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
 
     vec2 currCoord = texelToUv(texelPos);
     // a 默认 0（可靠）；不可靠/重投影失效路径在下方置 1
-    encodedNormalDepth = vec4(OctEncodeSnorm(worldNormal), viewPos.z, 0.0);
+    encodedNormalDepth = vec4(OctEncodeSnorm(checkNormal), viewPos.z, 0.0);
 
     if (saturate(prevCoord) == prevCoord && !historyReset) {
         vec4 prevDiffuse = vec4(0.0);
@@ -96,12 +96,10 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
 
         // Custom bilinear filter
         #ifdef VXGI_FULLRES
-        // 全分辨率：历史就是本像素，不需要相位补偿
         vec2 prevTexel = prevCoord * viewSize - 0.5;
         #else
-        vec2 prevTexel = (prevCoord * viewSize
-         - checkerboardOffset2x2[(frameCounter - 1) & 3u]
-         - 0.5) * 0.5;
+        // 画布 texel 已与棋盘相位解耦（见 main 的 auxTexel），不必再补偿上帧相位
+        vec2 prevTexel = (prevCoord * viewSize - 0.5) * 0.5;
         #endif
 
         ivec2 floorTexel = ivec2(floor(prevTexel));
@@ -123,7 +121,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal) {
                 vec4 sampleIrradiance = texelFetch(colortex2, sampleTexel, 0);
 
                 float tapGeo = saturate(fma(distance(encodedNormalDepth.z, sampleAux.z), invThresholdZ, 1.0));
-                tapGeo *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
+                tapGeo *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), checkNormal)));
                 maxGeometryWeight = max(maxGeometryWeight, tapGeo);
 
                 float weight = tapGeo * bilinearWeight[i];
@@ -220,18 +218,20 @@ void main() {
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
 
     #ifdef VXGI_FULLRES
-    ivec2 renderTexel = texelPos;
+    ivec2 auxTexel = texelPos;
     #else
-    ivec2 renderTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+    // 固定取 2x2 块的左上像素：跟着棋盘相位轮转会让法线/深度逐帧在 4 个子像素之间跳，
+    // 法线贴图表面上历史几何权重与 EAWF 的法线门限都跟着抖 -> 静止也闪。
+    ivec2 auxTexel = texelPos * 2;
     #endif
-    vec2 renderCoord = texelToUv(renderTexel);
+    vec2 renderCoord = texelToUv(auxTexel);
 
-    float depth = loadDepth0(renderTexel);
-    bool terrainCheck = min(GetClosestDepthN(renderTexel), depth) < 1.0;
+    float depth = loadDepth0(auxTexel);
+    bool terrainCheck = min(GetClosestDepthN(auxTexel), depth) < 1.0;
     #if defined LOD_MOD
         bool lodMask = !terrainCheck;
         if (lodMask) {
-            depth = loadDepth0Lod(renderTexel);
+            depth = loadDepth0Lod(auxTexel);
             terrainCheck = depth < 1.0;
         }
     #endif
@@ -248,8 +248,9 @@ void main() {
         #endif
 
         vec3 screenPos = vec3(renderCoord, depth);
-        vec3 worldNormal = FetchSurfaceNormal(renderTexel);
+        // 用几何法线而非贴图法线：漫反射 GI 的入射光不该被法线贴图的高频细节当成边缘分割
+        vec3 checkNormal = FetchGeometryNormal(auxTexel);
 
-        TemporalFilter(texelPos, screenPos, worldNormal);
+        TemporalFilter(texelPos, screenPos, checkNormal);
     }
 }

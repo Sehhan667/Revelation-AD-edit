@@ -214,8 +214,14 @@ void main() {
 	    sigmaRelax *= 1.0 / (1.0 + _under * 0.4);
 	}
 
-	vec3 viewDir  = ScreenToViewDirRaw(texelToUv(texelPos));
-	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(texelPos);
+#ifdef VXGI_FULLRES
+	ivec2 fullTexel = texelPos;
+#else
+	// EAWF 跑在半分辨率画布上，而 G-buffer 与 UV 都是全分辨率口径 -> 坐标要 <<1
+	ivec2 fullTexel = texelPos << 1;
+#endif
+	vec3 viewDir  = ScreenToViewDirRaw(texelToUv(fullTexel));
+	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(fullTexel);
 
 	float NdotV = abs(dot(geoNormal, viewDir));
 	// 各向异性滤波步长：随 pass 指数递增（1,2,4,8…）
@@ -232,6 +238,8 @@ void main() {
 	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost;
 	// 抖动与大步长解耦：NRD 开启时 offsetScale 会被放大，若采样抖动也随 offsetScale
 	// 放大，每帧采样起始点会大跳 → 点状闪烁。故开启时抖动限制在 ≤1 像素。
+	// 抖动索引不掺 frameCounter：格点每帧挪动 + 强权重 = 静止画面"沸腾"，
+	// 这里用每 pass 固定的格点（只打断规则采样，不引入时域噪声）。
 	float jitterSize = NRD_RADIUS <= 0.0 ? max(depthFactor, 1.0) : 1.0;
 
 	float invThresholdZ = 8.0 / normalDepthData.z;
@@ -249,7 +257,7 @@ void main() {
 	// （方差是 Σ(v·w²) 的累积，用 (Σw)² 除会每 pass 多除一个 Σw → 后几级几乎不融合）。
 	float16_t sumWeight = float16_t(1.0);
 	float16_t sumWeightSq = float16_t(1.0);
-	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, frameCounter + FILTER_PASS_INDEX) - vec2(0.5)) * jitterSize;
+	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, FILTER_PASS_INDEX) - vec2(0.5)) * jitterSize;
 
 	for (uint i = 0u; i < 8u; ++i) {
 		ivec2 sampleTexel = ivec2(round(sampleTexelBase + offset3x3N[i] * offsetScale));
