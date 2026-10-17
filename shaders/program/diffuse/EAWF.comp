@@ -193,6 +193,13 @@ void main() {
 	float sigmaRelax = 1.0 / (1.0 + disoccF);
 	// vec2 depthGradient = vec2(dFdx(normalDepthData.w), dFdy(normalDepthData.w));
 
+	// 0.0625 0.125 0.0625
+	// 0.125  0.25  0.125
+	// 0.0625 0.125 0.0625
+	// 3×3 kernel used multiple times in the algorithm
+
+	const float kernel[8] = {0.0625, 0.125, 0.0625, 0.125, 0.125, 0.0625, 0.125, 0.0625};
+
 	f16vec4 filteredColVar = f16vec4(imageLoad(colorimg3, texelPos));
 	float16_t centerLuma = filteredColVar.r; // We use YCoCg color space
 
@@ -214,14 +221,8 @@ void main() {
 	    sigmaRelax *= 1.0 / (1.0 + _under * 0.4);
 	}
 
-#ifdef VXGI_FULLRES
-	ivec2 fullTexel = texelPos;
-#else
-	// EAWF 跑在半分辨率画布上，而 G-buffer 与 UV 都是全分辨率口径 -> 坐标要 <<1
-	ivec2 fullTexel = texelPos << 1;
-#endif
-	vec3 viewDir  = ScreenToViewDirRaw(texelToUv(fullTexel));
-	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(fullTexel);
+	vec3 viewDir  = ScreenToViewDirRaw(texelToUv(texelPos));
+	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(texelPos);
 
 	float NdotV = abs(dot(geoNormal, viewDir));
 	// 各向异性滤波步长：随 pass 指数递增（1,2,4,8…）
@@ -238,8 +239,6 @@ void main() {
 	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost;
 	// 抖动与大步长解耦：NRD 开启时 offsetScale 会被放大，若采样抖动也随 offsetScale
 	// 放大，每帧采样起始点会大跳 → 点状闪烁。故开启时抖动限制在 ≤1 像素。
-	// 抖动索引不掺 frameCounter：格点每帧挪动 + 强权重 = 静止画面"沸腾"，
-	// 这里用每 pass 固定的格点（只打断规则采样，不引入时域噪声）。
 	float jitterSize = NRD_RADIUS <= 0.0 ? max(depthFactor, 1.0) : 1.0;
 
 	float invThresholdZ = 8.0 / normalDepthData.z;
@@ -253,14 +252,12 @@ void main() {
 
 	f16vec3 centerNormal = f16vec3(OctDecodeSnorm(normalDepthData.xy));
 
-	// filteredColVar 初值 = 中心像素（权重 1）。颜色按 Σw 归一，方差按 Σw² 归一
-	// （方差是 Σ(v·w²) 的累积，用 (Σw)² 除会每 pass 多除一个 Σw → 后几级几乎不融合）。
 	float16_t sumWeight = float16_t(1.0);
-	float16_t sumWeightSq = float16_t(1.0);
-	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, FILTER_PASS_INDEX) - vec2(0.5)) * jitterSize;
+	// filteredColVar *= vec4(vec3(sumWeight), sumWeight * sumWeight);
+	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, frameCounter + FILTER_PASS_INDEX) - vec2(0.5)) * jitterSize;
 
-	for (uint i = 0u; i < 8u; ++i) {
-		ivec2 sampleTexel = ivec2(round(sampleTexelBase + offset3x3N[i] * offsetScale));
+	for (uint i = 0u; i < 9u; ++i) {
+		ivec2 sampleTexel = ivec2(round(sampleTexelBase + offset3x3[i] * offsetScale));
 		if (clamp(sampleTexel, ivec2(1), canvasEnd - 2) == sampleTexel) {
 			f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 
@@ -276,7 +273,6 @@ void main() {
 
 			filteredColVar += sampleColVar * f16vec4(f16vec3(weight), weight * weight);
 			sumWeight += weight;
-			sumWeightSq += weight * weight;
 		}
 	}
 
@@ -301,15 +297,12 @@ void main() {
 	            weight *= float16_t(saturate(exp2(logWeightN + logWeightL)));
 	            filteredColVar += sampleColVar * f16vec4(f16vec3(weight), weight * weight);
 	            sumWeight += weight;
-	            sumWeightSq += weight * weight;
 	        }
 	    }
 	}
 
 	sumWeight = float16_t(1.0) / sumWeight;
-	sumWeightSq = float16_t(1.0) / sumWeightSq;
-	filteredColVar.rgb *= f16vec3(sumWeight);
-	filteredColVar.a *= sumWeightSq;
+	filteredColVar *= f16vec4(f16vec3(sumWeight), sumWeight * sumWeight);
 
 	// [2026-08-28 项3 ，2026-09-02 修复色度脱节] 最后一级(FILTER_PASS_INDEX==3)的大半径
 	// 滤波后，对上一 pass 结果(colorimg3)做 3×3 中值，剔高频孤点亮噪(firefly)。取按 Y 排序的
