@@ -935,7 +935,7 @@ void main() {
                     // 探针/IRC GI：平滑低频缓存，免降噪——SVGF 链不跑（此时 VOXEL_GI 关），直接读裸信号
                     vec3 radiance = texelFetch(colortex3, texelPos >> 1, 0).rgb;
                 #else
-                    vec3 radiance = UpscaleDiffuseIndirect(texelPos, worldNormal, length(viewPos));
+                    vec3 radiance = UpscaleDiffuseIndirect(texelPos, viewPos.z);
                 #endif
             #else
                 vec3 radiance = texelFetch(colortex3, texelPos >> 1, 0).rgb;
@@ -1025,14 +1025,14 @@ void main() {
                     #ifdef VOXEL_GI_DENOISE
                         #ifdef SVGF_ENABLED
                             // UpscaleDiffuseIndirect 返回 YCoCg 空间信号（colortex3 全链路 YCoCg），须显式转回 RGB
-                            voxelGI = YCoCgToRGB(UpscaleDiffuseIndirect(texelPos, worldNormal, length(viewPos)));
+                            voxelGI = YCoCgToRGB(UpscaleDiffuseIndirect(texelPos, viewPos.z));
                         #else
                             voxelGI = YCoCgToRGB(texelFetch(colortex3, GICanvasCoord(texelPos), 0).rgb);
                         #endif
                     #else
                         // 光追降噪关闭：只跳过空间滤波（VarianceEstimate/EAWF），仍读时域累积结果
                         // （colortex2，Accumulate 写入，含 4 相位棋盘重建）→ 未降噪 = 收敛后的原始信号
-                        voxelGI = YCoCgToRGB(UpscaleDiffuseIndirectAccum(texelPos, worldNormal, length(viewPos)));
+                        voxelGI = YCoCgToRGB(UpscaleDiffuseIndirectAccum(texelPos, viewPos.z));
                     #endif
                     // [2026-09-30 去重复乘] 这里原本是 `voxelGI *= albedo * VOXEL_GI_TRACE_STRENGTH`，
                     // 但信号在 DiffuseIndirect.comp 写出时已经乘过一次（result = traceAcc * rcp(SPP)
