@@ -356,6 +356,7 @@ option.SSILVB_SECTOR_COUNT=Sector Count
 option.SSILVB_HIT_THICKNESS=Hit Thickness
 option.SSILVB_BLENDED_LIGHTMAP=Blended Lightmap
 option.SSILVB_MAX_ACCUM_FRAMES=Max Accumulated Frames
+option.SSILVB_MAX_ACCUM_FRAMES.comment=Temporal accumulation length cap (shared by SSILVB and VXGI). Higher = cleaner and slower to converge, with longer trails
 option.SSILVB_DISTANCE_LIMIT=Distance Limit
 option.SSILVB_DISTANCE_LIMIT.comment=Only affect pixels within a certain distance from the camera when enabled (vanilla lighting farther away)
 option.SSILVB_MAX_DISTANCE=Max Distance
@@ -688,7 +689,7 @@ option.VOXEL_COARSE_ACCEL.comment=Skipping tracing DDA over 4^3 coarse blocks th
 option.VOXEL_FINE_ACCEL=Fine-Grain Air Skip
 option.VOXEL_FINE_ACCEL.comment=Inside a non-empty coarse block, use the fine-grain occupancy bitmap to skip air cells per-voxel (finer than coarse; enabling it alone also includes the 4^3 empty-block jump). The fine bitmap only covers sun-visible voxelized cells; a solid cell that wasn't voxelized but has injected light/emission is treated as air and skipped -> possible light leaks / hollows. If you see hollows, turn this OFF and keep Empty-Space Skip; per-cell then falls back to real sampling
 option.VOXEL_GI_FIREFLY_MEDIAN=Denoise Median (Fireflies)
-option.VOXEL_GI_FIREFLY_MEDIAN.comment=After the last SVGF spatial pass, applies a 3x3 median on luminance to remove high-frequency isolated spike noise (fireflies). Default on; disable if the image looks over-smoothed / loses detail
+option.VOXEL_GI_FIREFLY_MEDIAN.comment=After the last SVGF spatial pass, applies a 3x3 median on luminance to remove high-frequency isolated spike noise (fireflies). Default off (costs one 3x3 gather + sort); keep it off when fine detail matters
 option.VOXEL_LD_SAMPLING=Low-Discrepancy Sampling
 option.VOXEL_LD_SAMPLING.comment=Replaces pseudo-random sample directions with a Halton(2,3) low-discrepancy sequence, spreading rays more evenly over the hemisphere across frames and reducing clustering, usually lowering flicker/noise floor. Default off; disable if regular banding/grid artifacts appear
 option.VOXEL_COS_SAMPLING=Cosine-Weighted Sampling
@@ -813,8 +814,7 @@ option.SSILVB_GI_BRIGHTNESS=GI Ray Brightness
 option.SSILVB_HAND_DEPTH_THRESHOLD=GI Hand Culling
 option.SSILVB_HAND_DEPTH_THRESHOLD.comment=Prevents your own hand from affecting the GI; leave at default
 option.SVGF_QUALITY=SVGF Quality
-option.SVGF_QUALITY.comment=Upsampling of the half-res GI: 0 = centre only (visible 2x2 blocks), 1 = 4-tap depth-aware upsampling (smoother)
-option.SVGF_BLUR_RADIUS=SVGF Blur Radius
+option.SVGF_QUALITY.comment=Upsampling of the half-res GI read-back (shared by SSILVB and VXGI): 0 = centre only (visible 2x2 blocks), 1 = 4-tap depth-aware upsampling (smoother)
 option.VISUALIZE_VOXELS=Voxel Visualization
 option.VISUALIZE_VOXELS.comment=Overlays voxel colors on block albedo to inspect the voxelization result
 option.VOXEL_GI_EMISSIVE_THRESHOLD=Emissive Threshold
