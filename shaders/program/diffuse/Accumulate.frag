@@ -221,16 +221,11 @@ void main() {
     ivec2 auxTexel = texelPos;
     float depth = loadDepth0(auxTexel);
     #else
-    // 引导量（法线/深度）必须与棋盘相位解耦，否则法线贴图表面静止也闪。取 2x2 块里
-    // **最近**的子像素：轮廓块里前景胜出，引导量不会落在后面的天空/远墙上（确定性、不随相位变）。
-    ivec2 blockBase = texelPos * 2;
-    ivec2 auxTexel = blockBase;
+    // 引导量（法线/深度/重投影）必须完全确定：固定取 2x2 块的左上像素。
+    // 不要按"块内最近子像素"之类的 argmin 选——子像素深度接近时（远处屏幕深度已接近饱和、
+    // 近处掠射面）胜者会逐帧翻转 → 法线/深度跳变 → 历史被拒、a 归 1 → 整片掉回单帧样本。
+    ivec2 auxTexel = texelPos * 2;
     float depth = loadDepth0(auxTexel);
-    for (int _i = 1; _i < 4; ++_i) {
-        ivec2 _t = blockBase + offset2x2[_i];
-        float _d = loadDepth0(_t);
-        if (_d < depth) { depth = _d; auxTexel = _t; }
-    }
     #endif
     vec2 renderCoord = texelToUv(auxTexel);
 
@@ -261,14 +256,14 @@ void main() {
 
         // 轮廓块：本帧样本所在的子像素可能与引导量子像素不在同一层表面（墙 + 后面的天空/远墙）。
         // 混进去会让 GI 越过轮廓糊过去、并随棋盘相位逐帧跳；EAWF 后几级大步长还会把混合值
-        // 扩散成宽光晕。判据：两者线性视深的相对差 > 2%（用较近的一方做参考，避免远/近量级失真）
-        // ⇒ 丢弃本帧样本、保留历史。
+        // 扩散成宽光晕。判据与 EAWF 的深度门限同口径（相对视深差 ≤ 1/8 视为同表面）；阈值不能
+        // 取得太紧——近处掠射面上相邻子像素的视深差会超过 2%，会误判成异面而把 texel 冻住。
         bool sameSurface = true;
         #ifndef VXGI_FULLRES
             ivec2 sampleTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
             float sampleZ = ScreenToViewPos(vec3(texelToUv(sampleTexel), loadDepth0(sampleTexel))).z;
             float refZ = max(min(abs(sampleZ), abs(viewDepth)), 0.001);
-            sameSurface = abs(sampleZ - viewDepth) <= 0.02 * refZ;
+            sameSurface = abs(sampleZ - viewDepth) <= 0.125 * refZ;
         #endif
 
         if (sameSurface) {
