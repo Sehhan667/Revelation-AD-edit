@@ -274,23 +274,26 @@ void main() {
 			float logWeightN = log2(saturate(dot(OctDecodeSnorm(sampleAux.xy), centerNormal))) * sigmaN;
 			float logWeightL = abs(sampleLuma - centerLuma) * sigmaL;
 			weight *= float16_t(saturate(exp2(logWeightN + logWeightL)));
+			// 径向权重（中心 0.25 / 边 0.125 / 角 0.0625，即文件里一直没被使用的 kernel[8] 那套核）：
+			// 不加这一层，9-tap 是等权方形核，格子的方形几何会直接印到画面上。
+			bool _centerTap = (offset3x3[i].x == 0 && offset3x3[i].y == 0);
+			bool _edgeTap   = (offset3x3[i].x == 0 || offset3x3[i].y == 0);
+			weight *= float16_t(_centerTap ? 4.0 : (_edgeTap ? 2.0 : 1.0));
 
 			filteredColVar += sampleColVar * f16vec4(f16vec3(weight), weight * weight);
 			sumWeight += weight;
 		}
 	}
 
-	// [2026-08-28 项1 Sundial 式方向化] 沿本 level 主方向轴 ± 各取一点长距采样，补充 9-tap
-	// 对"单向长距离扩散"的不足，让不同 level 朝不同主方向覆盖（各向异性去噪）。
+	// 方向性长采样：原来每个 pass 用固定屏幕方向（(1,1) / (1,-1) / (1,0) / (0,1)），四级叠加会在
+	// 画面上留下十字/星形纹路。改成每像素、每 pass 一个随机方向——保留"单向长距离扩散"的收益，
+	// 但不留统一方向可循。角度用 hash13（不含帧号）⇒ 静态、不引入帧间噪声。
 	{
-	    vec2 _axis;
-	    int _le = FILTER_PASS_INDEX;
-	    if      (_le == 0) _axis = vec2( 1.0,  1.0);
-	    else if (_le == 1) _axis = vec2( 1.0, -1.0);
-	    else if (_le == 2) _axis = vec2( 1.0,  0.0);
-	    else               _axis = vec2( 0.0,  1.0);
+	    float _ang = hash13(vec3(texelPos, float(FILTER_PASS_INDEX + 1))) * 6.2831853;
+	    vec2 _axis = vec2(cos(_ang), sin(_ang));
+	    float _len = max(offsetScale.x, offsetScale.y);
 	    for (int _d = 0; _d < 2; ++_d) {
-	        ivec2 sampleTexel = texelPos + ivec2(round(_axis * offsetScale * (_d == 0 ? 1.0 : -1.0)));
+	        ivec2 sampleTexel = texelPos + ivec2(round(_axis * _len * (_d == 0 ? 1.0 : -1.0)));
 	        if (clamp(sampleTexel, ivec2(1), canvasEnd - 2) == sampleTexel) {
 	            f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 	            f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
