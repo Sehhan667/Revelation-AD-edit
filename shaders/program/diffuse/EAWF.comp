@@ -237,6 +237,10 @@ void main() {
 	float depthFactor = NRD_RADIUS <= 0.0 ? 1.0
 	                    : clamp(NRD_RADIUS * pxPerWorldAtZ1 / viewDist, 0.5, 1.5);
 	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost;
+	// 每轴步长至少 1 px：掠射面上 offsetScaleBase 会被压到 <0.5（例：斜墙 n≈(0.9,0.1) 时
+	// x 轴只剩 0.1），round() 后该轴整列 tap 全部塌到中心 ⇒ 9-tap 退化成 1D 竖/横条，
+	// 屏幕上表现为随朝向变化的条纹/纹路。下限 1 px 保住 2D 核。
+	offsetScale = max(offsetScale, vec2(1.0));
 	// 抖动与大步长解耦：NRD 开启时 offsetScale 会被放大，若采样抖动也随 offsetScale
 	// 放大，每帧采样起始点会大跳 → 点状闪烁。故开启时抖动限制在 ≤1 像素。
 	float jitterSize = NRD_RADIUS <= 0.0 ? max(depthFactor, 1.0) : 1.0;
