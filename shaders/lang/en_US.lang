@@ -682,6 +682,8 @@ option.DEBUG_NORMALS=DEBUG_NORMALS
 option.DEBUG_RESHADING=DEBUG_RESHADING
 option.DEBUG_SKY_MAP=DEBUG_SKY_MAP
 option.DEBUG_VOXEL_GI=DEBUG_VOXEL_GI
+option.DEBUG_GI_ACCUM_STATS=GI Accumulation Stats
+option.DEBUG_GI_ACCUM_STATS.comment=Full-screen readout: R = accumulated frames / cap (bright = long history, dark = fell back to a single-frame sample), G = pixel judged unreliable this frame (offscreen / historyReset / geometry mismatch). When noise appears while moving, look here first: R going dark plus G lighting up means history is being rejected, so investigate reprojection and the checks instead of the denoiser.
 option.OFFLINE_RENDER=Offline Render
 option.OFFLINE_RENDER.comment=Offline render: raise per-pixel diffuse tracing & IRC samples per frame (SPP 20/8), disable GI spatial denoise and keep accumulating temporally for fast convergence to low noise. Hold the camera still (don't orbit) for a while, then F2 for a clean still. Heavy cost; for screenshots. Off = real-time denoise, identical to before
 option.VOXEL_COARSE_ACCEL=Voxel Empty-Space Skip
@@ -718,10 +720,8 @@ option.VOXEL_GI_FULLRES=Full Resolution
 option.VOXEL_GI_FULLRES.comment=Off = 2x2 checkerboard half res (1/4 of the pixels traced per frame, filled in over time). On = one ray per pixel per frame (no checkerboard, no quadrant canvas): finer noise, faster convergence. Cost: roughly 4x the tracing and GI buffer size.
 option.VOXEL_GI_DARK_ACCUM=Low-light Denoise
 option.VOXEL_GI_DARK_ACCUM.comment=In dark areas, raise the temporal accumulation cap 4x (32 to 128 frames). Longer history only, no extra spatial blur, so the image is not smeared; the cost is longer trails when lighting changes in the dark.
-option.VOXEL_GI_STABLE_GUIDE=Stable Guide
-option.VOXEL_GI_STABLE_GUIDE.comment=Normals/depth no longer rotate with the 2x2 checkerboard phase (always the block's top-left subpixel). That phase rotation is what makes the image fall back to single-frame noise when turning the camera or on normal-mapped surfaces; the known cost is a possible 1-2 px bleed at silhouettes.
-option.VOXEL_GI_ROBUST_ACCUM=Robust Accumulation
-option.VOXEL_GI_ROBUST_ACCUM.comment=Stop shrinking the accumulation frame count for pixels whose geometry matches well. The steady-state length is 1/(1-w), and sub-pixel reprojection residuals during motion push w to 0.9-0.95, collapsing 64 frames to 10-20 and letting the source's bright impulses show through (the root cause of the brightening/whitening as soon as you move). On: accumulate at full speed while matching, reset fast only on real mismatches.
+option.VOXEL_GI_SAMPLE_CLAMP=Sample Clamp
+option.VOXEL_GI_SAMPLE_CLAMP.comment=Clamp each incoming temporal sample to K times the running mean. Targets impulse noise (sparse voxel hits, binary sun-bounce) without adding blur - it only trims spikes. Default 0 = off; in dark areas try 4-8, too low also flattens genuine bright spots.
 option.PTGI_MEDIAN_RADIUS=Median Radius
 option.PTGI_MEDIAN_RADIUS.comment=1=3x3, 2=5x5. Larger = stronger denoise but blurs detail (targets fireflies/single-pixel noise)
 option.PTGI_EDGE_STRENGTH=Edge Preserve Strength

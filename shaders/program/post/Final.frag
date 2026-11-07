@@ -472,4 +472,20 @@ void main() {
                         GlitchTearDistanceFade(texelPos),
                         dbgFlags);
     #endif
+
+    // [调试] GI 时域累积诊断：R = 累积帧数 / 上限（亮 = 历史长，暗 = 已掉回单帧样本），
+    // G = 本帧该像素被判不可靠（越界 / historyReset / 几何不匹配）。放在最后一个 pass ⇒
+    // 不受曝光/色调映射/TAA 影响，颜色可以直接当读数。
+    // 用法：站在有问题的地方，静止时 R 应接近满值；一动就变暗 + G 亮 → 历史被拒（查重投影/判据），
+    // 而不是去动降噪器。这正是 2026-11-07 "满天星" 问题的定位手段。
+    #ifdef DEBUG_GI_ACCUM_STATS
+        #ifdef VXGI_FULLRES
+            ivec2 _giCanvasTexel = texelPos;
+        #else
+            ivec2 _giCanvasTexel = texelPos >> 1;
+        #endif
+        float _dbgAccum = texelFetch(colortex2, _giCanvasTexel, 0).a;
+        float _dbgBad   = texelFetch(colortex14, _giCanvasTexel, 0).a;
+        finalOut = vec3(saturate(_dbgAccum * rcp(max(SSILVB_MAX_ACCUM_FRAMES, 1.0))), _dbgBad, 0.0);
+    #endif
 }

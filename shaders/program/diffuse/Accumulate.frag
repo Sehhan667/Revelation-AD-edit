@@ -99,14 +99,9 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         // 全分辨率：历史就是本像素，不需要相位补偿
         vec2 prevTexel = prevCoord * viewSize - 0.5;
         #else
-        #ifdef VOXEL_GI_STABLE_GUIDE
-        // 引导量已与相位解耦（见 main 的 renderTexel）→ 不再补偿上帧相位，否则反而错位
-        vec2 prevTexel = (prevCoord * viewSize - 0.5) * 0.5;
-        #else
         vec2 prevTexel = (prevCoord * viewSize
          - checkerboardOffset2x2[(frameCounter - 1) & 3u]
          - 0.5) * 0.5;
-        #endif
         #endif
 
         ivec2 floorTexel = ivec2(floor(prevTexel));
@@ -157,17 +152,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             #ifdef OFFLINE_RENDER
                 integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, 1024.0);
             #else
-                #ifdef VOXEL_GI_ROBUST_ACCUM
-                // 稳态累积帧数 = 1/(1-w)，对 w 极其敏感：w=0.984→62 帧、0.95→20、0.90→10。
-                // 运动时重投影的亚像素残差（向量本身是对的）就足以把 w 压到 0.9~0.95 ⇒ 累积从
-                // 64 帧塌到 10~20 帧 ⇒ 源端的冲激（稀疏命中 / 二值阳光反弹，单样本可到 clamp 32）
-                // 重新露出来 → 表现就是「一动就发白/发脏」，而静止时又正常。
-                // 这里把 w 只当「是否同一表面」的判据：匹配就满速累积，不匹配才快速衰减（w²）。
-                float _wAccum = maxGeometryWeight > 0.9 ? 1.0 : maxGeometryWeight * maxGeometryWeight;
-                integratedDiffuse.a = min(prevDiffuse.a * _wAccum + 1.0, accumCap);
-                #else
                 integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, accumCap);
-                #endif
             #endif
 
             if (integratedDiffuse.a < 8.0) {
@@ -253,14 +238,7 @@ void main() {
     #ifdef VXGI_FULLRES
     ivec2 renderTexel = texelPos;
     #else
-    #ifdef VOXEL_GI_STABLE_GUIDE
-    // 引导量（法线/深度/重投影位置）固定取 2x2 块的左上子像素，不再随棋盘相位轮转：
-    // 相位轮转会让下一帧的历史几何检查逐帧在两个子像素之间跳 → maxGeometryWeight 抖 →
-    // 累积帧数 a 抖 → 转视角 / 法线贴图表面会掉回单帧样本（噪）。
-    ivec2 renderTexel = texelPos * 2;
-    #else
     ivec2 renderTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
-    #endif
     #endif
     vec2 renderCoord = texelToUv(renderTexel);
 

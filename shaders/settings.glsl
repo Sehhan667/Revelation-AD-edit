@@ -608,10 +608,6 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 观感默认不变；开之前看显卡，追踪成本直接 x4。
 	// 弱光降噪：暗处把时域累积上限提高到 4 倍（只加长历史，不加大空间模糊；默认关）
 	//#define VOXEL_GI_DARK_ACCUM
-	// 引导量稳定：法线/深度不再随 2x2 棋盘相位轮转（转视角/法线贴图表面掉回单帧噪点的元凶；默认关）
-	// 稳定累积：几何一致度高时不再按它衰减帧数（避免“一动就从到 10~20 帧”；默认关）
-	//#define VOXEL_GI_ROBUST_ACCUM
-	//#define VOXEL_GI_STABLE_GUIDE
 	//#define VOXEL_GI_FULLRES
 	#ifdef VOXEL_GI_FULLRES
 		#ifdef GI_ACTIVE_VXGI
@@ -694,6 +690,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// [调试 2026-09-03] 整屏显示探针 GI 辐照度场(伽马增强)，无视地形门控与其余光照，
 	// 直接看 GI 照明分布/亮度/伪影(blotchy 的 4m 探针块、颜色、时域稳定性)。
 	//#define DEBUG_PROBE_GI_VIZ
+	// [调试] GI 时域累积诊断读数（画在 Final）：R = 累积帧数 / 上限（亮 = 历史长，暗 = 掉回单帧样本），
+	// G = 本帧该像素是否被判"不可靠"（1 = 越界/historyReset/几何不匹配）。运动时噪点问题先看这里：
+	// R 变暗 + G 亮起 = 历史被拒，问题在重投影/判据，不在降噪器。
+	//#define DEBUG_GI_ACCUM_STATS
 	//#define VISUALIZE_VOXELS
 	//#define DEBUG_VOXEL_GI  // 调试(备用)：按体素 voxelID 标色（青绿=活板门/门 橙棕=形状块[楼梯/半砖/栅栏/墙] 黄=全块 蓝=空 红=越界）
 	//#define DEBUG_VOXEL_RADIANCE  // 调试：直接显示传播后的体素辐照度（验证"体素化+传播"链路）
