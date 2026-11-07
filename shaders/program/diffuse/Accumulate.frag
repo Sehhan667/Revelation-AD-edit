@@ -153,8 +153,8 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 // 稳态累积帧数 = 1/(1-w)，对 w 极其敏感：w=0.984→62 帧、0.95→20、0.90→10。
                 // 运动时重投影的亚像素残差（向量本身是对的）就足以把 w 压到 0.9~0.95 ⇒ 累积从
                 // 64 帧塌到 10~20 帧 ⇒ 源端的冲激（稀疏命中 / 二值阳光反弹，单样本可到 clamp 32）
-                // 重新露出来 → 表现就是"一动就发白/发脏"，而静止时又正常。
-                // 这里把 w 只当"是否同一表面"的判据：匹配就满速累积，不匹配才快速衰减（w²）。
+                // 重新露出来 → 表现就是「一动就发白/发脏」，而静止时又正常。
+                // 这里把 w 只当「是否同一表面」的判据：匹配就满速累积，不匹配才快速衰减（w²）。
                 float _wAccum = maxGeometryWeight > 0.9 ? 1.0 : maxGeometryWeight * maxGeometryWeight;
                 integratedDiffuse.a = min(prevDiffuse.a * _wAccum + 1.0, accumCap);
                 #else
