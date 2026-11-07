@@ -604,6 +604,8 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 观感默认不变；开之前看显卡，追踪成本直接 x4。
 	// 弱光降噪：暗处把时域累积上限提高到 4 倍（只加长历史，不加大空间模糊；默认关）
 	//#define VOXEL_GI_DARK_ACCUM
+	// 引导量稳定：法线/深度不再随 2x2 棋盘相位轮转（转视角/法线贴图表面掉回单帧噪点的元凶；默认关）
+	//#define VOXEL_GI_STABLE_GUIDE
 	//#define VOXEL_GI_FULLRES
 	#ifdef VOXEL_GI_FULLRES
 		#ifdef GI_ACTIVE_VXGI

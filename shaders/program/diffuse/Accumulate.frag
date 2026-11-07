@@ -99,9 +99,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         // 全分辨率：历史就是本像素，不需要相位补偿
         vec2 prevTexel = prevCoord * viewSize - 0.5;
         #else
+        #ifdef VOXEL_GI_STABLE_GUIDE
+        // 引导量已与相位解耦（见 main 的 renderTexel）→ 不再补偿上帧相位，否则反而错位
+        vec2 prevTexel = (prevCoord * viewSize - 0.5) * 0.5;
+        #else
         vec2 prevTexel = (prevCoord * viewSize
          - checkerboardOffset2x2[(frameCounter - 1) & 3u]
          - 0.5) * 0.5;
+        #endif
         #endif
 
         ivec2 floorTexel = ivec2(floor(prevTexel));
@@ -222,7 +227,14 @@ void main() {
     #ifdef VXGI_FULLRES
     ivec2 renderTexel = texelPos;
     #else
+    #ifdef VOXEL_GI_STABLE_GUIDE
+    // 引导量（法线/深度/重投影位置）固定取 2x2 块的左上子像素，不再随棋盘相位轮转：
+    // 相位轮转会让下一帧的历史几何检查逐帧在两个子像素之间跳 → maxGeometryWeight 抖 →
+    // 累积帧数 a 抖 → 转视角 / 法线贴图表面会掉回单帧样本（噪）。
+    ivec2 renderTexel = texelPos * 2;
+    #else
     ivec2 renderTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+    #endif
     #endif
     vec2 renderCoord = texelToUv(renderTexel);
 

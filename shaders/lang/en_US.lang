@@ -718,6 +718,8 @@ option.VOXEL_GI_FULLRES=Full Resolution
 option.VOXEL_GI_FULLRES.comment=Off = 2x2 checkerboard half res (1/4 of the pixels traced per frame, filled in over time). On = one ray per pixel per frame (no checkerboard, no quadrant canvas): finer noise, faster convergence. Cost: roughly 4x the tracing and GI buffer size.
 option.VOXEL_GI_DARK_ACCUM=Low-light Denoise
 option.VOXEL_GI_DARK_ACCUM.comment=In dark areas, raise the temporal accumulation cap 4x (32 to 128 frames). Longer history only, no extra spatial blur, so the image is not smeared; the cost is longer trails when lighting changes in the dark.
+option.VOXEL_GI_STABLE_GUIDE=Stable Guide
+option.VOXEL_GI_STABLE_GUIDE.comment=Normals/depth no longer rotate with the 2x2 checkerboard phase (always the block's top-left subpixel). That phase rotation is what makes the image fall back to single-frame noise when turning the camera or on normal-mapped surfaces; the known cost is a possible 1-2 px bleed at silhouettes.
 option.PTGI_MEDIAN_RADIUS=Median Radius
 option.PTGI_MEDIAN_RADIUS.comment=1=3x3, 2=5x5. Larger = stronger denoise but blurs detail (targets fireflies/single-pixel noise)
 option.PTGI_EDGE_STRENGTH=Edge Preserve Strength
