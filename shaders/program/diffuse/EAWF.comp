@@ -260,8 +260,15 @@ void main() {
 	// filteredColVar *= vec4(vec3(sumWeight), sumWeight * sumWeight);
 	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, frameCounter + FILTER_PASS_INDEX) - vec2(0.5)) * jitterSize;
 
+	// 整核旋转：把 3x3 方形格点整体绕像素中心旋转，方形印记在统计上被抹平（NRD 用旋转 Poisson 盘
+	// 是同一目的）。角度 = 每像素 hash（不含帧号 ⇒ 静态、不引入时域噪声）+ 每 pass 黄金角（≈137.5°，
+	// 让四级方向均匀铺开，不再叠成 4 折对称的十字）。
+	float _tapAng = hash13(vec3(texelPos, float(FILTER_PASS_INDEX))) * 6.2831853
+	              + float(FILTER_PASS_INDEX) * 2.39996323;
+	mat2 _tapRot = mat2(cos(_tapAng), sin(_tapAng), -sin(_tapAng), cos(_tapAng));
+
 	for (uint i = 0u; i < 9u; ++i) {
-		ivec2 sampleTexel = ivec2(round(sampleTexelBase + offset3x3[i] * offsetScale));
+		ivec2 sampleTexel = ivec2(round(sampleTexelBase + _tapRot * (vec2(offset3x3[i]) * offsetScale)));
 		if (clamp(sampleTexel, ivec2(1), canvasEnd - 2) == sampleTexel) {
 			f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 
