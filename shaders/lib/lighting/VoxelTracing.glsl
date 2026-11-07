@@ -75,11 +75,16 @@ bool VoxelMaskSolid(ivec3 vc) {
 // viewDist = 视距（-viewPos.z，供起点偏移）；skyLightmap = 像素天空 lightmap（泄漏衰减）；
 // blockLightmap = 像素方块光 lightmap（出界 BlockLighting 底光）；
 // 返回 0-1 尺度的"入射光"（已含命中体素 albedo 反射，未乘当前像素 albedo/强度）。
-// [REBLUR hitDistance] 上一次追踪的命中距离（格）。出界/未命中时保持 = 射程上限。
-float gHitDistance = 0.0;
-
+//
+// [REBLUR hitDistance 留档，尚未接入] 命中距离就是函数内的 rayLength（到命中点的距离）。
+// 若接入官方语义，出口必须是**归一化命中距离**：
+//     normHitDist = saturate( hitDistance / ( A + viewZ * B ) )
+// 因为官方定义 f = ( A + viewZ*B ) * lerp( 1, C, exp2( D * roughness^2 ) )，
+// 漫反射 roughness = 1 时 exp2(D*1) ≈ 0（D = -25）⇒ 该因子塌缩为 1；
+// 官方默认 A = 3.0、B = 0.1、C = 20.0、D = -25.0（单位已按米标定）。
+// 消费者是空间 pass 里的 minHitDistanceWeight（默认 0.1）与 hitDistanceReconstructionMode（概率采样才需要）。
+// 注意：不要只在出口写值却不接消费者——那会变成"看起来实现了"的假信号。
 vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist, float skyLightmap, float blockLightmap, ivec2 pixel, int sampleIndex, inout uint seed) {
-    gHitDistance = float(VOXEL_TRACE_DISTANCE);   // 默认视为未命中
     // 世界对齐网格对齐：origin 为相机相对坐标，+cameraPositionFract 抵消小数 +VOXEL_RADIUS
     // 转网格坐标（[0,VOXEL_AREA)）——与 Terrain.vert 体素化 / VoxelGI.frag 注入端
     // （起点 vec3(c)+0.5）同一坐标系。漏加 VOXEL_RADIUS 会让起点落在 -32..32 的负半区，
@@ -302,7 +307,6 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 起始体素形状命中：rayLength 可能为负（起点在子盒内部，tEnter<0）→
         // 钳到 0，避免 hitVoxelPos 落到起点后方（阴影判定/IRC 重投影位置错误）
         if (i == 0) rayLength = max(rayLength, 0.0);
-        gHitDistance = max(rayLength, 0.0);   // 命中距离（REBLUR hitDistance）
 
         // 反弹 albedo：固体格 r/g=染过色中心色 RG、w 高 8 位=染过色 B（Shadow.frag 草方块
         // tint 修复）；不再采样 atlas2D（64³ 无法表达 16px 细节，中心色=体素平均反照率）。

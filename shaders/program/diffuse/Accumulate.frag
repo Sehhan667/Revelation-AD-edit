@@ -205,14 +205,33 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 #endif
             }
 
-            float alpha = rcp(integratedDiffuse.a);
+            // [官方 convergenceSettings] f = 1 / (1 + k*N)，其中
+            //     k = s * lerp( b, 1, saturate( N / (p * maxAccumulatedFrameNum) ) )
+            // 官方参数 s = 1.0（总尺度）、b = 0.2（短历史行为）、p = 0.8（b 影响的比例）。
+            // 意图（原文）：b < 1 「历史重置后做更多降噪 —— a blurry result is better on average
+            // than a dirty result」；s > 1 「短累积时做更少降噪（干净信号不该被抹）」。
+            // N = 1 时 alpha ≈ 0.81（原 1/N 写法是 1.0：第一帧 100% 用单帧样本 ⇒ 闪）。
+            // N = 30 时 alpha ≈ 1/31，与原来 1/N 基本一致。
+            float alpha;
+            {
+                const float _convS = 1.0;    // 官方 s
+                const float _convB = 0.2;    // 官方 b
+                const float _convP = 0.8;    // 官方 p
+                float _N = max(integratedDiffuse.a, 1.0);
+                float _t = saturate(_N * rcp(max(_convP * accumCap, 1.0)));
+                float _k = _convS * mix(_convB, 1.0, _t);
+                alpha = rcp(1.0 + _k * _N);
+            }
 
-            // [REBLUR 历史裁剪] 把**长历史**（滤波后的稳定值）夹到**短历史**的邻域内。
-            // 短历史是「只累积、不掺滤波」的新鲜信号（4 帧级）⇒ 参考不会滞后：
-            //   · 光照变化（火把挪走）→ 短历史 4 帧内跟上 → 长历史被拉回 ⇒ 不拖影；
+            // [REBLUR 历史裁剪] 官方做法（`fastHistoryClampingSigmaScale = 2.0`，原文：「REBLUR clamps
+            // the spatially processed main history to the spatially unprocessed fast history」）：
+            // 把**空间滤波后**的长历史，夹到**未经滤波**的短历史的 `mean ± k·σ`。
+            // 短历史只累积、不掺滤波结果（固定 1/6 混合率 = 官方 maxFastAccumulatedFrameNum = 6）
+            // ⇒ 参考不会滞后：
+            //   · 光照变化（火把挪走）→ 短历史几帧内跟上 → 长历史被拉回 ⇒ 不拖影；
             //   · 静止时短历史邻域足够宽、长历史原样通过 ⇒ 降噪收益不减；
             //   · 长历史被逐帧夹在「当前信号附近」⇒ 滤波反馈不会把细节逐帧压掉。
-            // 容差 = 短历史的相对 35% + 绝对下限（暗处防过紧）。
+            // σ 取自短历史 3×3；另加绝对下限（暗处 σ≈0 时防过紧）。
             #ifdef VOXEL_GI_NRD_ACTIVE
                 {
                     // 官方 fastHistoryClampingSigmaScale = 2.0：σ 取自**未经滤波**的短历史邻域。
@@ -290,12 +309,9 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             }
 
             integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), integratedDiffuse.rgb, alpha);
-            // 短历史：**固定 1/4 混合率、永不掺滤波结果** ⇒ 4 帧级的新鲜参考（REBLUR fastHistory）
-            // 命中距离（归一化 0..1，1=未命中/超射程）：写进短历史的 .a，供 VarianceEstimate 读；
-            // 不能直接留到 VarianceEstimate 读 colortex3.a —— 那里用 image 写 colortex3，
-            // 再把它当采样器读会撞硬件单元导致 imageStore 静默失效。
-            fastHistory = vec4(mix(prevFast, integratedDiffuse.rgb, 0.25),
-                               texelFetch(colortex3, texelPos, 0).a);
+            // 短历史：固定 1/6 混合率（官方 maxFastAccumulatedFrameNum = 6）、**永不掺滤波结果**
+            // ⇒ 几帧级的新鲜参考（REBLUR fastHistory）。.a 目前未使用（保留 1.0）。
+            fastHistory = vec4(mix(prevFast, integratedDiffuse.rgb, 1.0 / 6.0), 1.0);
             return;
         }
     }
@@ -334,7 +350,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
     #endif
     encodedNormalDepth.a = 1.0;
-    fastHistory = vec4(integratedDiffuse.rgb, texelFetch(colortex3, texelPos, 0).a);
+    fastHistory = vec4(integratedDiffuse.rgb, 1.0);
 }
 
 float GetClosestDepthN(in ivec2 texel) {

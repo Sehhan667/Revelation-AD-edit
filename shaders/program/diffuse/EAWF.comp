@@ -250,7 +250,7 @@ void main() {
 	// 代价：收敛后残留噪声会更明显（细节与噪声是同一频段），所以默认关、由用户按需开启。
 	if (GI_RADIUS_DECAY > 0.0) {
 		float _t = saturate(frameIndex * rcp(max(GI_RADIUS_DECAY, 1.0)));
-		offsetScale *= mix(1.0, 0.2, _t);
+		offsetScale *= mix(1.0, 1.0 / 30.0, _t);   // 官方 minBlurRadius/maxBlurRadius = 1/30
 	}
 	// 每轴步长至少 1 px：掠射面上 offsetScaleBase 会被压到 <0.5（例：斜墙 n≈(0.9,0.1) 时
 	// x 轴只剩 0.1），round() 后该轴整列 tap 全部塌到中心 ⇒ 9-tap 退化成 1D 竖/横条，
