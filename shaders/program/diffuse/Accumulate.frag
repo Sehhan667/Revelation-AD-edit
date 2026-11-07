@@ -149,7 +149,17 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             #ifdef OFFLINE_RENDER
                 integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, 1024.0);
             #else
+                #ifdef VOXEL_GI_ROBUST_ACCUM
+                // 稳态累积帧数 = 1/(1-w)，对 w 极其敏感：w=0.984→62 帧、0.95→20、0.90→10。
+                // 运动时重投影的亚像素残差（向量本身是对的）就足以把 w 压到 0.9~0.95 ⇒ 累积从
+                // 64 帧塌到 10~20 帧 ⇒ 源端的冲激（稀疏命中 / 二值阳光反弹，单样本可到 clamp 32）
+                // 重新露出来 → 表现就是"一动就发白/发脏"，而静止时又正常。
+                // 这里把 w 只当"是否同一表面"的判据：匹配就满速累积，不匹配才快速衰减（w²）。
+                float _wAccum = maxGeometryWeight > 0.9 ? 1.0 : maxGeometryWeight * maxGeometryWeight;
+                integratedDiffuse.a = min(prevDiffuse.a * _wAccum + 1.0, accumCap);
+                #else
                 integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, accumCap);
+                #endif
             #endif
 
             if (integratedDiffuse.a < 8.0) {
@@ -197,6 +207,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             #ifdef VOXEL_GI_PTGI_DENOISE
                 alpha *= 0.25;
             #endif
+
+            // [逐样本钳制] 弱光的噪声主体是冲激（大多数帧 0、偶发一个很大值）：稀疏命中、二值阳光反弹。
+            // 空间滤波只能把它抹成脏污；在**入样**处按当前累积均值的 K 倍封顶则只压尖峰、不模糊。
+            // K=0 关闭；a 太小时跳过（均值≈0 会把真实光照一起压掉）。
+            if (VOXEL_GI_SAMPLE_CLAMP > 0.0 && integratedDiffuse.a > 4.0) {
+                vec3 _meanClamp = max(prevDiffuse.rgb, vec3(1e-5));
+                integratedDiffuse.rgb = min(integratedDiffuse.rgb, _meanClamp * VOXEL_GI_SAMPLE_CLAMP);
+            }
 
             integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), integratedDiffuse.rgb, alpha);
             return;

@@ -843,6 +843,8 @@ option.VOXEL_GI_DARK_ACCUM=弱光加强降噪
 option.VOXEL_GI_DARK_ACCUM.comment=暗处把时域累积上限提高到 4 倍（32→128 帧）。只加长历史、不加大空间滤波，所以不会把画面抹平；代价是暗处光照变化时拖影变长
 option.VOXEL_GI_STABLE_GUIDE=稳定引导量
 option.VOXEL_GI_STABLE_GUIDE.comment=法线/深度不再随 2x2 棋盘相位轮转（固定取块左上子像素）。转视角或法线贴图表面上"掉回单帧噪点"的元凶就是这个相位轮转；开着如果出现轮廓处 1~2 px 渗色，是它的已知代价
+option.VOXEL_GI_ROBUST_ACCUM=稳定累积
+option.VOXEL_GI_ROBUST_ACCUM.comment=几何一致度高的像素不再按它衰减累积帧数。原式稳态帧数 = 1/(1-w)：运动时重投影的亚像素残差会把 w 压到 0.9~0.95，于是 64 帧塌到 10~20 帧，源端的亮点冲激重新露出来（"一动就发白/发脏"的根源）。开启后：匹配就满速累积，只有真正不匹配时才快速重置
 option.PTGI_MEDIAN_RADIUS=中值半径
 option.PTGI_MEDIAN_RADIUS.comment=1=3×3，2=5×5。越大去噪越强、细节越糊（去孤点亮噪/firefly）
 option.PTGI_EDGE_STRENGTH=边缘保持强度
