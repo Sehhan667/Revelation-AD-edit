@@ -728,6 +728,8 @@ option.GI_DISOC_PRESTABILIZE_FRAMES=New-Pixel Prestabilize
 option.GI_DISOC_PRESTABILIZE_FRAMES.comment=Freshly exposed GI starts from a wide average (stable but low detail) and grows detail monotonically as frames accumulate; larger = steadier but slower to sharpen. 0 = off (legacy: hard switch at 8 frames). In low light try 24-32.
 option.GI_NEIGHBOR_HISTORY_FRAMES=Neighbour History Fill
 option.GI_NEIGHBOR_HISTORY_FRAMES.comment=Freshly exposed pixels start from a nearby accumulated same-surface neighbour value and fade into their own samples as frames accumulate; avoids the per-pixel fade-from-black that turns the screen into a moving patchwork (worst in low light). 0 = off; try 16-32 in low light.
+option.GI_DISOC_FADE_FRAMES=New-Pixel Fade Rate
+option.GI_DISOC_FADE_FRAMES.comment=For the first N frames of a newly exposed pixel, cap the blend rate at 1/N so it converges in small fixed steps instead of letting a single 1-SPP sample dominate the first frame. Larger = steadier but slower detail. 0 = off. Best combined with Neighbour History Fill.
 option.GI_KERNEL_ROT_PER_FRAME=Rotate Kernel Per Frame
 option.GI_KERNEL_ROT_PER_FRAME.comment=The random kernel directions are fixed per pixel (cleanest when still) but anchored to the screen: as the camera turns, the world slides under that fixed pattern and the GI looks messy/uneven. On: rotate the pattern every frame so temporal accumulation and TAA average it out (cost: slightly noisier per frame).
 option.PTGI_MEDIAN_RADIUS=Median Radius

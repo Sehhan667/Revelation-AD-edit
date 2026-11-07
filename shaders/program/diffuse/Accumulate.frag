@@ -207,6 +207,15 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 
             float alpha = rcp(integratedDiffuse.a);
 
+            // [新像素淡入速率] alpha = 1/a 意味着第 1 帧输出 = 100% 当前 1 SPP 样本 ⇒ 转头时新画面
+            // 就是在被单帧噪声带着跳（观感"忽闪"）。前 N 帧把 alpha 封顶到 1/N：新区域从邻居历史值
+            // 出发、以固定速率缓慢长细节（指数收敛，时间常数 N 帧）。
+            // 注意：起点（mip/邻居）与速率是两件事——只改起点不改速率，样本仍会一帧顶进来。
+            // a ≥ N 后 1/a ≤ 1/N，自动回到正常累积。0 = 关（现状）。
+            if (GI_DISOC_FADE_FRAMES > 0.0) {
+                alpha = min(alpha, rcp(GI_DISOC_FADE_FRAMES));
+            }
+
             // [2026-08-28 ] 时域累积的连续衰减已由上方 maxGeometryWeight 接管（静止≈1 深累积、
             // 几何剧变骤降少混合历史），这里不再重复调 alpha。仅保留：运动时对该像素做一次
             // 3×3 当前帧邻域平均（前置空间滤波），再进 EAWF，缓解转动脏污。
