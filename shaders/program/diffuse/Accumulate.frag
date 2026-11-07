@@ -176,31 +176,33 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 integratedDiffuse.rgb = textureLod(colortex3, currCoord, mipLevel).rgb;
             } else {
                 integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
-                // [预滤波 / spatial reuse] NRD 的 `diffusePrepassBlurRadius`（默认 30px，注释写明
-                // 「必须用于定义不良的信号和概率采样」）的等价物：把**进累积前的输入**先在邻域里
-                // 平均一次，用不同像素的独立样本把 1spp 噪声压下去。
-                // 我们画布是 4 相位棋盘半分辨率 ⇒ 邻居本身就是**不同子像素相位**的独立样本，
-                // 所以邻域平均=真正的空间重用，不是把同一份噪声抹平。
-                // 只在"输入占主导"时做（a 小时 alpha≈1，历史还没建立），已收敛像素不动它。
+                // [REBLUR prepass 等价物 / spatial reuse] 官方 diffusePrepassBlurRadius = 30
+                // （注释：「0 = disabled, must be used in case of badly defined signals and
+                //   probabilistic sampling」）—— 本包 GI 正是这种信号（1spp、命中率 1~3%）。
+                // 官方 prepass：对**噪声输入**做 30 px 半径的空间重用，把稀疏噪声稠密化后才进累积。
+                // 我们无法新开 pass（deferred1/2/3 槽位全占用），因此在取输入处做等价重用：
+                //   9×9、步长 2 ⇒ 覆盖 ±16 画布纹素 ≈ ±32 屏幕像素（画布是半分辨率），对齐官方 30 px；
+                //   **无条件执行**（官方如此；历史占主导后 alpha 很小，等效影响自然衰减）；
+                //   深度/法线加权挡跨表面 —— 用本帧的 colortex14 是上一帧的 aux，故只用视深+法线，
+                //   且相对视深差 10%（比官方的切平面距离宽，因为我们是上一帧 aux）。
                 #ifdef VOXEL_GI_NRD_ACTIVE
                 {
-                    float _fresh = saturate(1.0 - integratedDiffuse.a * rcp(max(accumCap, 1.0)));
-                    if (_fresh > 0.01) {
-                        vec3 _rsSum = integratedDiffuse.rgb;
-                        float _rsW = 1.0;
-                        for (int _ry = -2; _ry <= 2; ++_ry) {
-                            for (int _rx = -2; _rx <= 2; ++_rx) {
-                                ivec2 _rt = texelPos + ivec2(_rx, _ry);
-                                if (clamp(_rt, ivec2(1), canvasEnd - 2) != _rt) continue;
-                                vec3 _ra = texelFetch(colortex14, _rt, 0).rgb;   // 邻居法线+视深（上一帧）
-                                float _rw = saturate(1.0 - abs(_ra.z - viewPos.z) / max(abs(viewPos.z) * 0.1, 1e-3));
-                                _rw *= linearstep(0.5, 0.9, saturate(dot(OctDecodeSnorm(_ra.xy), worldNormal)));
-                                _rsSum += texelFetch(colortex3, _rt, 0).rgb * _rw;
-                                _rsW += _rw;
-                            }
+                    vec3 _rsSum = integratedDiffuse.rgb;
+                    float _rsW = 1.0;
+                    for (int _ry = -8; _ry <= 8; _ry += 2) {
+                        for (int _rx = -8; _rx <= 8; _rx += 2) {
+                            if (_rx == 0 && _ry == 0) continue;
+                            ivec2 _rt = texelPos + ivec2(_rx, _ry);
+                            if (clamp(_rt, ivec2(1), canvasEnd - 2) != _rt) continue;
+                            vec3 _ra = texelFetch(colortex14, _rt, 0).rgb;   // 邻居法线 + 视深
+                            float _rw = saturate(1.0 - abs(_ra.z - viewPos.z) / max(abs(viewPos.z) * 0.1, 1e-3));
+                            _rw *= linearstep(0.5, 0.9, saturate(dot(OctDecodeSnorm(_ra.xy), worldNormal)));
+                            _rw *= 1.0 / (1.0 + float(_rx * _rx + _ry * _ry) * 0.02);   // 径向衰减
+                            _rsSum += texelFetch(colortex3, _rt, 0).rgb * _rw;
+                            _rsW += _rw;
                         }
-                        integratedDiffuse.rgb = mix(integratedDiffuse.rgb, _rsSum / _rsW, _fresh * 0.75);
                     }
+                    integratedDiffuse.rgb = _rsSum / _rsW;
                 }
                 #endif
             }
@@ -303,9 +305,20 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             // [逐样本钳制] 弱光的噪声主体是冲激（大多数帧 0、偶发一个很大值）：稀疏命中、二值阳光反弹。
             // 空间滤波只能把它抹成脏污；在**入样**处按当前累积均值的 K 倍封顶则只压尖峰、不模糊。
             // K=0 关闭；a 太小时跳过（均值≈0 会把真实光照一起压掉）。
-            if (VOXEL_GI_SAMPLE_CLAMP > 0.0 && integratedDiffuse.a > 4.0) {
-                vec3 _meanClamp = max(prevDiffuse.rgb, vec3(1e-5));
-                integratedDiffuse.rgb = min(integratedDiffuse.rgb, _meanClamp * VOXEL_GI_SAMPLE_CLAMP);
+            // [REBLUR firefly suppressor] 官方 enableAntiFirefly = true **默认开启**，
+            // ireflySuppressorMinRelativeScale = 2.0（「[1;3] undesired sporadic outliers suppression
+            // to keep output stable；smaller values maximize suppression in exchange of bias」）。
+            // 做法与官方一致：把本帧入样按「历史均值的 k 倍」封顶 ⇒ 孤亮点顶不进历史。
+            // NRD 模式下若用户把 VOXEL_GI_SAMPLE_CLAMP 设为 0，则取官方默认 2.0（= 官方默认开启）。
+            {
+                float _fireflyK = VOXEL_GI_SAMPLE_CLAMP;
+                #ifdef VOXEL_GI_NRD_ACTIVE
+                    if (_fireflyK <= 0.0) _fireflyK = 2.0;   // 官方 fireflySuppressorMinRelativeScale
+                #endif
+                if (_fireflyK > 0.0 && integratedDiffuse.a > 4.0) {
+                    vec3 _meanClamp = max(prevDiffuse.rgb, vec3(1e-5));
+                    integratedDiffuse.rgb = min(integratedDiffuse.rgb, _meanClamp * _fireflyK);
+                }
             }
 
             integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), integratedDiffuse.rgb, alpha);
