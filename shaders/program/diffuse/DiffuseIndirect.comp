@@ -823,7 +823,7 @@ void main() {
 					traceAcc += VoxelTracePixel(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
 					                            -viewPos.z, skyLightmap, lightmap.x, renderTexel, s, traceSeed);
 				}
-				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_OFFLINE_SPP)) * VOXEL_GI_TRACE_STRENGTH, saturate(gHitDistance / 64.0));
+				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_OFFLINE_SPP)) * VOXEL_GI_TRACE_STRENGTH, saturate(gHitDistance * rcp(3.0 + max(-viewPos.z, 0.0) * 0.1)));
 			#else
 			// [2026-08-21 实时 SPP] 实时模式也支持同帧多射线：VOXEL_TRACE_SPP 默认 1（现状），
 			// 调大后多射线平均 → 单帧降噪、时域收敛更快（性能按比例增）。与离线宏独立。
@@ -832,7 +832,7 @@ void main() {
 					traceAcc += VoxelTracePixel(mat3(gbufferModelViewInverse) * viewPos, worldNormal, geoNormal,
 					                            -viewPos.z, skyLightmap, lightmap.x, renderTexel, s, traceSeed);
 				}
-				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_SPP)) * VOXEL_GI_TRACE_STRENGTH, saturate(gHitDistance / 64.0));
+				result = vec4(traceAcc * rcp(float(VOXEL_TRACE_SPP)) * VOXEL_GI_TRACE_STRENGTH, saturate(gHitDistance * rcp(3.0 + max(-viewPos.z, 0.0) * 0.1)));
 			#endif
 			// [2026-10-02] 上限从 8.0 提到 32.0：加了 VOXEL_SUN_BOUNCE_GAIN 之后，正常反弹
 			// 也可能到 10 的量级，8.0 会把它截平（表现为"加了增益没变化"）。
