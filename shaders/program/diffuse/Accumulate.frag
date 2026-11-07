@@ -66,18 +66,6 @@ layout (location = 2) out vec4 fastHistory;
     #define SHOULD_APPLY_JITTER
 #endif
 
-// [新出现像素的预稳定] a 小 → 大范围 mip 平均（稳定、低细节）；a 大 → 逐像素锐利样本。
-// 借鉴参考实现的观感：新暴露区域先给"稳但缺细节"的估计，随后随累积帧数单调长出细节。
-// 原来的写法只有 a<8 的硬切换（8 帧后突然变锐），低光下 8 帧远不够，噪声还在就变锐
-// ⇒ 新出现的 GI 闪得厉害、且要很久才稳。maxMip 4：半分辨率下 ≈16 纹素 ≈ 屏幕 32 px 平均。
-vec3 SampleGIPrestabilized(ivec2 texelPos, vec2 currCoord, float accumFrames) {
-    // max(...,1) 防开关为 0 时（死代码路径）出现 rcp(0)
-    float detailT = saturate(accumFrames * rcp(max(GI_DISOC_PRESTABILIZE_FRAMES, 1.0)));
-    float mipLevel = (1.0 - detailT) * 4.0;
-    return mix(textureLod(colortex3, currCoord, mipLevel).rgb,
-               texelFetch(colortex3, texelPos, 0).rgb, detailT);
-}
-
 void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, in float accumCap, in float giDepthGrad) {
 	vec3 viewPos = ScreenToViewPos(screenPos);
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
@@ -177,59 +165,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, accumCap);
             #endif
 
-            if (GI_DISOC_PRESTABILIZE_FRAMES > 0.0) {
-                integratedDiffuse.rgb = SampleGIPrestabilized(texelPos, currCoord, integratedDiffuse.a);
-            } else if (integratedDiffuse.a < 8.0) {
+            if (integratedDiffuse.a < 8.0) {
                 float mipLevel = 3.0 * saturate(1.0 - integratedDiffuse.a * rcp(8.0));
                 integratedDiffuse.rgb = textureLod(colortex3, currCoord, mipLevel).rgb;
             } else {
                 integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
             }
 
-            // [邻居历史填充] 新暴露像素不要"从黑淡入"：先继承附近「已累积且同表面」像素的历史值，
-            // 再按 a 单调淡入自己的采样。逐像素各自淡入会在屏幕上拼出一张流动的深浅补丁网
-            //（弱光下对比最强，观感就是"乱、不平滑"）；继承邻居后，新区域一出现就是稳、略糊、
-            // 亮度正确的样子，细节再慢慢长进来 —— 参考实现的行为就是这个。
-            // 半径 2（半分辨率 texel）；只读不需要额外成本，且与"读历史"同一条既定路径。
-            if (GI_NEIGHBOR_HISTORY_FRAMES > 0.0 && integratedDiffuse.a < GI_NEIGHBOR_HISTORY_FRAMES) {
-                vec3 _nh = integratedDiffuse.rgb;
-                float _bestA = integratedDiffuse.a;
-                for (int _dy = -2; _dy <= 2; ++_dy) {
-                    for (int _dx = -2; _dx <= 2; ++_dx) {
-                        ivec2 _t = texelPos + ivec2(_dx, _dy);
-                        if (clamp(_t, ivec2(1), canvasEnd - 2) != _t) continue;
-                        float _a = texelFetch(colortex2, _t, 0).a;
-                        if (_a <= _bestA) continue;
-                        // 只取同表面（法线一致）的邻居，避免把墙角另一侧的 GI 搬过来
-                        if (dot(OctDecodeSnorm(texelFetch(colortex14, _t, 0).xy), worldNormal) < 0.8) continue;
-                        _bestA = _a;
-                        _nh = texelFetch(colortex2, _t, 0).rgb;
-                    }
-                }
-                integratedDiffuse.rgb = mix(_nh, integratedDiffuse.rgb,
-                                            saturate(integratedDiffuse.a * rcp(GI_NEIGHBOR_HISTORY_FRAMES)));
-            }
-
             float alpha = rcp(integratedDiffuse.a);
-
-            // [新像素淡入速率] alpha = 1/a 意味着第 1 帧输出 = 100% 当前 1 SPP 样本 ⇒ 转头时新画面
-            // 就是在被单帧噪声带着跳（观感"忽闪"）。前 N 帧把 alpha 封顶到 1/N：新区域从邻居历史值
-            // 出发、以固定速率缓慢长细节（指数收敛，时间常数 N 帧）。
-            // 注意：起点（mip/邻居）与速率是两件事——只改起点不改速率，样本仍会一帧顶进来。
-            // a ≥ N 后 1/a ≤ 1/N，自动回到正常累积。0 = 关（现状）。
-            if (GI_DISOC_FADE_FRAMES > 0.0) {
-                alpha = min(alpha, rcp(GI_DISOC_FADE_FRAMES));
-            }
-
-            // [光照突变快速响应] 任何时域稳定化都会让"光照变化"跟得慢——火把拿在手上移动/放挖火把时
-            // 最明显（方块光是变化最快的一项），表现为严重拖影。
-            // 只看"入样与当前均值的相对亮度偏差"：偏差大 ⇒ 是光照变了（而不是几何新暴露），
-            // 临时放大 alpha 让它快速跟过去；几何新暴露的像素（a < N）不参与，保留慢淡入。
-            if (GI_LIGHT_CHANGE_RESPONSE > 0.0 && integratedDiffuse.a >= max(GI_DISOC_FADE_FRAMES, 8.0)) {
-                float _meanL = max(prevDiffuse.r, 1e-4);
-                float _relDev = abs(integratedDiffuse.r - prevDiffuse.r) * rcp(_meanL);
-                alpha = max(alpha, saturate(_relDev * 0.5) * GI_LIGHT_CHANGE_RESPONSE);
-            }
 
             // [REBLUR 历史裁剪] 把**长历史**（滤波后的稳定值）夹到**短历史**的邻域内。
             // 短历史是「只累积、不掺滤波」的新鲜信号（4 帧级）⇒ 参考不会滞后：
@@ -303,10 +246,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     }
 
     // [2026-08-19 NRD] 去遮挡标记：走到这里 = 不可靠（越界/historyReset/深度不匹配）→ a=1
-    // 预稳定开启时首帧用更宽的平均（mip 4）当起点，之后按帧数单调变锐；关闭时保持原来的固定 mip 3。
-    integratedDiffuse.rgb = (GI_DISOC_PRESTABILIZE_FRAMES > 0.0)
-        ? SampleGIPrestabilized(texelPos, currCoord, 1.0)
-        : textureLod(colortex3, currCoord, 3.0).rgb;
+    integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
     encodedNormalDepth.a = 1.0;
     fastHistory = vec4(integratedDiffuse.rgb, 1.0);
 }

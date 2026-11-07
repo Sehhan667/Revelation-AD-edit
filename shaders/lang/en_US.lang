@@ -726,14 +726,6 @@ option.VOXEL_GI_SAMPLE_CLAMP=Sample Clamp
 option.VOXEL_GI_SAMPLE_CLAMP.comment=Clamp each incoming temporal sample to K times the running mean. Targets impulse noise (sparse voxel hits, binary sun-bounce) without adding blur - it only trims spikes. Default 0 = off; in dark areas try 4-8, too low also flattens genuine bright spots.
 option.GI_ACCUM_DEPTH_GRAD_SLACK=Grazing Depth Slack
 option.GI_ACCUM_DEPTH_GRAD_SLACK.comment=Depth tolerance of the history geometry check = max(fixed 12.5%, this x screen-space depth gradient). On grazing surfaces (normal nearly perpendicular to the view ray) one texel changes depth by a large fraction of the depth itself, so a fixed tolerance makes them never accumulate; raising this accumulates better but more easily bleeds the GI of an occluder in front onto the wall. 4 = current.
-option.GI_DISOC_PRESTABILIZE_FRAMES=New-Pixel Prestabilize
-option.GI_DISOC_PRESTABILIZE_FRAMES.comment=Freshly exposed GI starts from a wide average (stable but low detail) and grows detail monotonically as frames accumulate; larger = steadier but slower to sharpen. 0 = off (legacy: hard switch at 8 frames). In low light try 24-32.
-option.GI_NEIGHBOR_HISTORY_FRAMES=Neighbour History Fill
-option.GI_NEIGHBOR_HISTORY_FRAMES.comment=Freshly exposed pixels start from a nearby accumulated same-surface neighbour value and fade into their own samples as frames accumulate; avoids the per-pixel fade-from-black that turns the screen into a moving patchwork (worst in low light). 0 = off; try 16-32 in low light.
-option.GI_DISOC_FADE_FRAMES=New-Pixel Fade Rate
-option.GI_DISOC_FADE_FRAMES.comment=For the first N frames of a newly exposed pixel, cap the blend rate at 1/N so it converges in small fixed steps instead of letting a single 1-SPP sample dominate the first frame. Larger = steadier but slower detail. 0 = off. Best combined with Neighbour History Fill.
-option.GI_LIGHT_CHANGE_RESPONSE=Light Change Response
-option.GI_LIGHT_CHANGE_RESPONSE.comment=When a torch moves or is placed/broken the lighting steps abruptly; for already-accumulated pixels this detects a large deviation of the incoming sample from the mean and temporarily raises the blend rate so it catches up quickly, removing blocklight ghosting. New pixels keep their slow fade. 0 = off; try 0.5-0.75 if blocklight trails are obvious.
 option.GI_KERNEL_ROT_PER_FRAME=Rotate Kernel Per Frame
 option.GI_KERNEL_ROT_PER_FRAME.comment=The random kernel directions are fixed per pixel (cleanest when still) but anchored to the screen: as the camera turns, the world slides under that fixed pattern and the GI looks messy/uneven. On: rotate the pattern every frame so temporal accumulation and TAA average it out (cost: slightly noisier per frame).
 option.PTGI_MEDIAN_RADIUS=Median Radius
