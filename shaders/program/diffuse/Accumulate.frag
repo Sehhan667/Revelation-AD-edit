@@ -176,6 +176,33 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 integratedDiffuse.rgb = textureLod(colortex3, currCoord, mipLevel).rgb;
             } else {
                 integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
+                // [预滤波 / spatial reuse] NRD 的 `diffusePrepassBlurRadius`（默认 30px，注释写明
+                // 「必须用于定义不良的信号和概率采样」）的等价物：把**进累积前的输入**先在邻域里
+                // 平均一次，用不同像素的独立样本把 1spp 噪声压下去。
+                // 我们画布是 4 相位棋盘半分辨率 ⇒ 邻居本身就是**不同子像素相位**的独立样本，
+                // 所以邻域平均=真正的空间重用，不是把同一份噪声抹平。
+                // 只在"输入占主导"时做（a 小时 alpha≈1，历史还没建立），已收敛像素不动它。
+                #ifdef VOXEL_GI_NRD_ACTIVE
+                {
+                    float _fresh = saturate(1.0 - integratedDiffuse.a * rcp(max(accumCap, 1.0)));
+                    if (_fresh > 0.01) {
+                        vec3 _rsSum = integratedDiffuse.rgb;
+                        float _rsW = 1.0;
+                        for (int _ry = -2; _ry <= 2; ++_ry) {
+                            for (int _rx = -2; _rx <= 2; ++_rx) {
+                                ivec2 _rt = texelPos + ivec2(_rx, _ry);
+                                if (clamp(_rt, ivec2(1), canvasEnd - 2) != _rt) continue;
+                                vec3 _ra = texelFetch(colortex14, _rt, 0).rgb;   // 邻居法线+视深（上一帧）
+                                float _rw = saturate(1.0 - abs(_ra.z - viewPos.z) / max(abs(viewPos.z) * 0.1, 1e-3));
+                                _rw *= linearstep(0.5, 0.9, saturate(dot(OctDecodeSnorm(_ra.xy), worldNormal)));
+                                _rsSum += texelFetch(colortex3, _rt, 0).rgb * _rw;
+                                _rsW += _rw;
+                            }
+                        }
+                        integratedDiffuse.rgb = mix(integratedDiffuse.rgb, _rsSum / _rsW, _fresh * 0.75);
+                    }
+                }
+                #endif
             }
 
             float alpha = rcp(integratedDiffuse.a);
