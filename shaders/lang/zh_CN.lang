@@ -849,6 +849,8 @@ option.GI_ACCUM_DEPTH_GRAD_SLACK=掠射面容差松紧
 option.GI_ACCUM_DEPTH_GRAD_SLACK.comment=历史几何检查的深度容差 = max(固定相对 12.5%, 本值 × 屏幕空间视深梯度)。掠射面（法线几乎垂直于视线）上一个纹素的视深变化很大，固定容差会让它们“累积不上去”；调大更容易累积，但更容易把前方遮挡物的 GI 渗到墙上。 4=现行
 option.GI_DISOC_PRESTABILIZE_FRAMES=新出现像素预稳定帧数
 option.GI_DISOC_PRESTABILIZE_FRAMES.comment=屏幕上新出现的 GI（新暴露区域）先用大范围平均给出「稳但缺细节」的估计，再随累积帧数单调长出细节；越大越稳、细节来得越慢。0=关（旧行为），弱光下先试 24~32
+option.GI_KERNEL_ROT_PER_FRAME=滤波核逐帧旋转
+option.GI_KERNEL_ROT_PER_FRAME.comment=默认的随机核方向是「每像素固定」（静止时最干净），但它钉在屏幕上：相机一转，世界内容在这套图案下滑动 ⇒ GI 显得乱、不光滑。打开后每帧换一个旋转角，由时域累积与 TAA 平均掉（代价：单帧略多噪声）
 option.PTGI_MEDIAN_RADIUS=中值半径
 option.PTGI_MEDIAN_RADIUS.comment=1=3×3，2=5×5。越大去噪越强、细节越糊（去孤点亮噪/firefly）
 option.PTGI_EDGE_STRENGTH=边缘保持强度

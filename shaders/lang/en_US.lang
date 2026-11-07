@@ -726,6 +726,8 @@ option.GI_ACCUM_DEPTH_GRAD_SLACK=Grazing Depth Slack
 option.GI_ACCUM_DEPTH_GRAD_SLACK.comment=Depth tolerance of the history geometry check = max(fixed 12.5%, this x screen-space depth gradient). On grazing surfaces (normal nearly perpendicular to the view ray) one texel changes depth by a large fraction of the depth itself, so a fixed tolerance makes them never accumulate; raising this accumulates better but more easily bleeds the GI of an occluder in front onto the wall. 4 = current.
 option.GI_DISOC_PRESTABILIZE_FRAMES=New-Pixel Prestabilize
 option.GI_DISOC_PRESTABILIZE_FRAMES.comment=Freshly exposed GI starts from a wide average (stable but low detail) and grows detail monotonically as frames accumulate; larger = steadier but slower to sharpen. 0 = off (legacy: hard switch at 8 frames). In low light try 24-32.
+option.GI_KERNEL_ROT_PER_FRAME=Rotate Kernel Per Frame
+option.GI_KERNEL_ROT_PER_FRAME.comment=The random kernel directions are fixed per pixel (cleanest when still) but anchored to the screen: as the camera turns, the world slides under that fixed pattern and the GI looks messy/uneven. On: rotate the pattern every frame so temporal accumulation and TAA average it out (cost: slightly noisier per frame).
 option.PTGI_MEDIAN_RADIUS=Median Radius
 option.PTGI_MEDIAN_RADIUS.comment=1=3x3, 2=5x5. Larger = stronger denoise but blurs detail (targets fireflies/single-pixel noise)
 option.PTGI_EDGE_STRENGTH=Edge Preserve Strength

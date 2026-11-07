@@ -261,10 +261,13 @@ void main() {
 	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, frameCounter + FILTER_PASS_INDEX) - vec2(0.5)) * jitterSize;
 
 	// 整核旋转：把 3x3 方形格点整体绕像素中心旋转，方形印记在统计上被抹平（NRD 用旋转 Poisson 盘
-	// 是同一目的）。角度 = 每像素 hash（不含帧号 ⇒ 静态、不引入时域噪声）+ 每 pass 黄金角（≈137.5°，
-	// 让四级方向均匀铺开，不再叠成 4 折对称的十字）。
+	// 是同一目的）。角度 = 每像素 hash + 每 pass 黄金角（≈137.5°，让四级方向均匀铺开，不再叠成四折十字）。
+	// 默认「每像素固定」：静止时最干净，也不引入帧间噪声；但方向图案钉在屏幕上，相机一转世界内容在
+	// 这套图案下滑动 ⇒ 滤波结果显得乱/不光滑。GI_KERNEL_ROT_PER_FRAME 打开后叠加逐帧旋转，
+	// 由时域累积与 TAA 把这份空间不规则平均掉（代价：单帧略多噪声）。
+	float _rotFrame = GI_KERNEL_ROT_PER_FRAME ? float(frameCounter) * 2.39996323 : 0.0;
 	float _tapAng = hash13(vec3(texelPos, float(FILTER_PASS_INDEX))) * 6.2831853
-	              + float(FILTER_PASS_INDEX) * 2.39996323;
+	              + float(FILTER_PASS_INDEX) * 2.39996323 + _rotFrame;
 	mat2 _tapRot = mat2(cos(_tapAng), sin(_tapAng), -sin(_tapAng), cos(_tapAng));
 
 	for (uint i = 0u; i < 9u; ++i) {
@@ -294,9 +297,10 @@ void main() {
 
 	// 方向性长采样：原来每个 pass 用固定屏幕方向（(1,1) / (1,-1) / (1,0) / (0,1)），四级叠加会在
 	// 画面上留下十字/星形纹路。改成每像素、每 pass 一个随机方向——保留「单向长距离扩散」的收益，
-	// 但不留统一方向可循。角度用 hash13（不含帧号）⇒ 静态、不引入帧间噪声。
+	// 但不留统一方向可循。与整核旋转共用 _rotFrame：开启逐帧旋转时两者一起变，避免长采样方向
+	// 仍钉在屏幕上而单独造成不规则。
 	{
-	    float _ang = hash13(vec3(texelPos, float(FILTER_PASS_INDEX + 1))) * 6.2831853;
+	    float _ang = hash13(vec3(texelPos, float(FILTER_PASS_INDEX + 1))) * 6.2831853 + _rotFrame;
 	    vec2 _axis = vec2(cos(_ang), sin(_ang));
 	    float _len = max(offsetScale.x, offsetScale.y);
 	    for (int _d = 0; _d < 2; ++_d) {
