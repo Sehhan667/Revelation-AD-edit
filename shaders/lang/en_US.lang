@@ -728,6 +728,12 @@ option.GI_ACCUM_DEPTH_GRAD_SLACK=Grazing Depth Slack
 option.GI_ACCUM_DEPTH_GRAD_SLACK.comment=Depth tolerance of the history geometry check = max(fixed 12.5%, this x screen-space depth gradient). On grazing surfaces (normal nearly perpendicular to the view ray) one texel changes depth by a large fraction of the depth itself, so a fixed tolerance makes them never accumulate; raising this accumulates better but more easily bleeds the GI of an occluder in front onto the wall. 4 = current.
 option.GI_DISOC_DETAIL_FRAMES=New-Pixel Detail Ramp
 option.GI_DISOC_DETAIL_FRAMES.comment=Freshly exposed pixels start from a smooth detail-free value (mip3) and regain detail over this many frames. Larger (16-24) = steadier new areas but slower detail; 8 = legacy behaviour (~0.13 s).
+option.GI_ACCUM_TIME=Accumulation Time (s)
+option.GI_ACCUM_TIME.comment=Converted to a frame cap by FPS (cap = time / frameTime, hard-capped by Max Accum Frames). NRD REBLUR default for diffuse is 0.5 s; larger = cleaner but longer ghosting.
+option.GI_RADIUS_DECAY=Radius Decay
+option.GI_RADIUS_DECAY.comment=NRD maxBlurRadius(30px) to minBlurRadius(1px): freshly accumulated pixels use a large radius for noise suppression, then the radius shrinks with accumulated frames so detail emerges over time. Cost: more visible residual noise at convergence (0=off).
+option.GI_FAST_CLAMP_SIGMA=Fast-History Clamp Sigma
+option.GI_FAST_CLAMP_SIGMA.comment=Official fastHistoryClampingSigmaScale (default 2.0): the long history is clamped to the fast history mean +/- k sigma. Larger = looser (more ghosting, more detail preserved); 1.5 works for dirty signals.
 option.GI_KERNEL_ROT_PER_FRAME=Rotate Kernel Per Frame
 option.GI_KERNEL_ROT_PER_FRAME.comment=The random kernel directions are fixed per pixel (cleanest when still) but anchored to the screen: as the camera turns, the world slides under that fixed pattern and the GI looks messy/uneven. On: rotate the pattern every frame so temporal accumulation and TAA average it out (cost: slightly noisier per frame).
 option.PTGI_MEDIAN_RADIUS=Median Radius

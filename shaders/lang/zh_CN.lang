@@ -851,6 +851,12 @@ option.GI_ACCUM_DEPTH_GRAD_SLACK=掠射面容差松紧
 option.GI_ACCUM_DEPTH_GRAD_SLACK.comment=历史几何检查的深度容差 = max(固定相对 12.5%, 本值 × 屏幕空间视深梯度)。掠射面（法线几乎垂直于视线）上一个纹素的视深变化很大，固定容差会让它们“累积不上去”；调大更容易累积，但更容易把前方遮挡物的 GI 渗到墙上。 4=现行
 option.GI_DISOC_DETAIL_FRAMES=新像素细节收敛帧数
 option.GI_DISOC_DETAIL_FRAMES.comment=新暴露像素先给平滑无细节的值（mip3），再在这么多帧内逐渐补回细节。调大（如 16~24）会让新区域更稳、但细节出现更慢；8 = 原行为（约 0.13 s）
+option.GI_ACCUM_TIME=时域累积时间（秒）
+option.GI_ACCUM_TIME.comment=按 fps 换算成帧数上限（cap = 时间/frameTime，并以「最大累积帧数」为硬上限）。NRD 官方 REBLUR 漫反射默认 0.5 秒；越大越干净但拖影越长
+option.GI_RADIUS_DECAY=滤波半径随收敛衰减
+option.GI_RADIUS_DECAY.comment=NRD 的 maxBlurRadius(30px) → minBlurRadius(1px)：新累积像素用大半径压噪，随累积帧数把半径收到最小 ⇒ 细节随时间显现。代价：收敛后残留噪声更明显（0=关）
+option.GI_FAST_CLAMP_SIGMA=短历史裁剪 sigma 倍数
+option.GI_FAST_CLAMP_SIGMA.comment=官方 fastHistoryClampingSigmaScale（默认 2.0）：长历史被夹到短历史的 mean±kσ。越大越宽松（拖影多、细节保得多）；脏信号可试 1.5
 option.GI_KERNEL_ROT_PER_FRAME=滤波核逐帧旋转
 option.GI_KERNEL_ROT_PER_FRAME.comment=默认的随机核方向是「每像素固定」（静止时最干净），但它钉在屏幕上：相机一转，世界内容在这套图案下滑动 ⇒ GI 显得乱、不光滑。打开后每帧换一个旋转角，由时域累积与 TAA 平均掉（代价：单帧略多噪声）
 option.PTGI_MEDIAN_RADIUS=中值半径

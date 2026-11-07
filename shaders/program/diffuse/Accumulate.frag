@@ -188,14 +188,32 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             // 容差 = 短历史的相对 35% + 绝对下限（暗处防过紧）。
             #ifdef VOXEL_GI_NRD_ACTIVE
                 {
-                    vec3 _mu = max(prevFast, vec3(0.0));
-                    vec3 _tol = _mu * 0.35 + vec3(0.004);
+                    // 官方 fastHistoryClampingSigmaScale = 2.0：σ 取自**未经滤波**的短历史邻域。
+                    // 用 σ 而不是「值的百分比」：σ 是短历史自身的局部波动，与亮度量级无关；
+                    // 百分比容差在暗处等于放得很宽、亮处放得很紧，两种都不对。
+                    vec3 _fSum = prevFast;
+                    vec3 _fSum2 = prevFast * prevFast;
+                    float _fN = 1.0;
+                    for (int _fy = -1; _fy <= 1; ++_fy) {
+                        for (int _fx = -1; _fx <= 1; ++_fx) {
+                            if (_fx == 0 && _fy == 0) continue;
+                            ivec2 _ft = texelPos + ivec2(_fx, _fy);
+                            if (clamp(_ft, ivec2(0), canvasEnd - 1) != _ft) continue;
+                            vec3 _fc = texelFetch(colortex21, _ft, 0).rgb;
+                            _fSum += _fc;
+                            _fSum2 += _fc * _fc;
+                            _fN += 1.0;
+                        }
+                    }
+                    vec3 _mu = _fSum / _fN;
+                    vec3 _sigma = sqrt(max(_fSum2 / _fN - _mu * _mu, vec3(0.0)));
+                    vec3 _tol = GI_FAST_CLAMP_SIGMA * _sigma + vec3(0.004);
                     vec3 _histOld = prevDiffuse.rgb;
                     prevDiffuse.rgb = clamp(_histOld, _mu - _tol, _mu + _tol);
-                    // anti-lag：被裁掉的比例越大 ⇒ 历史越落后 ⇒ alpha 越大（最多 0.5）
+                    // anti-lag：被裁掉的比例越大 ⇒ 历史越落后 ⇒ alpha 越大（RELAX accelerationAmount≈0.3）
                     float _span = max(max(_tol.r, _tol.g), _tol.b) + 1e-4;
                     float _clampAmt = saturate(length(_histOld - prevDiffuse.rgb) / _span);
-                    alpha = max(alpha, _clampAmt * 0.5);
+                    alpha = max(alpha, _clampAmt * 0.3);
                 }
             #endif
 
@@ -310,13 +328,19 @@ void main() {
         vec3 screenPos = vec3(renderCoord, depth);
         vec3 worldNormal = FetchSurfaceNormal(renderTexel);
 
-        // 弱光（只有少量光线照入）：1 SPP 采样太稀疏，32 帧不足以压噪。暗处信号变化慢，
-        // 可以提高时域累积上限——只加长历史、不加大空间模糊，因此不会把画面抹平。
-        float accumCap = SSILVB_MAX_ACCUM_FRAMES;
+        // [按秒计算的累积上限] NRD 的官方做法（NRDSettings.h）：
+        //   "Although all NRD accumulation-related settings are expressed in frames for simplicity,
+        //    it is recommended to make the accumulated frame count FPS-dependent. This minimizes lag
+        //    at low FPS and maximizes IQ at high FPS. All default values assume 60 FPS."
+        // REBLUR 漫反射默认累积时间 = **0.5 秒**（`REBLUR_DEFAULT_ACCUMULATION_TIME`），
+        // 换算 `GetMaxAccumulatedFrameNum(0.5, smoothedFPS)`。
+        // 我们原来固定 64 帧 ≈ 1.07 s @60fps ⇒ 拖影上限直接翻倍。
+        // 这里改成按秒算、并用 SSILVB_MAX_ACCUM_FRAMES 当硬上限（用户仍可调）。
+        float accumCap = clamp(GI_ACCUM_TIME / max(frameTime, 1e-4), 8.0, SSILVB_MAX_ACCUM_FRAMES);
         #ifdef VOXEL_GI_DARK_ACCUM
             float _luma = max(texelFetch(colortex2, texelPos, 0).r, 0.0);
             float _dark = 1.0 - smoothstep(0.003, 0.06, _luma);
-            accumCap = mix(SSILVB_MAX_ACCUM_FRAMES, SSILVB_MAX_ACCUM_FRAMES * 4.0, _dark);
+            accumCap = mix(accumCap, accumCap * 4.0, _dark);
         #endif
         TemporalFilter(texelPos, screenPos, worldNormal, accumCap, giDepthGrad);
     }
