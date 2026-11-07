@@ -295,6 +295,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#else
 		#define GI_ROT_PER_FRAME 0.0
 	#endif
+	// 邻居历史填充：新暴露像素先继承附近「已累积且同表面」像素的历史值，再按 a 单调淡入自己的采样。
+	// 避免“逐像素从黑淡入”在屏幕上拼出流动的深浅补丁网（弱光下最明显）。 0=关。
+	#define GI_NEIGHBOR_HISTORY_FRAMES 0.0 // [0.0 8.0 16.0 24.0 32.0 48.0] 邻居历史填充覆盖的帧数窗口（0=关）
 	#define GI_DISOC_PRESTABILIZE_FRAMES 0.0 // [0.0 8.0 16.0 24.0 32.0 48.0 64.0] 新出现像素的预稳定帧数上限（0=关）
 	#define VOXEL_GI_SAMPLE_CLAMP 0.0 // [0.0 2.0 3.0 4.0 6.0 8.0 12.0 16.0 32.0] 时域累积的逐样本上限（×累积均值；0=关）
 

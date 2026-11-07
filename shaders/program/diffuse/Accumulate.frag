@@ -181,6 +181,30 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
             }
 
+            // [邻居历史填充] 新暴露像素不要"从黑淡入"：先继承附近「已累积且同表面」像素的历史值，
+            // 再按 a 单调淡入自己的采样。逐像素各自淡入会在屏幕上拼出一张流动的深浅补丁网
+            //（弱光下对比最强，观感就是"乱、不平滑"）；继承邻居后，新区域一出现就是稳、略糊、
+            // 亮度正确的样子，细节再慢慢长进来 —— 参考实现的行为就是这个。
+            // 半径 2（半分辨率 texel）；只读不需要额外成本，且与"读历史"同一条既定路径。
+            if (GI_NEIGHBOR_HISTORY_FRAMES > 0.0 && integratedDiffuse.a < GI_NEIGHBOR_HISTORY_FRAMES) {
+                vec3 _nh = integratedDiffuse.rgb;
+                float _bestA = integratedDiffuse.a;
+                for (int _dy = -2; _dy <= 2; ++_dy) {
+                    for (int _dx = -2; _dx <= 2; ++_dx) {
+                        ivec2 _t = texelPos + ivec2(_dx, _dy);
+                        if (clamp(_t, ivec2(1), canvasEnd - 2) != _t) continue;
+                        float _a = texelFetch(colortex2, _t, 0).a;
+                        if (_a <= _bestA) continue;
+                        // 只取同表面（法线一致）的邻居，避免把墙角另一侧的 GI 搬过来
+                        if (dot(OctDecodeSnorm(texelFetch(colortex14, _t, 0).xy), worldNormal) < 0.8) continue;
+                        _bestA = _a;
+                        _nh = texelFetch(colortex2, _t, 0).rgb;
+                    }
+                }
+                integratedDiffuse.rgb = mix(_nh, integratedDiffuse.rgb,
+                                            saturate(integratedDiffuse.a * rcp(GI_NEIGHBOR_HISTORY_FRAMES)));
+            }
+
             float alpha = rcp(integratedDiffuse.a);
 
             // [2026-08-28 ] 时域累积的连续衰减已由上方 maxGeometryWeight 接管（静止≈1 深累积、
