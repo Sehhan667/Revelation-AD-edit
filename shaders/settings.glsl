@@ -708,10 +708,16 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// [2026-08-09] 方块光颜色：光追开启时忽略玩家 BLOCKLIGHT_COLOR_R/G/B 设置，
 	// 全局置 0（体素内无原版方块光）；体素外需要原版方块光时由 DeferredLight 的
 	// "网格外强制默认色"逻辑恢复。光追关闭时按玩家设置正常工作。
+	// [2026-10-02 补] 注意这个 0 是为了屏蔽**原版方块光光晕**，但它同时也把追踪端"命中面方块光"
+	// 那一项乘成了 0 ⇒ VXGI 模式下方块光只剩"低命中率发光球"采样 = 稀疏冲激噪声（弱光暗处最糟）。
+	// 所以 GI 反弹项单独用一个光色 giBlocklightColor（不受光晕屏蔽影响），强度见
+	// VOXEL_GI_BLOCK_HIT_STRENGTH（默认 0 = 保持历史行为）。
 	#ifdef GI_ACTIVE_VXGI
 		const vec3 blocklightColor = vec3(0.0);
+		const vec3 giBlocklightColor = vec3(BLOCKLIGHT_BRIGHTNESS);
 	#else
 		const vec3 blocklightColor = vec3(BLOCKLIGHT_COLOR_R, BLOCKLIGHT_COLOR_G, BLOCKLIGHT_COLOR_B) * BLOCKLIGHT_BRIGHTNESS;
+		const vec3 giBlocklightColor = blocklightColor;
 	#endif
 	#ifdef DIMENSION_THE_END
     	

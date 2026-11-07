@@ -764,6 +764,8 @@ option.VOXEL_GI_SUN_STRENGTH=Sun Inject Strength
 option.VOXEL_GI_SUN_STRENGTH.comment=Sun bounce injection strength into the voxel GI (IRC) cache; raise to make warm golden diffuse light appear in shadowed areas
 option.VOXEL_GI_BLOCK_STRENGTH=Blocklight Inject Strength
 option.VOXEL_GI_BLOCK_STRENGTH.comment=Block light (torch, lava, etc.) injection strength into the voxel GI (IRC) cache; raise to make torches illuminate further
+option.VOXEL_GI_BLOCK_HIT_STRENGTH=Blocklight on Hit
+option.VOXEL_GI_BLOCK_HIT_STRENGTH.comment=When a traced ray hits any surface, add a smooth blocklight contribution from that surface's vanilla blocklight level (multiplies the injection strength above). In VXGI mode this is the only blocklight carrier that almost always hits, so it greatly reduces sparse noise/smearing in dark areas; try 0.25-0.5 in the dark (it multiplies the injection strength above, so start low if that is high), dial back if too bright. 0 = off (legacy behaviour)
 
 option.VOXEL_TRACE_DISTANCE=Trace Distance
 option.VOXEL_TRACE_DISTANCE.comment=Maximum voxel steps for traced rays; larger = sun/block light travels farther (slightly slower)

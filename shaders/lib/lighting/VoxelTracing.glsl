@@ -308,8 +308,12 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 方块光兜底（普通固体格带原版方块光）
         // [FIX 2026-08-06] 薄片/流体光源（发光地衣/岩浆）voxelData 中心色可能为 0 →
         // albedo 乘进 blocklight 后趋 0 不发光；用 min albedo 底，不依赖采样色。
+        // [2026-10-02] 改用 giBlocklightColor：VXGI 模式下 blocklightColor 被置 0（只为屏蔽原版光晕），
+        // 会把这一项整项乘没，导致方块光只剩低命中率的发光球采样 = 弱光稀疏冲激噪声。
+        // VOXEL_GI_BLOCK_HIT_STRENGTH 默认 0 ⇒ 行为与历史一致。
         if (lD.y > 0.01)  // 新字节序：G=blocklight
-            contrib += max(alb, vec3(VOXEL_GI_BLOCK_MIN_ALBEDO)) * blocklightColor * lD.y * VOXEL_GI_BLOCK_STRENGTH * absorption;
+            contrib += max(alb, vec3(VOXEL_GI_BLOCK_MIN_ALBEDO)) * giBlocklightColor * lD.y
+                     * VOXEL_GI_BLOCK_STRENGTH * VOXEL_GI_BLOCK_HIT_STRENGTH * absorption;
         // 真阳光弹射：命中面法线方向项 + 天空 lightmap 平滑衰减（SUNLIGHT_LEAK_FIX）
         // 阳光色 = 物理直射辐照度 × rcp(VOXEL_SUN_REFERENCE)（0-1 尺度，自带昼夜明暗 + 暖色温）。
         // 不能用 skyColor——它是天空蓝（环境色），与出界天空路径同色 → 反弹混进环境光里
