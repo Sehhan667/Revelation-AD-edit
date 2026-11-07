@@ -36,10 +36,12 @@ const bool colortex3MipmapEnabled = true;
 
 //======// Output //==============================================================================//
 
-/* RENDERTARGETS: 2,14 */
+/* RENDERTARGETS: 2,14,21 */
 layout (location = 0) out vec4 integratedDiffuse;
 // [2026-08-19 NRD] colortex14 升 RGBA16F，a 存 disocclusion 标记（1=不可靠/新暴露/重投影失效）。
 layout (location = 1) out vec4 encodedNormalDepth;
+// REBLUR 短历史（fastHistory）：只累积、不掺滤波结果 ⇒ 新鲜、4 帧级响应，供长历史裁剪参考。
+layout (location = 2) out vec4 fastHistory;
 
 //======// Uniform //=============================================================================//
 
@@ -101,6 +103,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 
     if (saturate(prevCoord) == prevCoord && !historyReset) {
         vec4 prevDiffuse = vec4(0.0);
+        vec3 prevFast = vec3(0.0);   // 短历史（同一组双线性权重）
         float sumWeight = 0.0;
         // [2026-08-28 ] 上帧该像素的可信度 = 4 tap 里几何一致权重的最大（不含双线性）。
         // 几何一致（静止）→ 接近 1；遮挡/移动/几何剧变 → 骤降，驱动累积帧数连续衰减。
@@ -154,6 +157,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 float weight = tapGeo * bilinearWeight[i];
 
                 prevDiffuse += sampleIrradiance * weight;
+                prevFast += texelFetch(colortex21, sampleTexel, 0).rgb * weight;
                 sumWeight += weight;
             }
         }
@@ -161,6 +165,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         if (sumWeight > EPS) {
             sumWeight = 1.0 / sumWeight;
             prevDiffuse *= sumWeight;
+            prevFast *= sumWeight;
 
             // [2026-08-19 离线渲染] 持续累计：把帧数上限拉高，让时域累积权重更均匀、收敛到更低噪声。
             // 关闭宏时用原 SSILVB_MAX_ACCUM_FRAMES，与之前完全一致。
@@ -226,6 +231,25 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 alpha = max(alpha, saturate(_relDev * 0.5) * GI_LIGHT_CHANGE_RESPONSE);
             }
 
+            // [REBLUR 历史裁剪] 把**长历史**（滤波后的稳定值）夹到**短历史**的邻域内。
+            // 短历史是「只累积、不掺滤波」的新鲜信号（4 帧级）⇒ 参考不会滞后：
+            //   · 光照变化（火把挪走）→ 短历史 4 帧内跟上 → 长历史被拉回 ⇒ 不拖影；
+            //   · 静止时短历史邻域足够宽、长历史原样通过 ⇒ 降噪收益不减；
+            //   · 长历史被逐帧夹在「当前信号附近」⇒ 滤波反馈不会把细节逐帧压掉。
+            // 容差 = 短历史的相对 35% + 绝对下限（暗处防过紧）。
+            #ifdef VOXEL_GI_NRD_ACTIVE
+                {
+                    vec3 _mu = max(prevFast, vec3(0.0));
+                    vec3 _tol = _mu * 0.35 + vec3(0.004);
+                    vec3 _histOld = prevDiffuse.rgb;
+                    prevDiffuse.rgb = clamp(_histOld, _mu - _tol, _mu + _tol);
+                    // anti-lag：被裁掉的比例越大 ⇒ 历史越落后 ⇒ alpha 越大（最多 0.5）
+                    float _span = max(max(_tol.r, _tol.g), _tol.b) + 1e-4;
+                    float _clampAmt = saturate(length(_histOld - prevDiffuse.rgb) / _span);
+                    alpha = max(alpha, _clampAmt * 0.5);
+                }
+            #endif
+
             // [2026-08-28 ] 时域累积的连续衰减已由上方 maxGeometryWeight 接管（静止≈1 深累积、
             // 几何剧变骤降少混合历史），这里不再重复调 alpha。仅保留：运动时对该像素做一次
             // 3×3 当前帧邻域平均（前置空间滤波），再进 EAWF，缓解转动脏污。
@@ -272,6 +296,8 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             }
 
             integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), integratedDiffuse.rgb, alpha);
+            // 短历史：**固定 1/4 混合率、永不掺滤波结果** ⇒ 4 帧级的新鲜参考（REBLUR fastHistory）
+            fastHistory = vec4(mix(prevFast, integratedDiffuse.rgb, 0.25), 1.0);
             return;
         }
     }
@@ -282,6 +308,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         ? SampleGIPrestabilized(texelPos, currCoord, 1.0)
         : textureLod(colortex3, currCoord, 3.0).rgb;
     encodedNormalDepth.a = 1.0;
+    fastHistory = vec4(integratedDiffuse.rgb, 1.0);
 }
 
 float GetClosestDepthN(in ivec2 texel) {
@@ -319,6 +346,7 @@ void main() {
 
     integratedDiffuse = vec4(0.0);
     encodedNormalDepth = vec4(0.0);
+    fastHistory = vec4(0.0);
 
     // 视深的屏幕空间梯度：导数必须在分支外求（下面 if 是逐像素的，导数在非一致控制流里未定义）。
     // 用途见 TemporalFilter 的容差：掠射面（法线近乎垂直于视线）一个纹素的视深变化可达自身深度的

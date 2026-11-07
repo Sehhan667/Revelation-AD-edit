@@ -1,0 +1,66 @@
+/*
+--------------------------------------------------------------------------------
+  Revelation-AD-edit  —  REBLUR 式「长历史回写」：把本帧滤波结果写成下一帧的长历史
+--------------------------------------------------------------------------------
+
+  为什么需要：
+  本包原来的顺序是「先累积 1spp 原始样本 → 再空间滤波」。弱光下逐像素 1spp 的相对噪声约 88%
+  （命中率 1~3%），滤波只能把它摊成低频斑块。REBLUR 的顺序相反：**长历史里存滤波后的结果**，
+  时域环看到的是已经平滑的信号，方差逐级衰减而不是每帧重置。
+
+  为什么不会像上一版那样「细节越来越少」：
+  长历史每帧都会被 Accumulate 夹到**短历史**（colortex21）的邻域内。短历史只累积、不掺滤波
+  结果（4 帧级新鲜），所以长历史始终被钉在「当前信号附近」，滤波反馈不会逐帧把细节压掉。
+  这是 REBLUR 的关键：**稳定历史 + 每帧夹回新鲜参考**，两者缺一不可。
+
+  本 pass 只写长历史（colortex2）。短历史由 Accumulate 自己按 1/4 混合率写，绝不经过本 pass。
+  关闭（VOXEL_GI_NRD 未定义）时本 pass 不调度，pipeline 与改动前逐位一致。
+--------------------------------------------------------------------------------
+*/
+
+//======// Input //===============================================================================//
+
+layout (local_size_x = 8, local_size_y = 8) in;
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+// 与 GI 画布同分辨率（默认半分辨率棋盘；VOXEL_GI_FULLRES 全分辨率）。须在 Utility 之后。
+#ifdef VXGI_FULLRES
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+#else
+const vec2 workGroupsRender = vec2(0.5, 0.5);
+#endif
+
+//======// Uniform //=============================================================================//
+
+layout (rgba16f) restrict uniform image2D colorimg2;             // 长历史（下一帧 Accumulate 的输入）
+layout (rgba16f) restrict readonly uniform image2D colorimg3;    // 本帧 EAWF 滤波结果
+
+#include "/lib/universal/Uniform.glsl"
+
+//======// Main //================================================================================//
+
+void main() {
+    ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+
+#ifdef VXGI_FULLRES
+    if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+#else
+    if (any(greaterThanEqual(texelPos, ivec2(halfViewSize)))) return;
+#endif
+
+    // 此时：colortex2 = Accumulate 本帧的「时域混合」结果（滤波前），.a = 累积帧数 a；
+    //       colortex3 = EAWF 四遍滤波后的结果。
+    vec4 mixed = imageLoad(colorimg2, texelPos);
+    vec3 filtered = imageLoad(colorimg3, texelPos).rgb;
+
+    // 回写权重 0.6：全量回写（1.0）会让空间滤波每帧反复作用于自己的输出（等效核半径随帧数变宽）；
+    // 0.6 保留「时域环看到平滑信号」的主要收益，同时给新样本留进入通道。
+    // 细节保护由 Accumulate 的「长历史夹到短历史」负责，不靠这个系数。
+    vec3 history = mix(mixed.rgb, filtered, 0.6);
+
+    // .a 保留累积帧数（Accumulate 下一帧的计数）；只替换 rgb。
+    imageStore(colorimg2, texelPos, vec4(history, mixed.a));
+}

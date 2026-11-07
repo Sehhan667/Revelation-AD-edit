@@ -22,6 +22,7 @@ uniform sampler2D colortex12;
 uniform usampler2D colortex13;
 uniform sampler2D colortex14;
 uniform sampler2D colortex15;
+uniform sampler2D colortex21;   // REBLUR 短历史（fastHistory）
 
 uniform sampler2D depthtex0;
 uniform sampler2D depthtex1;

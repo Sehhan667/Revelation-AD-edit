@@ -56,6 +56,8 @@
 	const int 	colortex18Format 			= RGBA16F;	// SSS 源项（半分辨率；rgb = 源项×mask，a = mask）
 	const int 	colortex19Format 			= RGBA16F;	// SSS 横向模糊结果（半分辨率）
 	const int 	colortex20Format 			= RGBA16F;	// SSS 纵向模糊结果（半分辨率）
+	// REBLUR 短历史（fastHistory）：只累积、不掺滤波结果，用作长历史的裁剪参考。
+	const int 	colortex21Format 			= RGBA16F;
 
 	// [2026-09-10] Iris 官方常量（location: composite/deferred/final/prepare）：
 	// shadow.culling = reversed 时，玩家周围这个半径内的几何在 shadow pass 里不剔除、
@@ -83,6 +85,7 @@
 	const bool	colortex18Clear				= false;
 	const bool	colortex19Clear				= false;
 	const bool	colortex20Clear				= false;
+	const bool 	colortex21Clear			= false;
 
 	const vec4	colortex6ClearColor			= vec4(0.0, 0.0, 0.0, 1.0);
 

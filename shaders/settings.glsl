@@ -303,6 +303,17 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 光照突变快速响应：已建立像素（a 足够大）且入样与均值偏离很大时，
 	// 临时放大 alpha 让光照变化（火把移动/放挖）快速跟上，避免方块光拖影。 0=关。
 	#define GI_LIGHT_CHANGE_RESPONSE 0.0 // [0.0 0.25 0.5 0.75 1.0] 光照突变响应强度（0=关）
+	// ===== REBLUR 式降噪（默认关）=====
+	// 结构：长历史 = **滤波后**结果（稳定、干净）；短历史 = **只累积、不掺滤波**（新鲜，4 帧级）；
+	// 每帧把长历史夹到短历史的邻域 ⇒ 既拿到降噪收益，又不会把细节逐帧滤掉、也不会拖影。
+	// 上次失败的根因：短历史也被滤波回写了（0.5），参考自己滞后 ⇒ 裁剪失效 + 细节衰减。
+	//#define VOXEL_GI_NRD
+	#ifdef VOXEL_GI_NRD
+		// 需要 SVGF(EAWF) 链路：PTGI 中值模式没有可回写的滤波结果
+		#if defined GI_ACTIVE_VXGI && defined VOXEL_GI_DENOISE && VOXEL_GI_DENOISE_MODE == 0
+			#define VOXEL_GI_NRD_ACTIVE
+		#endif
+	#endif
 	#define GI_DISOC_FADE_FRAMES 0.0 // [0.0 8.0 16.0 24.0 32.0 48.0] 新像素淡入速率封顶帧数（0=关）
 	#define GI_NEIGHBOR_HISTORY_FRAMES 0.0 // [0.0 8.0 16.0 24.0 32.0 48.0] 邻居历史填充覆盖的帧数窗口（0=关）
 	#define GI_DISOC_PRESTABILIZE_FRAMES 0.0 // [0.0 8.0 16.0 24.0 32.0 48.0 64.0] 新出现像素的预稳定帧数上限（0=关）

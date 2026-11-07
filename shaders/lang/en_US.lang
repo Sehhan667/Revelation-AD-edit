@@ -716,6 +716,8 @@ option.VOXEL_GI_DENOISE=Voxel GI Denoise
 option.VOXEL_GI_DENOISE.comment=Spatial variance-guided filtering for voxel GI ray tracing. Disable to keep temporal accumulation (checkerboard phase reconstruction) while skipping the spatial filter: sharper but noisier.
 option.VOXEL_GI_DENOISE_MODE=Denoise Scheme
 option.VOXEL_GI_DENOISE_MODE.comment=0=SVGF (EAWF a-trous spatial x4, reuses temporal accumulation); 1=PTGI style (single median + depth/normal edge, cheaper). Only affects VXGI; SSILVB unaffected
+option.VOXEL_GI_NRD=REBLUR Denoise
+option.VOXEL_GI_NRD.comment=REBLUR structure: the long history stores the filtered result (stable, clean), the short history only accumulates and never mixes filtered data (4-frame fresh), and every frame the long history is clamped to the short history neighbourhood - so you get the denoise benefit without progressively erasing detail and without ghosting. VXGI + SVGF chain only.
 option.VOXEL_GI_FULLRES=Full Resolution
 option.VOXEL_GI_FULLRES.comment=Off = 2x2 checkerboard half res (1/4 of the pixels traced per frame, filled in over time). On = one ray per pixel per frame (no checkerboard, no quadrant canvas): finer noise, faster convergence. Cost: roughly 4x the tracing and GI buffer size.
 option.VOXEL_GI_DARK_ACCUM=Low-light Denoise

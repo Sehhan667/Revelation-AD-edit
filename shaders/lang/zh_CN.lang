@@ -839,6 +839,8 @@ option.VOXEL_GI_DENOISE=光追降噪
 option.VOXEL_GI_DENOISE.comment=体素光追的 SVGF 空间降噪；关闭后仍做时域累积（含棋盘相位重建），只跳过空间滤波——更锐利但更闪烁
 option.VOXEL_GI_DENOISE_MODE=降噪方案
 option.VOXEL_GI_DENOISE_MODE.comment=0=SVGF(EAWF a-trous 空间×4，时域累积复用)；1=PTGI 风格(单次中值+深度/法线边缘，更省)。只影响 VXGI 降噪，SSILVB 不受影响
+option.VOXEL_GI_NRD=REBLUR 降噪
+option.VOXEL_GI_NRD.comment=REBLUR 结构：长历史存滤波后的结果（安静、干净），短历史只累积、不掺滤波（4 帧级新鲜），每帧把长历史夹到短历史邻域 ⇒ 既得到降噪收益，又不会逐帧压掉细节、也不拖影。仅 VXGI + SVGF 链路生效
 option.VOXEL_GI_FULLRES=全分辨率追踪
 option.VOXEL_GI_FULLRES.comment=关=2x2 棋盘半分辨率（每帧只投 1/4 像素，时域补全）；开=每像素每帧 1 条光线（无棋盘/无象限，噪点更细、收敛更快）。代价：追踪量与 GI 缓冲约 4 倍，弱显卡慎开
 option.VOXEL_GI_DARK_ACCUM=弱光加强降噪
