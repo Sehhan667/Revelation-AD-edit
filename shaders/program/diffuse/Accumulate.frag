@@ -119,7 +119,15 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             fractTexel.x      * fractTexel.y
         };
 
-        float invThresholdZ = 8.0 / encodedNormalDepth.z;
+        // 历史几何检查必须比「同一帧、同一空间」的两个视深：
+        //   sampleAux.z   = 上一帧该 tap 的视深；
+        //   prevViewPos.z = 本像素世界点在**上一帧**的视深（重投影结果）。
+        // 原来拿它与 encodedNormalDepth.z（本帧视深）比：同一世界点在相机运动后视深本来就会变
+        //（视深 ∝ 距离 × cosθ，20 格处转 2° 就变 0.7 格，而阈值只有 8/20 = 0.4），于是同一表面被
+        // 判成不同表面 → maxGeometryWeight 骤降 → 累积帧数塌到 1~2 → 每像素独立噪点（满天星）。
+        // 纯 A/D 横移时视深几乎不变，所以看着稳定；前后移动与转视角立刻暴露。
+        // 改成比 prevViewPos.z 后：静止时它与 viewPos.z 完全相同（行为逐位不变），运动时恒为同帧口径。
+        float invThresholdZ = 8.0 / prevViewPos.z;
 
         for (uint i = 0u; i < 4u; ++i) {
             ivec2 sampleTexel = floorTexel + offset2x2[i];
@@ -127,7 +135,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 			    vec3 sampleAux = texelFetch(colortex14, sampleTexel, 0).xyz;
                 vec4 sampleIrradiance = texelFetch(colortex2, sampleTexel, 0);
 
-                float tapGeo = saturate(fma(distance(encodedNormalDepth.z, sampleAux.z), invThresholdZ, 1.0));
+                float tapGeo = saturate(fma(distance(prevViewPos.z, sampleAux.z), invThresholdZ, 1.0));
                 tapGeo *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
                 maxGeometryWeight = max(maxGeometryWeight, tapGeo);
 
