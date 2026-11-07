@@ -216,6 +216,16 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 alpha = min(alpha, rcp(GI_DISOC_FADE_FRAMES));
             }
 
+            // [光照突变快速响应] 任何时域稳定化都会让"光照变化"跟得慢——火把拿在手上移动/放挖火把时
+            // 最明显（方块光是变化最快的一项），表现为严重拖影。
+            // 只看"入样与当前均值的相对亮度偏差"：偏差大 ⇒ 是光照变了（而不是几何新暴露），
+            // 临时放大 alpha 让它快速跟过去；几何新暴露的像素（a < N）不参与，保留慢淡入。
+            if (GI_LIGHT_CHANGE_RESPONSE > 0.0 && integratedDiffuse.a >= max(GI_DISOC_FADE_FRAMES, 8.0)) {
+                float _meanL = max(prevDiffuse.r, 1e-4);
+                float _relDev = abs(integratedDiffuse.r - prevDiffuse.r) * rcp(_meanL);
+                alpha = max(alpha, saturate(_relDev * 0.5) * GI_LIGHT_CHANGE_RESPONSE);
+            }
+
             // [2026-08-28 ] 时域累积的连续衰减已由上方 maxGeometryWeight 接管（静止≈1 深累积、
             // 几何剧变骤降少混合历史），这里不再重复调 alpha。仅保留：运动时对该像素做一次
             // 3×3 当前帧邻域平均（前置空间滤波），再进 EAWF，缓解转动脏污。
