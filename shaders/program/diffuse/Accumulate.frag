@@ -270,7 +270,38 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     }
 
     // [2026-08-19 NRD] 去遮挡标记：走到这里 = 不可靠（越界/historyReset/深度不匹配）→ a=1
-    integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
+    //
+    // [REBLUR HistoryFix] 官方 `historyFixFrameNum = 3`：历史失效时不用"当前帧的模糊样本"当起点，
+    // 而是从**仍然有效的历史**（几帧前的短历史）里按深度/法线加权重建。好处：
+    //   · 起点是已累积信号 ⇒ 不含本帧冲激（不闪）；
+    //   · 亮度正确 ⇒ 不会像 mip3 那样偏暗；
+    //   · 与周围像素连续 ⇒ 新区域不出现"补丁"。
+    // 半径取 5×5（画布是半分辨率，相当于屏幕 10×10），比官方 5×5@stride14 保守。
+    #ifdef VOXEL_GI_NRD_ACTIVE
+        {
+            vec3 _fixSum = vec3(0.0);
+            float _fixW = 0.0;
+            for (int _fy = -2; _fy <= 2; ++_fy) {
+                for (int _fx = -2; _fx <= 2; ++_fx) {
+                    ivec2 _ft = texelPos + ivec2(_fx, _fy);
+                    if (clamp(_ft, ivec2(1), canvasEnd - 2) != _ft) continue;
+                    vec3 _fa = texelFetch(colortex14, _ft, 0).rgb;      // 该邻居的法线+视深
+                    vec3 _fc = texelFetch(colortex21, _ft, 0).rgb;      // 该邻居的短历史（已累积）
+                    // 深度权重：相对视深差 10% 以外不参与（防跨表面）
+                    float _w = saturate(1.0 - abs(_fa.z - viewPos.z) / max(abs(viewPos.z) * 0.1, 1e-3));
+                    // 法线权重：同表面才参与
+                    _w *= linearstep(0.5, 0.9, saturate(dot(OctDecodeSnorm(_fa.xy), worldNormal)));
+                    _fixSum += _fc * _w;
+                    _fixW += _w;
+                }
+            }
+            integratedDiffuse.rgb = _fixW > 1e-4
+                ? _fixSum / _fixW
+                : textureLod(colortex3, currCoord, 3.0).rgb;
+        }
+    #else
+        integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
+    #endif
     encodedNormalDepth.a = 1.0;
     fastHistory = vec4(integratedDiffuse.rgb, 1.0);
 }
