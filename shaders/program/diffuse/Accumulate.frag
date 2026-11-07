@@ -64,6 +64,18 @@ layout (location = 1) out vec4 encodedNormalDepth;
     #define SHOULD_APPLY_JITTER
 #endif
 
+// [新出现像素的预稳定] a 小 → 大范围 mip 平均（稳定、低细节）；a 大 → 逐像素锐利样本。
+// 借鉴参考实现的观感：新暴露区域先给"稳但缺细节"的估计，随后随累积帧数单调长出细节。
+// 原来的写法只有 a<8 的硬切换（8 帧后突然变锐），低光下 8 帧远不够，噪声还在就变锐
+// ⇒ 新出现的 GI 闪得厉害、且要很久才稳。maxMip 4：半分辨率下 ≈16 纹素 ≈ 屏幕 32 px 平均。
+vec3 SampleGIPrestabilized(ivec2 texelPos, vec2 currCoord, float accumFrames) {
+    // max(...,1) 防开关为 0 时（死代码路径）出现 rcp(0)
+    float detailT = saturate(accumFrames * rcp(max(GI_DISOC_PRESTABILIZE_FRAMES, 1.0)));
+    float mipLevel = (1.0 - detailT) * 4.0;
+    return mix(textureLod(colortex3, currCoord, mipLevel).rgb,
+               texelFetch(colortex3, texelPos, 0).rgb, detailT);
+}
+
 void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, in float accumCap, in float giDepthGrad) {
 	vec3 viewPos = ScreenToViewPos(screenPos);
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
@@ -160,7 +172,9 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, accumCap);
             #endif
 
-            if (integratedDiffuse.a < 8.0) {
+            if (GI_DISOC_PRESTABILIZE_FRAMES > 0.0) {
+                integratedDiffuse.rgb = SampleGIPrestabilized(texelPos, currCoord, integratedDiffuse.a);
+            } else if (integratedDiffuse.a < 8.0) {
                 float mipLevel = 3.0 * saturate(1.0 - integratedDiffuse.a * rcp(8.0));
                 integratedDiffuse.rgb = textureLod(colortex3, currCoord, mipLevel).rgb;
             } else {
@@ -220,7 +234,10 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     }
 
     // [2026-08-19 NRD] 去遮挡标记：走到这里 = 不可靠（越界/historyReset/深度不匹配）→ a=1
-    integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
+    // 预稳定开启时首帧用更宽的平均（mip 4）当起点，之后按帧数单调变锐；关闭时保持原来的固定 mip 3。
+    integratedDiffuse.rgb = (GI_DISOC_PRESTABILIZE_FRAMES > 0.0)
+        ? SampleGIPrestabilized(texelPos, currCoord, 1.0)
+        : textureLod(colortex3, currCoord, 3.0).rgb;
     encodedNormalDepth.a = 1.0;
 }
 
