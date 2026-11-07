@@ -129,5 +129,17 @@ void main() {
     #endif
 
     float variance = 16.0 * max0(moments.y - moments.x * moments.x);
+
+    // [REBLUR hitDistance 方差] 官方 hitDistanceParameters（A + B·d）的意图：
+    // 命中越远 / 未命中（天空、出界、跑满射程）⇒ 这条射线越不可靠 ⇒ 方差应更大，
+    // 让空间滤波在稀疏命中的地方放得开。
+    // 本包方差单位是 YCoCg luma²，直接套 A+B·d 没有意义，故用相对放大逼近同一意图：
+    //   d ∈ [0,1]（1 = 未命中 / 超射程）→ variance *= 1 + gain·d
+    // 距离由 Accumulate 写进 colortex21.a（不能读 colortex3.a：本 pass 用 image 写 colortex3）。
+    {
+        float hitD = texelFetch(colortex21, texelPos, 0).a;
+        variance *= 1.0 + GI_HITDIST_VAR_GAIN * saturate(hitD);
+    }
+
     imageStore(colorimg3, texelPos, vec4(integratedDiffuse.rgb, variance));
 }

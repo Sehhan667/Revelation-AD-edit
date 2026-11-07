@@ -264,7 +264,11 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 
             integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), integratedDiffuse.rgb, alpha);
             // 短历史：**固定 1/4 混合率、永不掺滤波结果** ⇒ 4 帧级的新鲜参考（REBLUR fastHistory）
-            fastHistory = vec4(mix(prevFast, integratedDiffuse.rgb, 0.25), 1.0);
+            // 命中距离（归一化 0..1，1=未命中/超射程）：写进短历史的 .a，供 VarianceEstimate 读；
+            // 不能直接留到 VarianceEstimate 读 colortex3.a —— 那里用 image 写 colortex3，
+            // 再把它当采样器读会撞硬件单元导致 imageStore 静默失效。
+            fastHistory = vec4(mix(prevFast, integratedDiffuse.rgb, 0.25),
+                               texelFetch(colortex3, texelPos, 0).a);
             return;
         }
     }
@@ -303,7 +307,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
     #endif
     encodedNormalDepth.a = 1.0;
-    fastHistory = vec4(integratedDiffuse.rgb, 1.0);
+    fastHistory = vec4(integratedDiffuse.rgb, texelFetch(colortex3, texelPos, 0).a);
 }
 
 float GetClosestDepthN(in ivec2 texel) {

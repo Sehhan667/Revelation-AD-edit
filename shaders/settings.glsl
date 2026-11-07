@@ -295,6 +295,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 值 = 衰减到最小半径所需的帧数（0=关）。
 	// 短历史裁剪的 sigma 倍数（官方 fastHistoryClampingSigmaScale，默认 2.0；
 	// 官方注释：脏信号 1.5 也行，遮挡去噪 1.1 更安全。越大越宽松 = 拖影越多、细节越保）。
+	// hitDistance 方差放大（官方 hitDistanceParameters 的意图）：命中越远/未命中 ⇒ 越不可靠。
+	// variance *= 1 + gain*d，d = 归一化命中距离（1=未命中/超射程）。0 = 关（退回纯邻域矩估计）。
+	#define GI_HITDIST_VAR_GAIN 2.0 // [0.0 1.0 2.0 3.0 4.0] hitDistance 方差放大增益（0=关）
 	#define GI_FAST_CLAMP_SIGMA 2.0 // [1.1 1.5 2.0 2.5 3.0] 短历史裁剪 sigma 倍数
 	#define GI_RADIUS_DECAY 0.0 // [0.0 16.0 32.0 48.0 64.0] 滤波半径随收敛衰减帧数（0=关）
 	#define GI_DISOC_DETAIL_FRAMES 8.0 // [8.0 12.0 16.0 24.0 32.0] 新像素细节收敛帧数

@@ -734,6 +734,8 @@ option.GI_RADIUS_DECAY=Radius Decay
 option.GI_RADIUS_DECAY.comment=NRD maxBlurRadius(30px) to minBlurRadius(1px): freshly accumulated pixels use a large radius for noise suppression, then the radius shrinks with accumulated frames so detail emerges over time. Cost: more visible residual noise at convergence (0=off).
 option.GI_FAST_CLAMP_SIGMA=Fast-History Clamp Sigma
 option.GI_FAST_CLAMP_SIGMA.comment=Official fastHistoryClampingSigmaScale (default 2.0): the long history is clamped to the fast history mean +/- k sigma. Larger = looser (more ghosting, more detail preserved); 1.5 works for dirty signals.
+option.GI_HITDIST_VAR_GAIN=hitDistance Variance Gain
+option.GI_HITDIST_VAR_GAIN.comment=Intent of the official hitDistanceParameters: farther hits / misses (sky, out of range) are less reliable, so variance is inflated (variance *= 1 + gain*d, d = normalized hit distance). Lets the spatial filter open up where hits are sparse. 0 = off.
 option.GI_KERNEL_ROT_PER_FRAME=Rotate Kernel Per Frame
 option.GI_KERNEL_ROT_PER_FRAME.comment=The random kernel directions are fixed per pixel (cleanest when still) but anchored to the screen: as the camera turns, the world slides under that fixed pattern and the GI looks messy/uneven. On: rotate the pattern every frame so temporal accumulation and TAA average it out (cost: slightly noisier per frame).
 option.PTGI_MEDIAN_RADIUS=Median Radius
