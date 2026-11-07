@@ -849,6 +849,8 @@ option.VOXEL_GI_SAMPLE_CLAMP=逐样本钳制
 option.VOXEL_GI_SAMPLE_CLAMP.comment=在入样处把单帧样本按当前累积均值的 K 倍封顶，专治冲激型噪声（稀疏命中、二值阳光反弹）——不模糊，只压尖峰。默认 0=关；弱光暗处先试 4~8，太小会把真实亮点也压平
 option.GI_ACCUM_DEPTH_GRAD_SLACK=掠射面容差松紧
 option.GI_ACCUM_DEPTH_GRAD_SLACK.comment=历史几何检查的深度容差 = max(固定相对 12.5%, 本值 × 屏幕空间视深梯度)。掠射面（法线几乎垂直于视线）上一个纹素的视深变化很大，固定容差会让它们“累积不上去”；调大更容易累积，但更容易把前方遮挡物的 GI 渗到墙上。 4=现行
+option.GI_DISOC_DETAIL_FRAMES=新像素细节收敛帧数
+option.GI_DISOC_DETAIL_FRAMES.comment=新暴露像素先给平滑无细节的值（mip3），再在这么多帧内逐渐补回细节。调大（如 16~24）会让新区域更稳、但细节出现更慢；8 = 原行为（约 0.13 s）
 option.GI_KERNEL_ROT_PER_FRAME=滤波核逐帧旋转
 option.GI_KERNEL_ROT_PER_FRAME.comment=默认的随机核方向是「每像素固定」（静止时最干净），但它钉在屏幕上：相机一转，世界内容在这套图案下滑动 ⇒ GI 显得乱、不光滑。打开后每帧换一个旋转角，由时域累积与 TAA 平均掉（代价：单帧略多噪声）
 option.PTGI_MEDIAN_RADIUS=中值半径

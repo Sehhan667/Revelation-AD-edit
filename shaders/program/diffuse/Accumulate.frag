@@ -165,8 +165,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, accumCap);
             #endif
 
-            if (integratedDiffuse.a < 8.0) {
-                float mipLevel = 3.0 * saturate(1.0 - integratedDiffuse.a * rcp(8.0));
+            // [细节收敛斜坡] 新暴露/新累积的像素先给「平滑无细节」的值，再逐帧补细节：
+            //   a = 0  → mip3（半分辨率下 8x8 纹素 ≈ 屏幕 16x16 平均）
+            //   a → N  → mip 线性降到 0（逐像素原始样本）
+            // 这是"先稳再长细节"的唯一机制（之前那些预稳定/邻居填充都是在重复它）。
+            // N 就是「收敛到全细节需要多少帧」：8 帧 ≈ 0.13 s（原行为），
+            // 调大到 16~24 会让新区域更稳、但细节出现更慢。
+            if (integratedDiffuse.a < GI_DISOC_DETAIL_FRAMES) {
+                float mipLevel = 3.0 * saturate(1.0 - integratedDiffuse.a * rcp(GI_DISOC_DETAIL_FRAMES));
                 integratedDiffuse.rgb = textureLod(colortex3, currCoord, mipLevel).rgb;
             } else {
                 integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;

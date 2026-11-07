@@ -726,6 +726,8 @@ option.VOXEL_GI_SAMPLE_CLAMP=Sample Clamp
 option.VOXEL_GI_SAMPLE_CLAMP.comment=Clamp each incoming temporal sample to K times the running mean. Targets impulse noise (sparse voxel hits, binary sun-bounce) without adding blur - it only trims spikes. Default 0 = off; in dark areas try 4-8, too low also flattens genuine bright spots.
 option.GI_ACCUM_DEPTH_GRAD_SLACK=Grazing Depth Slack
 option.GI_ACCUM_DEPTH_GRAD_SLACK.comment=Depth tolerance of the history geometry check = max(fixed 12.5%, this x screen-space depth gradient). On grazing surfaces (normal nearly perpendicular to the view ray) one texel changes depth by a large fraction of the depth itself, so a fixed tolerance makes them never accumulate; raising this accumulates better but more easily bleeds the GI of an occluder in front onto the wall. 4 = current.
+option.GI_DISOC_DETAIL_FRAMES=New-Pixel Detail Ramp
+option.GI_DISOC_DETAIL_FRAMES.comment=Freshly exposed pixels start from a smooth detail-free value (mip3) and regain detail over this many frames. Larger (16-24) = steadier new areas but slower detail; 8 = legacy behaviour (~0.13 s).
 option.GI_KERNEL_ROT_PER_FRAME=Rotate Kernel Per Frame
 option.GI_KERNEL_ROT_PER_FRAME.comment=The random kernel directions are fixed per pixel (cleanest when still) but anchored to the screen: as the camera turns, the world slides under that fixed pattern and the GI looks messy/uneven. On: rotate the pattern every frame so temporal accumulation and TAA average it out (cost: slightly noisier per frame).
 option.PTGI_MEDIAN_RADIUS=Median Radius
