@@ -64,7 +64,7 @@ layout (location = 1) out vec4 encodedNormalDepth;
     #define SHOULD_APPLY_JITTER
 #endif
 
-void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, in float accumCap) {
+void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, in float accumCap, in float giDepthGrad) {
 	vec3 viewPos = ScreenToViewPos(screenPos);
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
     // GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
@@ -122,7 +122,12 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         // 判成不同表面 → maxGeometryWeight 骤降 → 累积帧数塌到 1~2 → 每像素独立噪点（满天星）。
         // 纯 A/D 横移时视深几乎不变，所以看着稳定；前后移动与转视角立刻暴露。
         // 改成比 prevViewPos.z 后：静止时它与 viewPos.z 完全相同（行为逐位不变），运动时恒为同帧口径。
-        float invThresholdZ = 8.0 / prevViewPos.z;
+        // 容差 = max(固定相对 12.5%, 4 x 屏幕空间视深梯度)。
+        // 掠射面（法线近乎垂直于视线）上一个纹素的视深变化可达自身深度的 5%~10%，而 4 个历史 tap
+        // 天然偏离重投影像素 0~1 个纹素 ⇒ 固定容差会把它们全判成不同表面，累积帧数永远上不去
+        //（实测：近乎垂直于摄像机的表面完全累积不下来）。系数 4 覆盖「一个纹素的斜率 + 重投影与
+        // 双线性带来的余量」；正对相机的面梯度很小，仍退回固定容差 ⇒ 行为不变。
+        float depthTol = max(abs(prevViewPos.z) * 0.125, GI_ACCUM_DEPTH_GRAD_SLACK * giDepthGrad);
 
         for (uint i = 0u; i < 4u; ++i) {
             ivec2 sampleTexel = floorTexel + offset2x2[i];
@@ -130,7 +135,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 			    vec3 sampleAux = texelFetch(colortex14, sampleTexel, 0).xyz;
                 vec4 sampleIrradiance = texelFetch(colortex2, sampleTexel, 0);
 
-                float tapGeo = saturate(fma(distance(prevViewPos.z, sampleAux.z), invThresholdZ, 1.0));
+                float tapGeo = saturate(1.0 - distance(prevViewPos.z, sampleAux.z) / depthTol);
                 tapGeo *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
                 maxGeometryWeight = max(maxGeometryWeight, tapGeo);
 
@@ -255,6 +260,11 @@ void main() {
     integratedDiffuse = vec4(0.0);
     encodedNormalDepth = vec4(0.0);
 
+    // 视深的屏幕空间梯度：导数必须在分支外求（下面 if 是逐像素的，导数在非一致控制流里未定义）。
+    // 用途见 TemporalFilter 的容差：掠射面（法线近乎垂直于视线）一个纹素的视深变化可达自身深度的
+    // 5%~10%，4 个历史 tap 天然偏离重投影像素 0~1 个纹素 ⇒ 固定相对容差会把它们全判成不同表面。
+    float giDepthGrad = abs(dFdx(ScreenToViewDepth(depth))) + abs(dFdy(ScreenToViewDepth(depth)));
+
     // 关降噪（VOXEL_GI_DENOISE 未定义）时本 pass 仍要跑：它才是 4 相位棋盘的重建 +
     // 时域累积（DeferredLight 关降噪时读 colortex2 的累积结果，只跳过 VarianceEstimate/EAWF）。
     // SSILVB 链（GI_ACTIVE_VXGI 未定义）不受影响。
@@ -274,6 +284,6 @@ void main() {
             float _dark = 1.0 - smoothstep(0.003, 0.06, _luma);
             accumCap = mix(SSILVB_MAX_ACCUM_FRAMES, SSILVB_MAX_ACCUM_FRAMES * 4.0, _dark);
         #endif
-        TemporalFilter(texelPos, screenPos, worldNormal, accumCap);
+        TemporalFilter(texelPos, screenPos, worldNormal, accumCap, giDepthGrad);
     }
 }
