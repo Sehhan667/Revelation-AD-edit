@@ -50,6 +50,12 @@ layout (rgba16f) restrict uniform image2D colorimg3;
 #include "/lib/universal/Fetch.glsl"
 #include "/lib/universal/Transform.glsl"
 
+// 布尔选项转成数值后的宏（settings.glsl 里按 #ifdef 定义）；这里兜底，保证本文件单独展开也能编译，
+// 同时避免静态检查把"只在 #ifdef 分支里定义"的宏误判为未定义（CODE_STYLE §4 铁律二）。
+#ifndef GI_ROT_PER_FRAME
+    #define GI_ROT_PER_FRAME 0.0
+#endif
+
 //======// NRD 风格滤波参数 //==================================================================//
 // [2026-08-19] hit-distance 世界空间滤波半径（NRD ReBLUR 思路）：
 // 让每 pass 的空间滤波在"世界空间"近似恒定——近处物体每屏像素覆盖的世界范围小，
@@ -265,7 +271,7 @@ void main() {
 	// 默认「每像素固定」：静止时最干净，也不引入帧间噪声；但方向图案钉在屏幕上，相机一转世界内容在
 	// 这套图案下滑动 ⇒ 滤波结果显得乱/不光滑。GI_KERNEL_ROT_PER_FRAME 打开后叠加逐帧旋转，
 	// 由时域累积与 TAA 把这份空间不规则平均掉（代价：单帧略多噪声）。
-	float _rotFrame = GI_KERNEL_ROT_PER_FRAME ? float(frameCounter) * 2.39996323 : 0.0;
+	float _rotFrame = GI_ROT_PER_FRAME * float(frameCounter) * 2.39996323;
 	float _tapAng = hash13(vec3(texelPos, float(FILTER_PASS_INDEX))) * 6.2831853
 	              + float(FILTER_PASS_INDEX) * 2.39996323 + _rotFrame;
 	mat2 _tapRot = mat2(cos(_tapAng), sin(_tapAng), -sin(_tapAng), cos(_tapAng));
