@@ -421,7 +421,8 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
     #endif
     encodedNormalDepth.a = 1.0;
-    fastHistory = vec4(integratedDiffuse.rgb, 1.0);
+    // 兜底路径用 -1 标记（weight = 1 时上一帧是白色，与"完全接受历史"无法区分；负数可分）
+    fastHistory = vec4(integratedDiffuse.rgb, -1.0);
 }
 
 float GetClosestDepthN(in ivec2 texel) {

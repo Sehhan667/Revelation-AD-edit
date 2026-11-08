@@ -542,7 +542,10 @@ void main() {
             //    累积帧数稳态 a* = 1/(1-w)：w=0.95 ⇒ a*=20，永远到不了满值。
             //    用法：噪/闪的地方**发灰** ⇒ 几何判据在扣权重（查深度/法线容差）；
             //          发白却仍噪 ⇒ 历史没问题，问题在采样或滤波。
-            finalOut = vec3(saturate(texelFetch(colortex21, _dbgT, 0).a));
+            // 关键：`maxGeometryWeight = 1` 与"兜底路径"都显示为白，无法区分 ⇒ 兜底路径改存 -1，
+            // 这里用**红色**标出"根本没用上历史"，灰阶才表示历史路径的实际权重。
+            float _dbgW = texelFetch(colortex21, _dbgT, 0).a;
+            finalOut = (_dbgW < 0.0) ? vec3(1.0, 0.0, 0.0) : vec3(saturate(_dbgW));
         }
     #endif
 }
