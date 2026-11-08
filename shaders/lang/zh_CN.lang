@@ -851,6 +851,8 @@ option.GI_DISOC_DETAIL_FRAMES=新像素细节收敛帧数
 option.GI_DISOC_DETAIL_FRAMES.comment=新暴露像素先给平滑无细节的值（mip3），再在这么多帧内逐渐补回细节。调大（如 16~24）会让新区域更稳、但细节出现更慢；8 = 原行为（约 0.13 s）
 option.GI_ACCUM_TIME=时域累积时间（秒）
 option.GI_ACCUM_TIME.comment=按 fps 换算成帧数上限（cap = 时间/frameTime，并以「最大累积帧数」为硬上限）。NRD 官方 REBLUR 漫反射默认 0.5 秒；越大越干净但拖影越长
+option.GI_DEBUG_VIEW=GI 诊断视图
+option.GI_DEBUG_VIEW.comment=把 GI 内部量当颜色画出来（1=历史长度+不可靠标记，2=方差，3=滤波改动量，4=左累积右滤波，5=历史长度分档）。用它定位闪到底来自历史、滤波还是采样
 option.GI_RADIUS_DECAY=滤波半径随收敛衰减
 option.GI_RADIUS_DECAY.comment=NRD 的 maxBlurRadius(30px) → minBlurRadius(1px)：新累积像素用大半径压噪，随累积帧数把半径收到最小 ⇒ 细节随时间显现。代价：收敛后残留噪声更明显（0=关）
 option.GI_FAST_CLAMP_SIGMA=短历史裁剪 sigma 倍数

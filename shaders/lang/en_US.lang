@@ -728,6 +728,8 @@ option.GI_DISOC_DETAIL_FRAMES=New-Pixel Detail Ramp
 option.GI_DISOC_DETAIL_FRAMES.comment=Freshly exposed pixels start from a smooth detail-free value (mip3) and regain detail over this many frames. Larger (16-24) = steadier new areas but slower detail; 8 = legacy behaviour (~0.13 s).
 option.GI_ACCUM_TIME=Accumulation Time (s)
 option.GI_ACCUM_TIME.comment=Converted to a frame cap by FPS (cap = time / frameTime, hard-capped by Max Accum Frames). NRD REBLUR default for diffuse is 0.5 s; larger = cleaner but longer ghosting.
+option.GI_DEBUG_VIEW=GI Debug View
+option.GI_DEBUG_VIEW.comment=Paints GI internals as colors (1 = history length + unreliable flag, 2 = variance, 3 = filter delta, 4 = left accumulated vs right filtered, 5 = history length buckets). Use it to tell whether flicker comes from history, filtering or sampling.
 option.GI_RADIUS_DECAY=Radius Decay
 option.GI_RADIUS_DECAY.comment=NRD maxBlurRadius(30px) to minBlurRadius(1px): freshly accumulated pixels use a large radius for noise suppression, then the radius shrinks with accumulated frames so detail emerges over time. Cost: more visible residual noise at convergence (0=off).
 option.GI_FAST_CLAMP_SIGMA=Fast-History Clamp Sigma

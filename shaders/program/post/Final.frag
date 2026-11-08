@@ -488,4 +488,50 @@ void main() {
         float _dbgBad   = texelFetch(colortex14, _giCanvasTexel, 0).a;
         finalOut = vec3(saturate(_dbgAccum * rcp(max(SSILVB_MAX_ACCUM_FRAMES, 1.0))), _dbgBad, 0.0);
     #endif
+
+    // ===== GI 诊断视图（GI_DEBUG_VIEW；0=关闭）=====
+    // 放在最后一个 pass ⇒ 不受曝光/色调映射/TAA 影响，颜色可以直接当读数。
+    // 每个模式都是"看一个具体量"，用来区分"闪"到底来自哪一环，而不是继续猜。
+    #if GI_DEBUG_VIEW > 0
+        #ifdef VXGI_FULLRES
+            ivec2 _dbgT = texelPos;
+        #else
+            ivec2 _dbgT = texelPos >> 1;
+        #endif
+        vec4 _dbgHist  = texelFetch(colortex2, _dbgT, 0);      // rgb = 累积(未滤波), a = 帧数
+        vec4 _dbgFilt  = texelFetch(colortex3, _dbgT, 0);      // rgb = 空间滤波后, a = 方差
+        float _dbgFlag = texelFetch(colortex14, _dbgT, 0).a;   // 1 = 本帧被判不可靠
+        float _dbgA    = _dbgHist.a;
+        float _dbgNorm = max(SSILVB_MAX_ACCUM_FRAMES, 1.0);
+        // 滤波"改动量"：空间滤波把累积值改了多少（相对）。持续跳 = 滤波强度不稳。
+        float _dbgLumaH = max(_dbgHist.r, 1e-5);
+        float _dbgLumaF = _dbgFilt.r;
+        float _dbgDelta = abs(_dbgLumaF - _dbgLumaH) * rcp(_dbgLumaH);
+
+        if (GI_DEBUG_VIEW == 1) {
+            // 1：历史长度 + 不可靠标记 —— 蓝=年轻(刚出现)，绿=本帧被判不可靠，红=历史长度
+            //    用法：转动视角盯住闪的地方。若该处**蓝/绿一直亮** ⇒ 历史没建立 ⇒ 查判据/重投影；
+            //          若该处**红已满**却仍闪 ⇒ 问题在滤波或采样，不在历史。
+            finalOut = vec3(saturate(_dbgA * rcp(_dbgNorm)), _dbgFlag, 1.0 - saturate(_dbgA * 0.125));
+        } else if (GI_DEBUG_VIEW == 2) {
+            // 2：方差（对数压缩）—— 白=方差大（滤波会强），黑=方差小（滤波几乎不生效）
+            //    用法：闪的地方如果**发黑** ⇒ 方差太低 ⇒ 边缘保持过强 ⇒ 噪点没被空间滤波抹掉。
+            float _dbgVar = max(_dbgFilt.a, 1e-8);
+            finalOut = vec3(saturate((log2(_dbgVar) + 24.0) * rcp(20.0)));
+        } else if (GI_DEBUG_VIEW == 3) {
+            // 3：滤波改动量 —— 红=空间滤波把该像素改了很多，绿=几乎没动
+            //    用法：**运动时红绿乱跳** ⇒ 滤波强度不稳（量化/方差问题）；
+            //          稳定不动但画面仍闪 ⇒ 闪来自采样或上游。
+            finalOut = vec3(saturate(_dbgDelta * 2.0), saturate(1.0 - _dbgDelta * 2.0), 0.0);
+        } else if (GI_DEBUG_VIEW == 4) {
+            // 4：左半屏 = 累积(未滤波)，右半屏 = 空间滤波后 —— 直接对比两者
+            finalOut = (texelPos.x < int(viewSize.x * 0.5)) ? _dbgHist.rgb : _dbgFilt.rgb;
+        } else if (GI_DEBUG_VIEW == 5) {
+            // 5：历史长度直方图（分档上色），用来快速看出"整体历史长度"是否健康
+            finalOut = (_dbgA > 0.9 * _dbgNorm) ? vec3(0.0, 1.0, 0.0)
+                     : (_dbgA > 0.5 * _dbgNorm) ? vec3(1.0, 1.0, 0.0)
+                     : (_dbgA > 0.25 * _dbgNorm) ? vec3(1.0, 0.5, 0.0)
+                     : vec3(1.0, 0.0, 0.0);
+        }
+    #endif
 }
