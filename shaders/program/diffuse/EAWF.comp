@@ -206,6 +206,11 @@ void main() {
 
 	const float kernel[8] = {0.0625, 0.125, 0.0625, 0.125, 0.125, 0.0625, 0.125, 0.0625};
 
+	// [④ minHitDistanceWeight] 官方 `minHitDistanceWeight = 0.1`：命中越近（归一化命中距离越小）
+	// 的样本越容易受阴影/遮挡影响，空间 pass 里应降权。归一化命中距离由 ① prepass 写进
+	// `colortex22.a`（官方 ReblurHitDistanceParameters 的 saturate(hitDistance / (A + viewZ*B))）。
+	const float MIN_HITDIST_WEIGHT = 0.1;
+	float centerNormHit = saturate(texelFetch(colortex22, texelPos, 0).a);
 	f16vec4 filteredColVar = f16vec4(imageLoad(colorimg3, texelPos));
 	// [③ self-guided] 官方 REBLUR 的空间滤波是 self-guided：引导信号用**稳定化后的历史**
 	// (stabilized radiance，我们放在 colortex23)，而不是当前噪声输入。这样边缘保持权重
@@ -320,6 +325,8 @@ void main() {
 			bool _centerTap = (offset3x3[i].x == 0 && offset3x3[i].y == 0);
 			bool _edgeTap   = (offset3x3[i].x == 0 || offset3x3[i].y == 0);
 			weight *= float16_t(_centerTap ? 4.0 : (_edgeTap ? 2.0 : 1.0));
+			// ④ 命中距离权重（官方 minHitDistanceWeight）
+			weight *= float16_t(mix(MIN_HITDIST_WEIGHT, 1.0, saturate(texelFetch(colortex22, sampleTexel, 0).a)));
 
 			filteredColVar += sampleColVar * f16vec4(f16vec3(weight), weight * weight);
 			sumWeight += weight;
@@ -345,6 +352,8 @@ void main() {
 	            float logWeightN = log2(saturate(dot(OctDecodeSnorm(sampleAux.xy), centerNormal))) * sigmaN;
 	            float logWeightL = abs(sampleLuma - centerLuma) * sigmaL;
 	            weight *= float16_t(saturate(exp2(logWeightN + logWeightL)));
+	            // ④ 命中距离权重（官方 minHitDistanceWeight）
+	            weight *= float16_t(mix(MIN_HITDIST_WEIGHT, 1.0, saturate(texelFetch(colortex22, sampleTexel, 0).a)));
 	            filteredColVar += sampleColVar * f16vec4(f16vec3(weight), weight * weight);
 	            sumWeight += weight;
 	        }
