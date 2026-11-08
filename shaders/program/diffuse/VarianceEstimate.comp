@@ -72,7 +72,12 @@ void SharedPreload() {
     ivec2 loadTexel = groupBase + localID;
     loadTexel = clamp(loadTexel, ivec2(1), canvasEnd - 2);
 
-    float luma = texelFetch(colortex2, loadTexel, 0).r; // We use YCoCg color space
+    #ifdef VOXEL_GI_NRD_ACTIVE
+    // 官方：方差由 prepass 的空间重用结果估出（本包 = colortex22）
+    float luma = texelFetch(colortex22, loadTexel, 0).r;
+#else
+    float luma = texelFetch(colortex2, loadTexel, 0).r;
+#endif
     sharedMoments[localID.y][localID.x] = packHalf2x16(vec2(luma, luma * luma));
 
     for (uint stage = 1u; stage < stageNum; ++stage) {
@@ -82,7 +87,11 @@ void SharedPreload() {
             localID = ivec2(localIndex % sharedSize.x, localIndex / sharedSize.x);
 
             loadTexel = groupBase + localID;
-            luma = texelFetch(colortex2, loadTexel, 0).r; // We use YCoCg color space
+            #ifdef VOXEL_GI_NRD_ACTIVE
+    luma = texelFetch(colortex22, loadTexel, 0).r;
+#else
+    luma = texelFetch(colortex2, loadTexel, 0).r;
+#endif
             sharedMoments[localID.y][localID.x] = packHalf2x16(vec2(luma, luma * luma));
         }
     }
