@@ -532,6 +532,13 @@ void main() {
                      : (_dbgA > 0.5 * _dbgNorm) ? vec3(1.0, 1.0, 0.0)
                      : (_dbgA > 0.25 * _dbgNorm) ? vec3(1.0, 0.5, 0.0)
                      : vec3(1.0, 0.0, 0.0);
+        } else if (GI_DEBUG_VIEW == 6) {
+            // 6：上一帧的「几何可信度 maxGeometryWeight」（存于 colortex21.a）
+            //    白 = 1（完全接受历史）；灰 = 部分拒绝；黑 = 完全拒绝。
+            //    累积帧数稳态 a* = 1/(1-w)：w=0.95 ⇒ a*=20，永远到不了满值。
+            //    用法：噪/闪的地方**发灰** ⇒ 几何判据在扣权重（查深度/法线容差）；
+            //          发白却仍噪 ⇒ 历史没问题，问题在采样或滤波。
+            finalOut = vec3(saturate(texelFetch(colortex21, _dbgT, 0).a));
         }
     #endif
 }

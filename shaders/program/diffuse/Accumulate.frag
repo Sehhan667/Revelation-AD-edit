@@ -335,8 +335,11 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 
             integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), integratedDiffuse.rgb, alpha);
             // 短历史：固定 1/6 混合率（官方 maxFastAccumulatedFrameNum = 6）、**永不掺滤波结果**
-            // ⇒ 几帧级的新鲜参考（REBLUR fastHistory）。.a 目前未使用（保留 1.0）。
-            fastHistory = vec4(mix(prevFast, integratedDiffuse.rgb, 1.0 / 6.0), 1.0);
+            // ⇒ 几帧级的新鲜参考（REBLUR fastHistory）。
+            // .a 存**本帧的几何可信度 maxGeometryWeight**（诊断用，见 GI_DEBUG_VIEW 6 档）：
+            // 累积帧数的稳态只取决于它（a* = 1/(1-w)），所以 a 停在半途就说明它在扣权重。
+            fastHistory = vec4(mix(prevFast, integratedDiffuse.rgb, 1.0 / 6.0),
+                               saturate(maxGeometryWeight));
             return;
         }
     }
