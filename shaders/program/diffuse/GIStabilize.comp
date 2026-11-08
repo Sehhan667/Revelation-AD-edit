@@ -1,0 +1,67 @@
+/*
+--------------------------------------------------------------------------------
+  Revelation-AD-edit  —  REBLUR Stabilization pass
+--------------------------------------------------------------------------------
+
+  官方 NRD `ReblurSettings`：
+      // [0; maxAccumulatedFrameNum] - maximum number of linearly accumulated frames for stabilized radiance
+      // "0" disables the stabilization pass
+      uint32_t maxStabilizedFrameNum = REBLUR_MAX_HISTORY_FRAME_NUM;   // = 63
+
+  它把**空间滤波之后**的结果再做一次长时间线性累积（最长 63 帧），
+  目的就是消除滤波输出的**残余时域起伏**（闪烁/呼吸）——滤波本身不保证时间平滑，
+  稳定化那一档才保证。
+
+  输入：colortex3（EAWF 四遍滤波后的结果）
+  输出：colortex23（rgb = 稳定化辐射，a = 已累积帧数）
+--------------------------------------------------------------------------------
+*/
+
+//======// Input //===============================================================================//
+
+layout (local_size_x = 8, local_size_y = 8) in;
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+#ifdef VXGI_FULLRES
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+#else
+const vec2 workGroupsRender = vec2(0.5, 0.5);
+#endif
+
+//======// Uniform //=============================================================================//
+
+layout (rgba16f) restrict uniform image2D colorimg3;    // EAWF 滤波后结果（只读）
+layout (rgba16f) restrict uniform image2D colorimg23;   // 稳定化输出
+
+#include "/lib/universal/Uniform.glsl"
+
+//======// Constants //===========================================================================//
+
+// 官方 REBLUR_MAX_HISTORY_FRAME_NUM = 63
+#define STABILIZE_MAX_FRAMES 63.0
+
+//======// Function //============================================================================//
+
+
+void main() {
+    ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+#ifdef VXGI_FULLRES
+    if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+#else
+    if (any(greaterThanEqual(texelPos, ivec2(halfViewSize)))) return;
+#endif
+
+    vec3 filtered = imageLoad(colorimg3, texelPos).rgb;
+    vec4 prev = imageLoad(colorimg23, texelPos);
+    float bad = texelFetch(colortex14, texelPos, 0).a;
+
+    float age = (bad > 0.5) ? 0.0 : prev.a;
+    age = min(age + 1.0, STABILIZE_MAX_FRAMES);
+    // 线性累积：alpha = 1/age（官方"linearly accumulated frames"）
+    vec3 stab = (age <= 1.0) ? filtered : mix(prev.rgb, filtered, 1.0 / age);
+
+    imageStore(colorimg23, texelPos, vec4(stab, age));
+}

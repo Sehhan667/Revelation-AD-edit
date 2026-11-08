@@ -59,6 +59,10 @@
 	// REBLUR 短历史（fastHistory）：只累积、不掺滤波结果，用作长历史的裁剪参考。
 	// REBLUR prepass 输出：rgb = 空间重用后的噪声输入（YCoCg），a = 归一化命中距离。
 	// 独立缓冲是官方做法（prepass 是一个 pass，不是采样处顺手平均）。
+	// REBLUR stabilized radiance：对**滤波后**结果再累积一档（最长 63 帧），
+	// 用途是消除滤波输出的残余时域起伏（官方 maxStabilizedFrameNum = REBLUR_MAX_HISTORY_FRAME_NUM）。
+	// rgb = 稳定化辐射（YCoCg），a = 累积帧数。
+	const int 	colortex23Format 			= RGBA16F;
 	const int 	colortex22Format 			= RGBA16F;
 	const int 	colortex21Format 			= RGBA16F;
 
@@ -89,7 +93,8 @@
 	const bool	colortex19Clear				= false;
 	const bool	colortex20Clear				= false;
 	const bool 	colortex21Clear			= false;
-	const bool 	colortex22Clear			= true;   // 每帧重写，自动清屏即可
+	const bool 	colortex22Clear			= true;
+	const bool 	colortex23Clear			= false;   // 时域缓冲，必须保留   // 每帧重写，自动清屏即可
 
 	const vec4	colortex6ClearColor			= vec4(0.0, 0.0, 0.0, 1.0);
 
