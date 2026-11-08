@@ -119,7 +119,10 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     // 强制历史永远有效。用途：一键判断闪是来自「历史被拒 + 重建」还是「采样/滤波」。
     // 关闭时行为逐位不变（条件里只多一个编译期常量 0）。
     bool _dbgForceHistory = GI_DEBUG_NO_DISOC > 0;
-    bool _histOk = _dbgForceHistory || (saturate(prevCoord) == prevCoord && !historyReset);
+    // [GI_BISECT bit2 = 4] 忽略 historyReset（该 uniform 由 Iris 自定义表达式求值，
+    // 若环境不支持 smooth() 可能恒为 true ⇒ 每帧全局重置历史 ⇒ 完全无法累积）。
+    bool _ignoreReset = (GI_BISECT & 4) != 0;
+    bool _histOk = _dbgForceHistory || (saturate(prevCoord) == prevCoord && (_ignoreReset || !historyReset));
     if (_histOk) {
         vec4 prevDiffuse = vec4(0.0);
         vec3 prevFast = vec3(0.0);   // 短历史（同一组双线性权重）

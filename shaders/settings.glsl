@@ -304,7 +304,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//   1 = 关「稳定化历史当引导」（EAWF 退回噪声输入引导）
 	//   2 = 关「滤波结果回写历史」（GIHistoryStore 变成 no-op）
 	//   3 = 两者都关
-	#define GI_BISECT 0 // [0 1 2 3] 二分排查（0=正常）
+	//   4 = 忽略 historyReset（若该 uniform 恒为真，历史会被每帧重置）
+	//   5/6/7 = 在 1/2/3 的基础上再加 4
+	#define GI_BISECT 0 // [0 1 2 3 4 5 6 7] 二分排查（0=正常）
 	#define GI_DEBUG_NO_DISOC 0 // [0 1] 诊断：取消历史拒绝
 	#define GI_DEBUG_VIEW 0 // [0 1 2 3 4 5 6] GI 诊断视图（0=关）
 	// 新累积的像素用大半径压噪，随累积帧数把半径收到最小 ⇒ 细节随时间显现。
