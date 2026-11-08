@@ -137,7 +137,14 @@ void main() {
         integratedDiffuse.rgb *= rcp(1.0 + integratedDiffuse.x);
     #endif
 
+#ifdef VOXEL_GI_NRD_ACTIVE
+    // 官方：方差由 prepass 用空间重用样本的离散度估出（写在 colortex24.r）。
+    // 这里直接取它——不再对 colortex2/22 做 3×3 矩估计：prepass 是 32 px 模糊，
+    // 模糊后的 3×3 方差必然≈0（实测诊断视图 2 全黑），而矩估计会把滤波强度推到饱和。
+    float variance = max(texelFetch(colortex24, texelPos, 0).r, 0.0);
+#else
     float variance = 16.0 * max0(moments.y - moments.x * moments.x);
+#endif
 
     imageStore(colorimg3, texelPos, vec4(integratedDiffuse.rgb, variance));
 }

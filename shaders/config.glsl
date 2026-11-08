@@ -62,6 +62,9 @@
 	// REBLUR stabilized radiance：对**滤波后**结果再累积一档（最长 63 帧），
 	// 用途是消除滤波输出的残余时域起伏（官方 maxStabilizedFrameNum = REBLUR_MAX_HISTORY_FRAME_NUM）。
 	// rgb = 稳定化辐射（YCoCg），a = 累积帧数。
+	// REBLUR prepass 的方差输出（官方在 prepass 里用空间重用样本的离散度估方差）。
+	// r = 方差；其余通道留空。
+	const int 	colortex24Format 			= RGBA16F;
 	const int 	colortex23Format 			= RGBA16F;
 	const int 	colortex22Format 			= RGBA16F;
 	const int 	colortex21Format 			= RGBA16F;
@@ -95,6 +98,7 @@
 	const bool 	colortex21Clear			= false;
 	const bool 	colortex22Clear			= true;
 	const bool 	colortex23Clear			= false;   // 时域缓冲，必须保留
+	const bool 	colortex24Clear			= true;   // 每帧重写
 
 	const vec4	colortex6ClearColor			= vec4(0.0, 0.0, 0.0, 1.0);
 

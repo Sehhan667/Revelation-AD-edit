@@ -40,6 +40,7 @@ const vec2 workGroupsRender = vec2(0.5, 0.5);
 //======// Uniform //=============================================================================//
 
 layout (rgba16f) restrict uniform image2D colorimg22;   // 输出：rgb = 重用后输入，a = 归一化命中距离
+layout (rgba16f) restrict uniform image2D colorimg24;   // 输出：r = 方差（官方在 prepass 里估方差）
 
 #include "/lib/universal/Uniform.glsl"
 #include "/lib/universal/Transform.glsl"
@@ -79,6 +80,10 @@ void main() {
 #endif
     vec3 sum = vec3(0.0);
     float wSum = 0.0;
+    // 官方在 prepass 里估方差：用"参与空间重用的样本"的一阶/二阶矩，而不是对模糊后的结果再算
+    //（后者必然≈0：32 px 模糊后相邻纹素几乎同值，实测诊断视图 2 全黑）。
+    float lSum = 0.0;
+    float lSum2 = 0.0;
 
     for (int dy = -PREPASS_RADIUS_TEXELS; dy <= PREPASS_RADIUS_TEXELS; dy += PREPASS_STEP) {
         for (int dx = -PREPASS_RADIUS_TEXELS; dx <= PREPASS_RADIUS_TEXELS; dx += PREPASS_STEP) {
@@ -95,7 +100,10 @@ void main() {
             float w = saturate(1.0 - abs(nz - viewZ) / max(abs(viewZ) * 0.1, 1e-3));
             w *= linearstep(0.5, 0.9, saturate(dot(nrm, normal)));
             w *= 1.0 / (1.0 + float(dx * dx + dy * dy) * 0.01);   // 径向衰减
-            sum += texelFetch(colortex3, t, 0).rgb * w;
+            vec3 tapCol = texelFetch(colortex3, t, 0).rgb;
+            sum += tapCol * w;
+            lSum  += tapCol.r * w;
+            lSum2 += tapCol.r * tapCol.r * w;
             wSum += w;
         }
     }
@@ -110,4 +118,9 @@ void main() {
     float normHit = saturate(hitDist * rcp(REBLUR_HITDIST_A + abs(viewZ) * REBLUR_HITDIST_B));
 
     imageStore(colorimg22, texelPos, vec4(reused, normHit));
+
+    // 加权方差：E[x²] - E[x]²（与 VarianceEstimate 的尺度保持一致：×16）
+    float meanL = wSum > 1e-4 ? lSum / wSum : 0.0;
+    float varL  = wSum > 1e-4 ? max(lSum2 / wSum - meanL * meanL, 0.0) * 16.0 : 0.0;
+    imageStore(colorimg24, texelPos, vec4(varL, 0.0, 0.0, 1.0));
 }
