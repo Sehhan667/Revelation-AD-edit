@@ -139,12 +139,19 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         // 判成不同表面 → maxGeometryWeight 骤降 → 累积帧数塌到 1~2 → 每像素独立噪点（满天星）。
         // 纯 A/D 横移时视深几乎不变，所以看着稳定；前后移动与转视角立刻暴露。
         // 改成比 prevViewPos.z 后：静止时它与 viewPos.z 完全相同（行为逐位不变），运动时恒为同帧口径。
-        // 容差 = max(固定相对 12.5%, 4 x 屏幕空间视深梯度)。
+        // 容差 = max(固定相对 12.5%, GI_ACCUM_DEPTH_GRAD_SLACK x 屏幕空间视深梯度)。
         // 掠射面（法线近乎垂直于视线）上一个纹素的视深变化可达自身深度的 5%~10%，而 4 个历史 tap
         // 天然偏离重投影像素 0~1 个纹素 ⇒ 固定容差会把它们全判成不同表面，累积帧数永远上不去
-        //（实测：近乎垂直于摄像机的表面完全累积不下来）。系数 4 覆盖「一个纹素的斜率 + 重投影与
-        // 双线性带来的余量」；正对相机的面梯度很小，仍退回固定容差 ⇒ 行为不变。
-        float depthTol = max(abs(prevViewPos.z) * 0.125, GI_ACCUM_DEPTH_GRAD_SLACK * giDepthGrad);
+        //（实测：近乎垂直于摄像机的表面完全累积不下来）。
+        // [2026-11-08 相位偏移] 还有一层固定偏移：历史取样点在 `prevTexel` 里减掉了**上一帧**的
+        // 棋盘相位，所以它相对本像素中心偏 1~3 个画布纹素（= 2~6 个屏幕像素）。深度判据比的是
+        // 这些偏移位置的视深，差值 ≈ 局部斜率 × 偏移量 ⇒ 掠射面必然被扣权重。
+        // 后果（实测）：静止时 `maxGeometryWeight` 只有 0.94~0.98 ⇒ 稳态 a* = 1/(1-w) 只有
+        // 16~57 帧，**没有任何像素能达到满累积**（诊断视图 5 看不到绿色），且掠射/远处最差。
+        // 因此容差必须显式覆盖这段相位偏移：加上 `相位跨度 × 每纹素视深梯度`。
+        // 相位跨度最多 3 个画布纹素，每纹素 ≈ 2 个屏幕像素 ⇒ 6 x giDepthGrad。
+        float depthTol = max(abs(prevViewPos.z) * 0.125,
+                             GI_ACCUM_DEPTH_GRAD_SLACK * giDepthGrad + 6.0 * giDepthGrad);
 
         for (uint i = 0u; i < 4u; ++i) {
             ivec2 sampleTexel = floorTexel + offset2x2[i];
