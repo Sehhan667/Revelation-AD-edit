@@ -209,12 +209,16 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 
             // [2026-08-19 离线渲染] 持续累计：把帧数上限拉高，让时域累积权重更均匀、收敛到更低噪声。
             // 关闭宏时用原 SSILVB_MAX_ACCUM_FRAMES，与之前完全一致。
+            // [a 必须按像素取，不能插值] `prevDiffuse.a` 是 4 tap 双线性插值的结果，而取样位置
+            // 每帧被棋盘相位挪动（prevTexel 减去上一帧相位）⇒ 每帧从不同邻居取 a
+            // ⇒ 整屏小幅"深浅交替"（实测）。a 是逐像素标量，直接取本像素才是官方语义。
+            float _prevA = texelFetch(colortex2, texelPos, 0).a;
             // [2026-08-28 ] 累积帧数乘上 maxGeometryWeight（上帧几何可信度）连续衰减：
             // 静止一致 → ≈1，a 正常累加；遮挡/移动/几何剧变 → 骤降 → alpha 变大 → 几乎不混历史。
             #ifdef OFFLINE_RENDER
-                integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, 1024.0);
+                integratedDiffuse.a = min(_prevA * maxGeometryWeight + 1.0, 1024.0);
             #else
-                integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, accumCap);
+                integratedDiffuse.a = min(_prevA * maxGeometryWeight + 1.0, accumCap);
             #endif
 
             // [输入采样 = REBLUR prepass 的输出] 官方把 prepass 做成一个**独立 pass**
