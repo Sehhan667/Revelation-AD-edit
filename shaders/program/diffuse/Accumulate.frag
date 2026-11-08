@@ -285,11 +285,15 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     vec3 _tol = GI_FAST_CLAMP_SIGMA * _sigma + 0.15 * _mu + vec3(0.01);
                     vec3 _histOld = prevDiffuse.rgb;
                     prevDiffuse.rgb = clamp(_histOld, _mu - _tol, _mu + _tol);
-                    // anti-lag：只在确实夹掉很多（超过 60% 窗口）时加速，上限 0.1。
-                    // 原来「夹多少就加速多少、上限 0.3」会在正常波动下每帧抬 alpha ⇒ 累积失效。
-                    float _span = max(max(_tol.r, _tol.g), _tol.b) + 1e-4;
-                    float _clampAmt = saturate(length(_histOld - prevDiffuse.rgb) / _span);
-                    alpha = max(alpha, step(0.6, _clampAmt) * _clampAmt * 0.1);
+                    // [⑧ 官方 antilag] 替换此前"裁剪量→加速"的 RELAX 式近似。
+                    // 官方 ReblurAntilagSettings：亮度梯度 delta 与「局部方差 × luminanceSigmaScale」比较，
+                    // 超出阈值即缩短历史（提高 alpha），luminanceSensitivity 控制灵敏度（越小越敏感）。
+                    const float ANTILAG_SIGMA_SCALE = 2.0;   // luminanceSigmaScale
+                    const float ANTILAG_SENSITIVITY = 3.0;   // luminanceSensitivity
+                    float _deltaL = abs(integratedDiffuse.r - _histOld.r);
+                    float _sigmaChar = max(_sigma.r, 1e-5) * ANTILAG_SIGMA_SCALE;
+                    float _thr = max(_sigmaChar * ANTILAG_SENSITIVITY, 1e-5);
+                    alpha = max(alpha, saturate((_deltaL - _thr) * rcp(_thr)));
                 }
             #endif
 
