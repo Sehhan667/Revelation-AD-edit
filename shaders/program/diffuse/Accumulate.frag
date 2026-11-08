@@ -302,8 +302,16 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     const float ANTILAG_SENSITIVITY = 3.0;   // luminanceSensitivity
                     float _deltaL = abs(integratedDiffuse.r - _histOld.r);
                     float _sigmaChar = max(_sigma.r, 1e-5) * ANTILAG_SIGMA_SCALE;
-                    float _thr = max(_sigmaChar * ANTILAG_SENSITIVITY, 1e-5);
-                    alpha = max(alpha, saturate((_deltaL - _thr) * rcp(_thr)));
+                    // [噪声地板] delta 是时间维变化量，_sigma 是空间维标准差——两者量纲不同。
+                    // 平滑区域空间 σ≈0 ⇒ 只看空间 σ 会让 1spp 的逐帧噪声**每帧都触发** antilag
+                    //（实测：静止时无法稳定）。真实可分辨的变化至少要是采样噪声量级：
+                    //     noiseFloor ≈ mean / sqrt(a) · k
+                    // a 越大（累积越深）可分辨的变化越小，与官方"按方差自适应"的意图一致。
+                    float _meanHist = max(prevDiffuse.r, 1e-5);
+                    float _noiseFloor = _meanHist * 1.5 * rsqrt(max(integratedDiffuse.a, 1.0));
+                    float _thr = max(max(_sigmaChar * ANTILAG_SENSITIVITY, _noiseFloor), 1e-5);
+                    // 限制单帧贡献（≤0.5）：一次噪声尖峰不应把历史清空。
+                    alpha = max(alpha, saturate((_deltaL - _thr) * rcp(_thr)) * 0.5);
                 }
             #endif
 
