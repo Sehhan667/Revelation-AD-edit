@@ -309,8 +309,12 @@ void main() {
 	// 注意：本 pass 工作在**画布空间**（可能半分辨率），`texelToUv` 用的是全分辨率像素尺寸，
 	// 直接用会把 UV 压到左上角四分之一 ⇒ NDC 错误 ⇒ 切平面判据完全失效。
 	vec2 centerCanvasUv = (vec2(texelPos) + 0.5) / vec2(canvasEnd);
-	vec3 centerViewPos = vec3(diagonal2(gbufferProjectionInverse) * (centerCanvasUv * 2.0 - 1.0) * -normalDepthData.z, normalDepthData.z);
-	vec3 centerN = vec3(centerNormal);
+	vec3 centerViewPos = ScreenToViewPosRaw(centerCanvasUv, normalDepthData.z);
+	// [关键修正] 切平面距离必须用**视空间**法线：`centerNormal` 来自 colortex14，是**世界空间**方向，
+	// 而 centerViewPos / tapViewPos 是视空间位置。世界法线 × 视空间差向量 = 垃圾值
+	// ⇒ planeDist 几乎总超出 0.02 容差 ⇒ 所有 tap 被拒 ⇒ 滤波退化成"只用中心"
+	// ⇒ 整屏 1spp 小点（实测："整个世界都是劈里啪啦的小点，静止也一样"）。
+	vec3 centerN = mat3(gbufferModelView) * vec3(centerNormal);
 
 	float16_t sumWeight = float16_t(1.0);
 	// filteredColVar *= vec4(vec3(sumWeight), sumWeight * sumWeight);
@@ -349,11 +353,14 @@ void main() {
 
 			// [⑤] 几何拒判：tap 到中心切平面的归一化偏离（官方 planeDistanceSensitivity）
 			vec2 tapCanvasUv = (vec2(sampleTexel) + 0.5) / vec2(canvasEnd);
-			vec3 tapViewPos = vec3(diagonal2(gbufferProjectionInverse) * (tapCanvasUv * 2.0 - 1.0) * -sampleAux.z, sampleAux.z);
+			vec3 tapViewPos = ScreenToViewPosRaw(tapCanvasUv, sampleAux.z);
 			float planeDist = abs(dot(tapViewPos - centerViewPos, centerN)) / max(abs(centerViewPos.z), 1e-3);
-			float16_t weight = float16_t(saturate(1.0 - planeDist * rcp(PLANE_DIST_SENS)));
+			// 容差下限：0.02 是相对视距的百分比，近距离折成绝对距离会极小 ⇒ 会误拒同表面 tap
+			// （全拒 = 滤波退化 = 整屏 1spp 小点）。用「2 个世界单位/视距」做下限。
+			float planeTol = max(PLANE_DIST_SENS, 2.0 * rcp(max(abs(centerViewPos.z), 1.0)));
+			float16_t weight = float16_t(saturate(1.0 - planeDist * rcp(planeTol)));
 			// [⑤] 法线拒判：夹角上限 = 瓣角 × lobeAngleFraction（官方 lobeAngleFraction）
-			float _nd = dot(OctDecodeSnorm(sampleAux.xy), centerN);
+			float _nd = dot(OctDecodeSnorm(sampleAux.xy), vec3(centerNormal));   // 世界·世界
 			weight *= float16_t(smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, _nd));
 			// 亮度权重（self-guided，保留）
 			float logWeightL = abs(sampleLuma - centerLuma) * sigmaL;
@@ -395,10 +402,11 @@ void main() {
 	            if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 	            // [⑤] 官方几何/法线拒判（同 9-tap）
 	            vec2 tapCanvasUv = (vec2(sampleTexel) + 0.5) / vec2(canvasEnd);
-	            vec3 tapViewPos = vec3(diagonal2(gbufferProjectionInverse) * (tapCanvasUv * 2.0 - 1.0) * -sampleAux.z, sampleAux.z);
+	            vec3 tapViewPos = ScreenToViewPosRaw(tapCanvasUv, sampleAux.z);
 	            float planeDist = abs(dot(tapViewPos - centerViewPos, centerN)) / max(abs(centerViewPos.z), 1e-3);
-	            float16_t weight = float16_t(saturate(1.0 - planeDist * rcp(PLANE_DIST_SENS)));
-	            float _nd = dot(OctDecodeSnorm(sampleAux.xy), centerNormal);
+	            float planeTol = max(PLANE_DIST_SENS, 2.0 * rcp(max(abs(centerViewPos.z), 1.0)));
+	            float16_t weight = float16_t(saturate(1.0 - planeDist * rcp(planeTol)));
+	            float _nd = dot(OctDecodeSnorm(sampleAux.xy), vec3(centerNormal));   // 世界·世界
 	            weight *= float16_t(smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, _nd));
 	            float logWeightL = abs(sampleLuma - centerLuma) * sigmaL;
 	            weight *= float16_t(saturate(exp2(logWeightL)));
