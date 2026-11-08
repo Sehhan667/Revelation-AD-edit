@@ -306,7 +306,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             // 空间滤波只能把它抹成脏污；在**入样**处按当前累积均值的 K 倍封顶则只压尖峰、不模糊。
             // K=0 关闭；a 太小时跳过（均值≈0 会把真实光照一起压掉）。
             // [REBLUR firefly suppressor] 官方 enableAntiFirefly = true **默认开启**，
-            // ireflySuppressorMinRelativeScale = 2.0（「[1;3] undesired sporadic outliers suppression
+            // fireflySuppressorMinRelativeScale = 2.0（「[1;3] undesired sporadic outliers suppression
             // to keep output stable；smaller values maximize suppression in exchange of bias」）。
             // 做法与官方一致：把本帧入样按「历史均值的 k 倍」封顶 ⇒ 孤亮点顶不进历史。
             // NRD 模式下若用户把 VOXEL_GI_SAMPLE_CLAMP 设为 0，则取官方默认 2.0（= 官方默认开启）。
