@@ -166,13 +166,17 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             #endif
 
             // [细节收敛斜坡] 新暴露/新累积的像素先给「平滑无细节」的值，再逐帧补细节：
-            //   a = 0  → mip3（半分辨率下 8x8 纹素 ≈ 屏幕 16x16 平均）
-            //   a → N  → mip 线性降到 0（逐像素原始样本）
-            // 这是"先稳再长细节"的唯一机制（之前那些预稳定/邻居填充都是在重复它）。
-            // N 就是「收敛到全细节需要多少帧」：8 帧 ≈ 0.13 s（原行为），
-            // 调大到 16~24 会让新区域更稳、但细节出现更慢。
+            //   a ≈ 0  → mip3（半分辨率下 8x8 纹素 ≈ 屏幕 16x16 平均）
+            //   a → N  → mip 分档降到 0（逐像素原始样本）
+            // 这是"先稳再长细节"的机制。
+            // 关键：**mip 输入必须量化**。a 在静止时也不是常数——4 相位棋盘每帧把历史取样点
+            // 挪 ±1 纹素，4 个 tap 落在不同邻居上 ⇒ maxGeometryWeight 轻微抖动 ⇒ a 抖 ±1。
+            // 若 mip 等级是 a 的连续函数，取样的模糊度就逐帧变 ⇒ 静止画面也在动
+            //（实测：把本项调到 16 后静止又"不稳定"，就是这条路径覆盖了更多像素）。
+            // 量化到 8 帧一档：正常抖动不跨档 ⇒ 静止稳定；细节仍按档位长出来。
             if (integratedDiffuse.a < GI_DISOC_DETAIL_FRAMES) {
-                float mipLevel = 3.0 * saturate(1.0 - integratedDiffuse.a * rcp(GI_DISOC_DETAIL_FRAMES));
+                float _aQ = floor(integratedDiffuse.a * 0.125) * 8.0;   // 8 帧一档
+                float mipLevel = 3.0 * saturate(1.0 - _aQ * rcp(GI_DISOC_DETAIL_FRAMES));
                 integratedDiffuse.rgb = textureLod(colortex3, currCoord, mipLevel).rgb;
             } else {
                 integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
@@ -224,6 +228,13 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 float _k = _convS * mix(_convB, 1.0, _t);
                 alpha = rcp(1.0 + _k * _N);
             }
+
+            // [新像素防闪] a < 8（刚出现/历史长度重建不足）时把 alpha 封顶到 1/8：
+            // 否则 alpha 可以到 0.8 量级 ⇒ 输出几乎全是**本帧单次采样** ⇒ 逐帧独立跳动（闪）。
+            // 这不是新增机制：官方 convergenceSettings 的 b < 1 表达的是同一意图
+            //（「a blurry result is better on average than a dirty result」），我们只是把
+            // "年轻像素"的混合率再收紧一点；a ≥ 8 后 alpha ≤ 1/a 已经更小，本式不再生效。
+            alpha = min(alpha, rcp(max(integratedDiffuse.a, 8.0)));
 
             // [REBLUR 历史裁剪] 官方做法（`fastHistoryClampingSigmaScale = 2.0`，原文：「REBLUR clamps
             // the spatially processed main history to the spatially unprocessed fast history」）：
