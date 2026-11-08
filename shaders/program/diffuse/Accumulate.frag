@@ -482,8 +482,15 @@ void main() {
         // 这里改成按秒算、并用 SSILVB_MAX_ACCUM_FRAMES 当硬上限（用户仍可调）。
         float accumCap = clamp(GI_ACCUM_TIME / max(frameTime, 1e-4), 8.0, SSILVB_MAX_ACCUM_FRAMES);
         #ifdef VOXEL_GI_DARK_ACCUM
-            float _luma = max(texelFetch(colortex2, texelPos, 0).r, 0.0);
-            float _dark = 1.0 - smoothstep(0.003, 0.06, _luma);
+            // [暗处判定必须用稳定量] 原来用 `texelFetch(colortex2, texelPos).r`（**正在累积的 GI 亮度**）
+            // 做 smoothstep，这是一个**反馈回路**：亮度收敛 → `_dark` 变 → 上限跟着变 →
+            // 累积帧数的目标又变 → 亮度再漂。实测表现正是：诊断视图 5 里累积帧数在橙/黄/绿之间
+            // **缓慢平滑移动**，而且因为亮度在整片表面上连续变化 ⇒ "完整表面一起翻绿再跌回"。
+            // 改用**原版光照等级**（lightmap，来自 colortex7）：稳定、无反馈，
+            // 语义也更准（"只有少量光线照入的暗处"本来就是 lightmap 低的区域）。
+            uint _matPack = loadMaterialPack(renderTexel).x;
+            float _lmMax = max(Unpack2x8UX(_matPack), Unpack2x8UY(_matPack));   // 方块光 / 天空光取大者
+            float _dark = 1.0 - smoothstep(0.10, 0.60, _lmMax);
             accumCap = mix(accumCap, accumCap * 4.0, _dark);
         #endif
         TemporalFilter(texelPos, screenPos, worldNormal, accumCap, giDepthGrad);
