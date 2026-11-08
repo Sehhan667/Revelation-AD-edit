@@ -66,6 +66,20 @@ layout (location = 2) out vec4 fastHistory;
     #define SHOULD_APPLY_JITTER
 #endif
 
+// GI 画布某个纹素「**本帧**」的视深（负值，与 viewPos.z 同口径）。
+// 为什么需要：空间重用块要判断"邻居是不是同一个表面"，而 `colortex14` 里存的是**上一帧**的
+// 视深。静止时两者相等；一移动，同一世界点在两帧的视深整体错位 ⇒ 邻居全被误判为不同表面
+// ⇒ 退回单帧/mip 采样 ⇒ 运动时闪、且预滤波失效（实测"动起来更糟、仍然闪"）。
+// 深度必须取**同帧**口径：从 depthtex 按本帧的棋盘相位取邻居的深度再换算成视深。
+float GICanvasNeighbourViewDepth(in ivec2 canvasTexel) {
+#ifdef VXGI_FULLRES
+    ivec2 rt = canvasTexel;
+#else
+    ivec2 rt = canvasTexel * 2 + checkerboardOffset2x2[frameCounter & 3u];
+#endif
+    return ScreenToViewDepth(loadDepth0(rt));
+}
+
 void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, in float accumCap, in float giDepthGrad) {
 	vec3 viewPos = ScreenToViewPos(screenPos);
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
@@ -199,7 +213,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                             ivec2 _rt = texelPos + ivec2(_rx, _ry);
                             if (clamp(_rt, ivec2(1), canvasEnd - 2) != _rt) continue;
                             vec3 _ra = texelFetch(colortex14, _rt, 0).rgb;   // 邻居法线 + 视深
-                            float _rw = saturate(1.0 - abs(_ra.z - viewPos.z) / max(abs(viewPos.z) * 0.1, 1e-3));
+                            float _rw = saturate(1.0 - abs(GICanvasNeighbourViewDepth(_rt) - viewPos.z) / max(abs(viewPos.z) * 0.1, 1e-3));
                             _rw *= linearstep(0.5, 0.9, saturate(dot(OctDecodeSnorm(_ra.xy), worldNormal)));
                             _rw *= 1.0 / (1.0 + float(_rx * _rx + _ry * _ry) * 0.02);   // 径向衰减
                             _rsSum += texelFetch(colortex3, _rt, 0).rgb * _rw;
@@ -347,7 +361,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     vec3 _fa = texelFetch(colortex14, _ft, 0).rgb;      // 该邻居的法线+视深
                     vec3 _fc = texelFetch(colortex21, _ft, 0).rgb;      // 该邻居的短历史（已累积）
                     // 深度权重：相对视深差 10% 以外不参与（防跨表面）
-                    float _w = saturate(1.0 - abs(_fa.z - viewPos.z) / max(abs(viewPos.z) * 0.1, 1e-3));
+                    float _w = saturate(1.0 - abs(GICanvasNeighbourViewDepth(_ft) - viewPos.z) / max(abs(viewPos.z) * 0.1, 1e-3));
                     // 法线权重：同表面才参与
                     _w *= linearstep(0.5, 0.9, saturate(dot(OctDecodeSnorm(_fa.xy), worldNormal)));
                     _fixSum += _fc * _w;
