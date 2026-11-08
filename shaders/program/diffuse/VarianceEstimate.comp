@@ -130,5 +130,14 @@ void main() {
 
     float variance = 16.0 * max0(moments.y - moments.x * moments.x);
 
+    // [方差量化] 方差每帧由 3×3 矩估计重算；运动时邻域成员逐帧变化 ⇒ 方差抖动
+    // ⇒ EAWF 的 sigmaL = -0.5/sqrt(variance) 与 sigmaN = 32*exp2(-0.5*variance/luma²)
+    // 逐帧变 ⇒ **滤波强度在跳** ⇒ 即使历史很深，画面也会闪（实测「动起来仍闪」）。
+    // 量化到 2 的幂（1 个倍频程）：小幅抖动不再改变滤波强度；
+    // 跨倍频程仍是连续的（下一个档位覆盖一半/两倍），不会出现能看见的空间色块。
+    // 用 floor 而不是四舍五入：保证"量化后的方差不会大于真实方差"，
+    // 即绝不会比未量化时**更不**降噪（宁稳不噪）。
+    variance = exp2(floor(log2(max(variance, 1e-8))));
+
     imageStore(colorimg3, texelPos, vec4(integratedDiffuse.rgb, variance));
 }
