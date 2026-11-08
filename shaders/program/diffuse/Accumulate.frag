@@ -224,7 +224,13 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             // 我们已按官方把它实现为 program/diffuse/GIPrepass.comp（deferred1_b），
             // 输出在 colortex22：rgb = 重用后的 YCoCg 输入，a = 归一化命中距离。
             // 这里只负责取它——不再在采样处顺手平均（那是之前的近似做法）。
+            // 注意：colortex22 只在 NRD 模式由 deferred1_b 写入；非 NRD 模式下它是空的，
+            // 必须回退到追踪端自己的输出（colortex3），否则非 NRD 路径会读到未初始化的缓冲。
+#ifdef VOXEL_GI_NRD_ACTIVE
             integratedDiffuse.rgb = texelFetch(colortex22, texelPos, 0).rgb;
+#else
+            integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
+#endif
 
             // [官方 convergenceSettings] f = 1 / (1 + k*N)，其中
             //     k = s * lerp( b, 1, saturate( N / (p * maxAccumulatedFrameNum) ) )

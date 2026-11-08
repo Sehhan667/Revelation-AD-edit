@@ -24,7 +24,7 @@ uniform sampler2D colortex14;
 uniform sampler2D colortex15;
 uniform sampler2D colortex21;
 uniform sampler2D colortex22;
-uniform sampler2D colortex23;   // REBLUR stabilized radiance（rgb=稳定化结果，a=帧数）   // REBLUR prepass 输出（radiance + 归一化命中距离）   // REBLUR 短历史（fastHistory）
+uniform sampler2D colortex23;   // REBLUR stabilized radiance（rgb=稳定化结果，a=帧数）（radiance + 归一化命中距离）   // REBLUR 短历史（fastHistory）
 
 uniform sampler2D depthtex0;
 uniform sampler2D depthtex1;

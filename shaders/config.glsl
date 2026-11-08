@@ -94,7 +94,7 @@
 	const bool	colortex20Clear				= false;
 	const bool 	colortex21Clear			= false;
 	const bool 	colortex22Clear			= true;
-	const bool 	colortex23Clear			= false;   // 时域缓冲，必须保留   // 每帧重写，自动清屏即可
+	const bool 	colortex23Clear			= false;   // 时域缓冲，必须保留
 
 	const vec4	colortex6ClearColor			= vec4(0.0, 0.0, 0.0, 1.0);
 

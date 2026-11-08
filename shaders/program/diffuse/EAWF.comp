@@ -214,7 +214,11 @@ void main() {
 	// （原文：undesired sporadic outliers suppression to keep output stable；smaller = 更强抑制、更大偏差）。
 	// 参考取稳定化辐射（self-guided 引导），把每个 tap 钳到 `参考 × 2`：孤亮点无法主导加权。
 	const float FIREFLY_SCALE = 2.0;
+#ifdef VOXEL_GI_NRD_ACTIVE
 	vec3 fireflyRef = texelFetch(colortex23, texelPos, 0).rgb;
+#else
+	vec3 fireflyRef = filteredColVar.rgb;   // 非 NRD：没有稳定化缓冲，用自身当参考
+#endif
 	// 稳定化缓冲首帧/未就绪时为 0：此时不能用它当参考（否则把整屏钳到 ~0），
 	// 退回用本帧滤波对象自身作为参考（等价于"这一帧不做额外抑制"）。
 	if (max(max(fireflyRef.r, fireflyRef.g), fireflyRef.b) <= 1e-6) fireflyRef = filteredColVar.rgb;
@@ -224,7 +228,11 @@ void main() {
 	// (stabilized radiance，我们放在 colortex23)，而不是当前噪声输入。这样边缘保持权重
 	// 不会随每帧噪声跳动 —— 这正是官方消除滤波输出残余起伏的办法。
 	// 数据仍取 colorimg3（本帧滤波对象），只有**权重用的亮度**换成稳定化值。
+#ifdef VOXEL_GI_NRD_ACTIVE
 	float16_t centerLuma = float16_t(texelFetch(colortex23, texelPos, 0).r);
+#else
+	float16_t centerLuma = filteredColVar.r;   // 非 NRD：退回 SVGF 式（引导=输入）
+#endif
 	if (centerLuma <= 1e-6) centerLuma = filteredColVar.r;   // 首帧/未就绪兜底
 	filteredColVar.rgb = min(filteredColVar.rgb, f16vec3(fireflyCeil));   // ⑦ 中心同样钳制（须在声明之后）
 
@@ -331,7 +339,11 @@ void main() {
 			f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
 			sampleColVar.rgb = min(sampleColVar.rgb, f16vec3(fireflyCeil));   // ⑦ firefly 抑制
 			// 引导亮度取稳定化辐射（见 centerLuma 处说明）；数据仍用本帧滤波对象
+#ifdef VOXEL_GI_NRD_ACTIVE
 			float16_t sampleLuma = float16_t(texelFetch(colortex23, sampleTexel, 0).r);
+#else
+			float16_t sampleLuma = sampleColVar.r;
+#endif
 			if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 
 			// [⑤] 几何拒判：tap 到中心切平面的归一化偏离（官方 planeDistanceSensitivity）
@@ -340,7 +352,7 @@ void main() {
 			float planeDist = abs(dot(tapViewPos - centerViewPos, centerN)) / max(abs(centerViewPos.z), 1e-3);
 			float16_t weight = float16_t(saturate(1.0 - planeDist * rcp(PLANE_DIST_SENS)));
 			// [⑤] 法线拒判：夹角上限 = 瓣角 × lobeAngleFraction（官方 lobeAngleFraction）
-			float _nd = dot(OctDecodeSnorm(sampleAux.xy), centerNormal);
+			float _nd = dot(OctDecodeSnorm(sampleAux.xy), centerN);
 			weight *= float16_t(smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, _nd));
 			// 亮度权重（self-guided，保留）
 			float logWeightL = abs(sampleLuma - centerLuma) * sigmaL;
@@ -351,7 +363,9 @@ void main() {
 			bool _edgeTap   = (offset3x3[i].x == 0 || offset3x3[i].y == 0);
 			weight *= float16_t(_centerTap ? 4.0 : (_edgeTap ? 2.0 : 1.0));
 			// ④ 命中距离权重（官方 minHitDistanceWeight）
+#ifdef VOXEL_GI_NRD_ACTIVE
 			weight *= float16_t(mix(MIN_HITDIST_WEIGHT, 1.0, saturate(texelFetch(colortex22, sampleTexel, 0).a)));
+#endif
 
 			filteredColVar += sampleColVar * f16vec4(f16vec3(weight), weight * weight);
 			sumWeight += weight;
@@ -372,7 +386,11 @@ void main() {
 	            f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 	            f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
 	            sampleColVar.rgb = min(sampleColVar.rgb, f16vec3(fireflyCeil));   // ⑦ firefly 抑制
+#ifdef VOXEL_GI_NRD_ACTIVE
 	            float16_t sampleLuma = float16_t(texelFetch(colortex23, sampleTexel, 0).r);
+#else
+	            float16_t sampleLuma = sampleColVar.r;
+#endif
 	            if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 	            // [⑤] 官方几何/法线拒判（同 9-tap）
 	            vec2 tapCanvasUv = (vec2(sampleTexel) + 0.5) / vec2(canvasEnd);
@@ -384,7 +402,9 @@ void main() {
 	            float logWeightL = abs(sampleLuma - centerLuma) * sigmaL;
 	            weight *= float16_t(saturate(exp2(logWeightL)));
 	            // ④ 命中距离权重（官方 minHitDistanceWeight）
+#ifdef VOXEL_GI_NRD_ACTIVE
 	            weight *= float16_t(mix(MIN_HITDIST_WEIGHT, 1.0, saturate(texelFetch(colortex22, sampleTexel, 0).a)));
+#endif
 	            filteredColVar += sampleColVar * f16vec4(f16vec3(weight), weight * weight);
 	            sumWeight += weight;
 	        }

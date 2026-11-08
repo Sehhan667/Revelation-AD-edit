@@ -58,7 +58,10 @@ void main() {
     vec4 prev = imageLoad(colorimg23, texelPos);
     float bad = texelFetch(colortex14, texelPos, 0).a;
 
-    float age = (bad > 0.5) ? 0.0 : prev.a;
+    // prev.a 可能是未初始化/NaN（缓冲首次使用时）：做一次 sanitize，避免把垃圾"稳定"下来。
+    float prevAge = prev.a;
+    if (!(prevAge >= 0.0) || prevAge > STABILIZE_MAX_FRAMES) prevAge = 0.0;   // NaN 也会命中第一个条件
+    float age = (bad > 0.5) ? 0.0 : prevAge;
     age = min(age + 1.0, STABILIZE_MAX_FRAMES);
     // 线性累积：alpha = 1/age（官方"linearly accumulated frames"）
     vec3 stab = (age <= 1.0) ? filtered : mix(prev.rgb, filtered, 1.0 / age);
