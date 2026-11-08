@@ -482,7 +482,17 @@ void main() {
         // 换算 `GetMaxAccumulatedFrameNum(0.5, smoothedFPS)`。
         // 我们原来固定 64 帧 ≈ 1.07 s @60fps ⇒ 拖影上限直接翻倍。
         // 这里改成按秒算、并用 SSILVB_MAX_ACCUM_FRAMES 当硬上限（用户仍可调）。
-        float accumCap = clamp(GI_ACCUM_TIME / max(frameTime, 1e-4), 8.0, SSILVB_MAX_ACCUM_FRAMES);
+        // [逐帧抖动] `frameTime` 是**瞬时**值（0.014/0.015 每帧不同）⇒ 上限每帧变几帧
+        // ⇒ 被 clamp 到上限的 `a` 每帧跟着变 ⇒ 诊断视图 1 里**整屏红线极小幅度抽抽**，
+        // 且 alpha 随之变 ⇒ 静止无法稳定（实测两轮）。
+        // 官方对此有明确警告：
+        //   "The FPS passed to this function must be **low pass filtered** to reduce reactions to
+        //    transient drops (stutters). Without filtering, a momentary 60 => 30 => 60 FPS change
+        //    with a 0.5-second accumulation time changes the limit from 30 => 15 => 30 frames."
+        // 官方做法需要跨帧状态（0.2 s 一阶低通）；这里用**离散化**达到同样效果：
+        // 上限量化到 8 帧一档 ⇒ 瞬时抖动不改变档位，而档位仍随 fps 自适应。
+        float _targetCap = clamp(GI_ACCUM_TIME / max(frameTime, 1e-4), 8.0, SSILVB_MAX_ACCUM_FRAMES);
+        float accumCap = max(floor(_targetCap * 0.125) * 8.0, 8.0);
         #ifdef VOXEL_GI_DARK_ACCUM
             // [暗处判定必须用稳定量] 原来用 `texelFetch(colortex2, texelPos).r`（**正在累积的 GI 亮度**）
             // 做 smoothstep，这是一个**反馈回路**：亮度收敛 → `_dark` 变 → 上限跟着变 →
