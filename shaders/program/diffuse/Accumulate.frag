@@ -235,15 +235,20 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             //   · 长历史被逐帧夹在「当前信号附近」⇒ 滤波反馈不会把细节逐帧压掉。
             // σ 取自短历史 3×3；另加绝对下限（暗处 σ≈0 时防过紧）。
             #ifdef VOXEL_GI_NRD_ACTIVE
-                {
-                    // 官方 fastHistoryClampingSigmaScale = 2.0：σ 取自**未经滤波**的短历史邻域。
-                    // 用 σ 而不是「值的百分比」：σ 是短历史自身的局部波动，与亮度量级无关；
-                    // 百分比容差在暗处等于放得很宽、亮处放得很紧，两种都不对。
+                if (GI_FAST_CLAMP_SIGMA > 0.0) {
+                    // 官方 fastHistoryClampingSigmaScale = 2.0：σ 取自未经滤波的短历史邻域。
+                    // 关键修正（2026-11-08 实测「静止也扭动、动起来更糟」）：
+                    //   · 参考必须比被夹的东西**更平滑**，否则每帧都会夹住。短历史只有 6 帧，
+                    //     低光下单像素仍有约 40% 波动；用它 3×3 的 σ 当窗口 ⇒ 30 帧的长历史永远在
+                    //     窗口外 ⇒ 每帧被拉回，且 anti-lag 每帧把 alpha 抬到 0.3 ⇒ 累积建立不起来。
+                    //   · 官方能用是因为它的短历史在 prepass 里已做过 30px 空间重用（参考被平滑过）。
+                    //   · 这里改用 5×5 估 μ/σ（等效平滑参考），并加相对下限 15%·μ + 0.01，
+                    //     让正常波动落在窗口内；只有真正落后（拖影）才被夹。
                     vec3 _fSum = prevFast;
                     vec3 _fSum2 = prevFast * prevFast;
                     float _fN = 1.0;
-                    for (int _fy = -1; _fy <= 1; ++_fy) {
-                        for (int _fx = -1; _fx <= 1; ++_fx) {
+                    for (int _fy = -2; _fy <= 2; ++_fy) {
+                        for (int _fx = -2; _fx <= 2; ++_fx) {
                             if (_fx == 0 && _fy == 0) continue;
                             ivec2 _ft = texelPos + ivec2(_fx, _fy);
                             if (clamp(_ft, ivec2(0), canvasEnd - 1) != _ft) continue;
@@ -255,13 +260,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     }
                     vec3 _mu = _fSum / _fN;
                     vec3 _sigma = sqrt(max(_fSum2 / _fN - _mu * _mu, vec3(0.0)));
-                    vec3 _tol = GI_FAST_CLAMP_SIGMA * _sigma + vec3(0.004);
+                    vec3 _tol = GI_FAST_CLAMP_SIGMA * _sigma + 0.15 * _mu + vec3(0.01);
                     vec3 _histOld = prevDiffuse.rgb;
                     prevDiffuse.rgb = clamp(_histOld, _mu - _tol, _mu + _tol);
-                    // anti-lag：被裁掉的比例越大 ⇒ 历史越落后 ⇒ alpha 越大（RELAX accelerationAmount≈0.3）
+                    // anti-lag：只在确实夹掉很多（超过 60% 窗口）时加速，上限 0.1。
+                    // 原来「夹多少就加速多少、上限 0.3」会在正常波动下每帧抬 alpha ⇒ 累积失效。
                     float _span = max(max(_tol.r, _tol.g), _tol.b) + 1e-4;
                     float _clampAmt = saturate(length(_histOld - prevDiffuse.rgb) / _span);
-                    alpha = max(alpha, _clampAmt * 0.3);
+                    alpha = max(alpha, step(0.6, _clampAmt) * _clampAmt * 0.1);
                 }
             #endif
 
