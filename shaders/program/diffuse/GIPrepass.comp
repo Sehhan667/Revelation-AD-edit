@@ -70,7 +70,13 @@ void main() {
     float viewZ = ScreenToViewDepth(depth);
     vec3 normal = FetchSurfaceNormal(rt);
 
-    ivec2 canvasEnd = ivec2(textureSize(colorimg22, 0));
+    // 注意：image2D 只能用 imageSize()，不能用 textureSize()（后者是 sampler 的重载）。
+    // 这里直接用视口尺寸，语义等价且无重载风险。
+#ifdef VXGI_FULLRES
+    ivec2 canvasEnd = ivec2(viewSize);
+#else
+    ivec2 canvasEnd = ivec2(halfViewSize);
+#endif
     vec3 sum = vec3(0.0);
     float wSum = 0.0;
 
@@ -96,10 +102,12 @@ void main() {
 
     vec3 reused = wSum > 1e-4 ? sum / wSum : texelFetch(colortex3, texelPos, 0).rgb;
 
-    // 归一化命中距离：命中距离写在 colortex3.a（追踪端输出）；本包 tracer 目前不输出，
-    // 该分支保持 0（= 完全未被遮挡）以便后续接入，不影响 radiance。
-    float hitDist = saturate(texelFetch(colortex3, texelPos, 0).a);
-    float normHit = saturate(hitDist * rcp(REBLUR_HITDIST_A + max(viewZ, 0.0) * REBLUR_HITDIST_B));
+    // 原始命中距离（格，0..射程上限）：写在 colortex3.a（追踪端 `gHitDistance`）。
+    // **不能** saturate，否则全部压成 1（永远视为很远）。归一化只在这里做一次（官方 front-end）。
+    float hitDist = max(texelFetch(colortex3, texelPos, 0).a, 0.0);
+    // ScreenToViewDepth 返回的是**负**视深（眼前为负）⇒ 必须取绝对值。
+    // 原写法 max(viewZ, 0.0) 恒为 0，等价于分母恒为 A，大视距时甚至可能为负。
+    float normHit = saturate(hitDist * rcp(REBLUR_HITDIST_A + abs(viewZ) * REBLUR_HITDIST_B));
 
     imageStore(colorimg22, texelPos, vec4(reused, normHit));
 }

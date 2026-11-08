@@ -210,12 +210,15 @@ void main() {
 	// 的样本越容易受阴影/遮挡影响，空间 pass 里应降权。归一化命中距离由 ① prepass 写进
 	// `colortex22.a`（官方 ReblurHitDistanceParameters 的 saturate(hitDistance / (A + viewZ*B))）。
 	const float MIN_HITDIST_WEIGHT = 0.1;
-	float centerNormHit = saturate(texelFetch(colortex22, texelPos, 0).a);
 	// [⑦ firefly 抑制] 官方 `enableAntiFirefly = true`、`fireflySuppressorMinRelativeScale = 2.0`
 	// （原文：undesired sporadic outliers suppression to keep output stable；smaller = 更强抑制、更大偏差）。
 	// 参考取稳定化辐射（self-guided 引导），把每个 tap 钳到 `参考 × 2`：孤亮点无法主导加权。
 	const float FIREFLY_SCALE = 2.0;
-	vec3 fireflyCeil = max(texelFetch(colortex23, texelPos, 0).rgb, vec3(1e-6)) * FIREFLY_SCALE;
+	vec3 fireflyRef = texelFetch(colortex23, texelPos, 0).rgb;
+	// 稳定化缓冲首帧/未就绪时为 0：此时不能用它当参考（否则把整屏钳到 ~0），
+	// 退回用本帧滤波对象自身作为参考（等价于"这一帧不做额外抑制"）。
+	if (max(max(fireflyRef.r, fireflyRef.g), fireflyRef.b) <= 1e-6) fireflyRef = filteredColVar.rgb;
+	vec3 fireflyCeil = max(fireflyRef, vec3(1e-6)) * FIREFLY_SCALE;
 	f16vec4 filteredColVar = f16vec4(imageLoad(colorimg3, texelPos));
 	// [③ self-guided] 官方 REBLUR 的空间滤波是 self-guided：引导信号用**稳定化后的历史**
 	// (stabilized radiance，我们放在 colortex23)，而不是当前噪声输入。这样边缘保持权重
@@ -246,8 +249,17 @@ void main() {
 	    sigmaRelax *= 1.0 / (1.0 + _under * 0.4);
 	}
 
-	vec3 viewDir  = ScreenToViewDirRaw(texelToUv(texelPos));
-	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(texelPos);
+	// [坐标空间修正] 本 pass 的 texelPos 是**画布**坐标（可能半分辨率）：
+	//   · 视线方向要用画布 UV（`texelToUv` 是全分辨率像素尺寸，直接用会把 UV 压到左上 1/4）；
+	//   · 几何法线要从**屏幕**纹素取（按本帧棋盘相位映射），画布坐标直接传给 Fetch* 会读错像素。
+	vec2 centerCanvasUvForDir = (vec2(texelPos) + 0.5) / vec2(canvasEnd);
+	vec3 viewDir = ScreenToViewDirRaw(centerCanvasUvForDir);
+#ifdef VXGI_FULLRES
+	ivec2 centerScreenTexel = texelPos;
+#else
+	ivec2 centerScreenTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+#endif
+	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(centerScreenTexel);
 
 	float NdotV = abs(dot(geoNormal, viewDir));
 	// 各向异性滤波步长：随 pass 指数递增（1,2,4,8…）
@@ -285,7 +297,10 @@ void main() {
 	const float PLANE_DIST_SENS = 0.02;
 	const float LOBE_FRACTION = 0.15;
 	const float LOBE_COS = 0.9723699;   // cos(0.15 * 90°)
-	vec3 centerViewPos = vec3(diagonal2(gbufferProjectionInverse) * (texelToUv(texelPos) * 2.0 - 1.0) * -normalDepthData.z, normalDepthData.z);
+	// 注意：本 pass 工作在**画布空间**（可能半分辨率），`texelToUv` 用的是全分辨率像素尺寸，
+	// 直接用会把 UV 压到左上角四分之一 ⇒ NDC 错误 ⇒ 切平面判据完全失效。
+	vec2 centerCanvasUv = (vec2(texelPos) + 0.5) / vec2(canvasEnd);
+	vec3 centerViewPos = vec3(diagonal2(gbufferProjectionInverse) * (centerCanvasUv * 2.0 - 1.0) * -normalDepthData.z, normalDepthData.z);
 	vec3 centerN = vec3(centerNormal);
 
 	float16_t sumWeight = float16_t(1.0);
@@ -320,7 +335,8 @@ void main() {
 			if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 
 			// [⑤] 几何拒判：tap 到中心切平面的归一化偏离（官方 planeDistanceSensitivity）
-			vec3 tapViewPos = vec3(diagonal2(gbufferProjectionInverse) * (texelToUv(sampleTexel) * 2.0 - 1.0) * -sampleAux.z, sampleAux.z);
+			vec2 tapCanvasUv = (vec2(sampleTexel) + 0.5) / vec2(canvasEnd);
+			vec3 tapViewPos = vec3(diagonal2(gbufferProjectionInverse) * (tapCanvasUv * 2.0 - 1.0) * -sampleAux.z, sampleAux.z);
 			float planeDist = abs(dot(tapViewPos - centerViewPos, centerN)) / max(abs(centerViewPos.z), 1e-3);
 			float16_t weight = float16_t(saturate(1.0 - planeDist * rcp(PLANE_DIST_SENS)));
 			// [⑤] 法线拒判：夹角上限 = 瓣角 × lobeAngleFraction（官方 lobeAngleFraction）
@@ -359,7 +375,8 @@ void main() {
 	            float16_t sampleLuma = float16_t(texelFetch(colortex23, sampleTexel, 0).r);
 	            if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 	            // [⑤] 官方几何/法线拒判（同 9-tap）
-	            vec3 tapViewPos = vec3(diagonal2(gbufferProjectionInverse) * (texelToUv(sampleTexel) * 2.0 - 1.0) * -sampleAux.z, sampleAux.z);
+	            vec2 tapCanvasUv = (vec2(sampleTexel) + 0.5) / vec2(canvasEnd);
+	            vec3 tapViewPos = vec3(diagonal2(gbufferProjectionInverse) * (tapCanvasUv * 2.0 - 1.0) * -sampleAux.z, sampleAux.z);
 	            float planeDist = abs(dot(tapViewPos - centerViewPos, centerN)) / max(abs(centerViewPos.z), 1e-3);
 	            float16_t weight = float16_t(saturate(1.0 - planeDist * rcp(PLANE_DIST_SENS)));
 	            float _nd = dot(OctDecodeSnorm(sampleAux.xy), centerNormal);
