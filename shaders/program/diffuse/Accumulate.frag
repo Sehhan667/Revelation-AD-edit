@@ -213,18 +213,13 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, accumCap);
             #endif
 
-            // [细节收敛斜坡] 新暴露/新累积的像素先给「平滑无细节」的值，再逐帧补细节：
-            //   a ≈ 0  → mip3（半分辨率下 8x8 纹素 ≈ 屏幕 16x16 平均）
-            //   a → N  → mip **连续**降到 0（逐像素原始样本）
-            // 曾经把 a 量化到 8 帧一档（为了压"a 抖动导致 mip 抖"），但实测在画面上留下了
-            // **多层分界线**：每跨一档 mip 就跳一级，模糊度阶跃 ⇒ 累积过程中逐层扫出可见边界
-            //（用户实测："随着逐渐累积，不该出现分界线的地方出现多层分界线，明显程度不等"）。
-            // 而 a 抖动的真凶是"几何判据用带 TAA 抖动的视深"，已在 TemporalFilter 里修掉，
-            // 所以这里恢复**连续** mip，量化只会带来条带。
-            if (integratedDiffuse.a < GI_DISOC_DETAIL_FRAMES) {
-                float mipLevel = 3.0 * saturate(1.0 - integratedDiffuse.a * rcp(GI_DISOC_DETAIL_FRAMES));
-                integratedDiffuse.rgb = textureLod(colortex3, currCoord, mipLevel).rgb;
-            } else {
+            // [输入采样：与累积帧数**解耦**] 此前这里是「a 越小、输入 mip 越糊」的斜坡，
+            // 目的是让新像素先平滑。但 a 在静止时也会微抖（4 相位棋盘每帧换邻居 ⇒
+            // `maxGeometryWeight` 抖一点点），任何"采样强度依赖 a"的写法都会把这个微抖
+            // 翻译成画面上的**细微呼吸**；量化又会变成**分界线**。两条路都试过，都有副作用。
+            // 结论：输入采样**不看 a**，恒定走 32 px 预滤波（官方 prepass 本来也是无条件执行的），
+            // 新像素的平滑交给 alpha 封顶（a<8 时 ≤ 1/8）与 HistoryFix，不再让采样强度参与。
+            {
                 integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
                 // [REBLUR prepass 等价物 / spatial reuse] 官方 diffusePrepassBlurRadius = 30
                 // （注释：「0 = disabled, must be used in case of badly defined signals and
@@ -233,8 +228,8 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 // 我们无法新开 pass（deferred1/2/3 槽位全占用），因此在取输入处做等价重用：
                 //   9×9、步长 2 ⇒ 覆盖 ±16 画布纹素 ≈ ±32 屏幕像素（画布是半分辨率），对齐官方 30 px；
                 //   **无条件执行**（官方如此；历史占主导后 alpha 很小，等效影响自然衰减）；
-                //   深度/法线加权挡跨表面 —— 用本帧的 colortex14 是上一帧的 aux，故只用视深+法线，
-                //   且相对视深差 10%（比官方的切平面距离宽，因为我们是上一帧 aux）。
+                //   深度/法线加权挡跨表面 —— 视深用同帧口径（`GICanvasNeighbourViewDepth`），
+                //   法线用 `colortex14`（世界空间方向，跨帧安全）。
                 #ifdef VOXEL_GI_NRD_ACTIVE
                 {
                     vec3 _rsSum = integratedDiffuse.rgb;
