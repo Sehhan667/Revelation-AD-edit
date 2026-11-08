@@ -121,6 +121,8 @@ void main() {
 
     // 加权方差：E[x²] - E[x]²（与 VarianceEstimate 的尺度保持一致：×16）
     float meanL = wSum > 1e-4 ? lSum / wSum : 0.0;
-    float varL  = wSum > 1e-4 ? max(lSum2 / wSum - meanL * meanL, 0.0) * 16.0 : 0.0;
+    // 存**原始**方差（不乘 16）：下游 VarianceEstimate 统一乘 16 保持量纲，
+    // 这样这里的读数可以直接当"σ²"用，调试视图不必再凑刻度。
+    float varL  = wSum > 1e-4 ? max(lSum2 / wSum - meanL * meanL, 0.0) : 0.0;
     imageStore(colorimg24, texelPos, vec4(varL, 0.0, 0.0, 1.0));
 }

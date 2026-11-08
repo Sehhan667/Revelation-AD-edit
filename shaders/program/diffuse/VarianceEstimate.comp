@@ -137,16 +137,17 @@ void main() {
         integratedDiffuse.rgb *= rcp(1.0 + integratedDiffuse.x);
     #endif
 
-    float _momVar = 16.0 * max0(moments.y - moments.x * moments.x);
+    float _momVar = max0(moments.y - moments.x * moments.x);   // 原始方差，下面统一乘 16
 #ifdef VOXEL_GI_NRD_ACTIVE
     // 官方：方差由 prepass 用空间重用样本的离散度估出（colortex24.r）。
     // 但若 prepass 因任何原因没写到值（或写 0），**绝不能**让方差为 0：
     //   sigmaL = -0.5/sqrt(variance) ⇒ 0 方差会让 |sigmaL| 爆炸 ⇒ 邻居全被拒 ⇒ 滤波空转。
     // 因此取两者的较大值作为下限保护。
     float _preVar = max(texelFetch(colortex24, texelPos, 0).r, 0.0);
-    float variance = max(_preVar, _momVar);
+    // 与 EAWF 侧原有量纲保持一致（SVGF 约定 ×16）；两个来源都乘同一个系数。
+    float variance = 16.0 * max(_preVar, _momVar);
 #else
-    float variance = _momVar;
+    float variance = 16.0 * _momVar;
 #endif
 
     imageStore(colorimg3, texelPos, vec4(integratedDiffuse.rgb, variance));

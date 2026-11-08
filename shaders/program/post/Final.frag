@@ -520,7 +520,8 @@ void main() {
             float _dbgVar = max(texelFetch(colortex24, _dbgT, 0).r, 1e-8);
             // 刻度改为直观的 σ（亮度百分比）：白 = σ ≥ 1% 亮度，黑 = σ 很小。
             // 旧刻度 (log2+20)/15 会把暗场景常见的 variance≈1e-6 映射成 0 ⇒ 误判成"方差为 0"。
-            finalOut = vec3(saturate(sqrt(_dbgVar) * 100.0));
+            // 白 = σ ≥ 3.3% 亮度；暗场景 σ≈0.1% ⇒ 深灰（可分辨结构，不再全黑/全白）
+            finalOut = vec3(saturate(sqrt(_dbgVar) * 30.0));
         } else if (GI_DEBUG_VIEW == 3) {
             // 3：滤波改动量 —— 红=空间滤波把该像素改了很多，绿=几乎没动
             //    用法：**运动时红绿乱跳** ⇒ 滤波强度不稳（量化/方差问题）；
