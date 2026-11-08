@@ -59,7 +59,10 @@ void main() {
     // 回写权重 0.6：全量回写（1.0）会让空间滤波每帧反复作用于自己的输出（等效核半径随帧数变宽）；
     // 0.6 保留「时域环看到平滑信号」的主要收益，同时给新样本留进入通道。
     // 细节保护由 Accumulate 的「长历史夹到短历史」负责，不靠这个系数。
-    vec3 history = mix(mixed.rgb, filtered, 0.6);
+    // GI_BISECT bit1：把回写权重设为 0（history = 时域混合值），用来判断静止不稳
+    // 是否来自"滤波结果回流历史"这个正反馈环。
+    float _wb = ((GI_BISECT & 2) == 0) ? 0.6 : 0.0;
+    vec3 history = mix(mixed.rgb, filtered, _wb);
 
     // .a 保留累积帧数（Accumulate 下一帧的计数）；只替换 rgb。
     imageStore(colorimg2, texelPos, vec4(history, mixed.a));

@@ -229,8 +229,12 @@ void main() {
 	// (stabilized radiance，我们放在 colortex23)，而不是当前噪声输入。这样边缘保持权重
 	// 不会随每帧噪声跳动 —— 这正是官方消除滤波输出残余起伏的办法。
 	// 数据仍取 colorimg3（本帧滤波对象），只有**权重用的亮度**换成稳定化值。
-#ifdef VOXEL_GI_NRD_ACTIVE
-	float16_t centerLuma = float16_t(texelFetch(colortex23, texelPos, 0).r);
+#if defined VOXEL_GI_NRD_ACTIVE
+	// GI_BISECT bit0：临时退回"噪声输入引导"，用来判断静止不稳是否来自稳定化引导
+	float16_t centerLuma = (GI_BISECT & 1) == 0
+	    ? float16_t(texelFetch(colortex23, texelPos, 0).r)
+	    : filteredColVar.r;
+	if (centerLuma <= 1e-6) centerLuma = filteredColVar.r;
 #else
 	float16_t centerLuma = filteredColVar.r;   // 非 NRD：退回 SVGF 式（引导=输入）
 #endif
@@ -344,8 +348,11 @@ void main() {
 			f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
 			sampleColVar.rgb = min(sampleColVar.rgb, f16vec3(fireflyCeil));   // ⑦ firefly 抑制
 			// 引导亮度取稳定化辐射（见 centerLuma 处说明）；数据仍用本帧滤波对象
-#ifdef VOXEL_GI_NRD_ACTIVE
-			float16_t sampleLuma = float16_t(texelFetch(colortex23, sampleTexel, 0).r);
+#if defined VOXEL_GI_NRD_ACTIVE
+			float16_t sampleLuma = (GI_BISECT & 1) == 0
+			    ? float16_t(texelFetch(colortex23, sampleTexel, 0).r)
+			    : sampleColVar.r;
+			if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 #else
 			float16_t sampleLuma = sampleColVar.r;
 #endif
@@ -394,8 +401,11 @@ void main() {
 	            f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 	            f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
 	            sampleColVar.rgb = min(sampleColVar.rgb, f16vec3(fireflyCeil));   // ⑦ firefly 抑制
-#ifdef VOXEL_GI_NRD_ACTIVE
-	            float16_t sampleLuma = float16_t(texelFetch(colortex23, sampleTexel, 0).r);
+#if defined VOXEL_GI_NRD_ACTIVE
+	            float16_t sampleLuma = (GI_BISECT & 1) == 0
+	                ? float16_t(texelFetch(colortex23, sampleTexel, 0).r)
+	                : sampleColVar.r;
+	            if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 #else
 	            float16_t sampleLuma = sampleColVar.r;
 #endif
