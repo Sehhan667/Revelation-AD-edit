@@ -273,16 +273,23 @@ void main() {
 	// 放大，每帧采样起始点会大跳 → 点状闪烁。故开启时抖动限制在 ≤1 像素。
 	float jitterSize = NRD_RADIUS <= 0.0 ? max(depthFactor, 1.0) : 1.0;
 
-	float invThresholdZ = 8.0 / normalDepthData.z;
 
 	// float variance = CalculateVariance(ivec2(localPos + padRadius));
 	float16_t variance = filteredColVar.a;
 	// [2026-08-09 同步官方 SVGF] 亮度/法线方差权重：随方差与历史因子缩放
 	// [2026-08-19 NRD] 去遮挡：不可靠像素乘 sigmaRelax 降低边缘保持，多吸收周围样本
 	float16_t sigmaL = float16_t(-0.5 * inversesqrt(variance + EPS) * historyFactor) * float16_t(sigmaRelax);
-	float16_t sigmaN = float16_t(32.0 * exp2(-0.5 * variance / sqr(centerLuma)) * historyFactor) * float16_t(sigmaRelax);
 
 	f16vec3 centerNormal = f16vec3(OctDecodeSnorm(normalDepthData.xy));
+
+	// [⑤ 官方几何/法线拒判]
+	// `planeDistanceSensitivity = 0.02`：tap 到"中心像素切平面"的归一化偏离上限；
+	// `lobeAngleFraction = 0.15`：漫反射瓣角（90°）的 15% ≈ 13.5°，即法线夹角上限。
+	const float PLANE_DIST_SENS = 0.02;
+	const float LOBE_FRACTION = 0.15;
+	const float LOBE_COS = 0.9723699;   // cos(0.15 * 90°)
+	vec3 centerViewPos = vec3(diagonal2(gbufferProjectionInverse) * (texelToUv(texelPos) * 2.0 - 1.0) * -normalDepthData.z, normalDepthData.z);
+	vec3 centerN = vec3(centerNormal);
 
 	float16_t sumWeight = float16_t(1.0);
 	// filteredColVar *= vec4(vec3(sumWeight), sumWeight * sumWeight);
@@ -314,12 +321,16 @@ void main() {
 			float16_t sampleLuma = float16_t(texelFetch(colortex23, sampleTexel, 0).r);
 			if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 
-			// 深度权重：距离越远权重越低
-			float16_t weight = float16_t(saturate(fma(abs(sampleAux.z - normalDepthData.z), invThresholdZ, 1.0)));
-			// 法线权重 + 亮度权重
-			float logWeightN = log2(saturate(dot(OctDecodeSnorm(sampleAux.xy), centerNormal))) * sigmaN;
+			// [⑤] 几何拒判：tap 到中心切平面的归一化偏离（官方 planeDistanceSensitivity）
+			vec3 tapViewPos = vec3(diagonal2(gbufferProjectionInverse) * (texelToUv(sampleTexel) * 2.0 - 1.0) * -sampleAux.z, sampleAux.z);
+			float planeDist = abs(dot(tapViewPos - centerViewPos, centerN)) / max(abs(centerViewPos.z), 1e-3);
+			float16_t weight = float16_t(saturate(1.0 - planeDist * rcp(PLANE_DIST_SENS)));
+			// [⑤] 法线拒判：夹角上限 = 瓣角 × lobeAngleFraction（官方 lobeAngleFraction）
+			float _nd = dot(OctDecodeSnorm(sampleAux.xy), centerNormal);
+			weight *= float16_t(smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, _nd));
+			// 亮度权重（self-guided，保留）
 			float logWeightL = abs(sampleLuma - centerLuma) * sigmaL;
-			weight *= float16_t(saturate(exp2(logWeightN + logWeightL)));
+			weight *= float16_t(saturate(exp2(logWeightL)));
 			// 径向权重（中心 0.25 / 边 0.125 / 角 0.0625，即文件里一直没被使用的 kernel[8] 那套核）：
 			// 不加这一层，9-tap 是等权方形核，格子的方形几何会直接印到画面上。
 			bool _centerTap = (offset3x3[i].x == 0 && offset3x3[i].y == 0);
@@ -348,10 +359,14 @@ void main() {
 	            f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
 	            float16_t sampleLuma = float16_t(texelFetch(colortex23, sampleTexel, 0).r);
 	            if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
-	            float16_t weight = float16_t(saturate(fma(abs(sampleAux.z - normalDepthData.z), invThresholdZ, 1.0)));
-	            float logWeightN = log2(saturate(dot(OctDecodeSnorm(sampleAux.xy), centerNormal))) * sigmaN;
+	            // [⑤] 官方几何/法线拒判（同 9-tap）
+	            vec3 tapViewPos = vec3(diagonal2(gbufferProjectionInverse) * (texelToUv(sampleTexel) * 2.0 - 1.0) * -sampleAux.z, sampleAux.z);
+	            float planeDist = abs(dot(tapViewPos - centerViewPos, centerN)) / max(abs(centerViewPos.z), 1e-3);
+	            float16_t weight = float16_t(saturate(1.0 - planeDist * rcp(PLANE_DIST_SENS)));
+	            float _nd = dot(OctDecodeSnorm(sampleAux.xy), centerNormal);
+	            weight *= float16_t(smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, _nd));
 	            float logWeightL = abs(sampleLuma - centerLuma) * sigmaL;
-	            weight *= float16_t(saturate(exp2(logWeightN + logWeightL)));
+	            weight *= float16_t(saturate(exp2(logWeightL)));
 	            // ④ 命中距离权重（官方 minHitDistanceWeight）
 	            weight *= float16_t(mix(MIN_HITDIST_WEIGHT, 1.0, saturate(texelFetch(colortex22, sampleTexel, 0).a)));
 	            filteredColVar += sampleColVar * f16vec4(f16vec3(weight), weight * weight);
