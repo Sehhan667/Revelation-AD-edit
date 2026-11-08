@@ -115,7 +115,12 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     // 造成"静止时累积帧数平滑缓慢起伏"（见 TemporalFilter 顶部注释）。
     encodedNormalDepth = vec4(OctEncodeSnorm(worldNormal), ScreenToViewDepth(screenPos.z), 0.0);
 
-    if (saturate(prevCoord) == prevCoord && !historyReset) {
+    // [诊断] GI_DEBUG_NO_DISOC = 1：取消一切历史拒绝（越界/重置/深度/法线全不看），
+    // 强制历史永远有效。用途：一键判断闪是来自「历史被拒 + 重建」还是「采样/滤波」。
+    // 关闭时行为逐位不变（条件里只多一个编译期常量 0）。
+    bool _dbgForceHistory = GI_DEBUG_NO_DISOC > 0;
+    bool _histOk = _dbgForceHistory || (saturate(prevCoord) == prevCoord && !historyReset);
+    if (_histOk) {
         vec4 prevDiffuse = vec4(0.0);
         vec3 prevFast = vec3(0.0);   // 短历史（同一组双线性权重）
         float sumWeight = 0.0;
@@ -182,6 +187,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 
                 float tapGeo = saturate(1.0 - distance(prevViewPos.z, sampleAux.z) / _tapTol);
                 tapGeo *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
+                if (_dbgForceHistory) tapGeo = 1.0;   // 诊断：取消几何拒绝
                 maxGeometryWeight = max(maxGeometryWeight, tapGeo);
 
                 float weight = tapGeo * bilinearWeight[i];
