@@ -215,16 +215,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 
             // [细节收敛斜坡] 新暴露/新累积的像素先给「平滑无细节」的值，再逐帧补细节：
             //   a ≈ 0  → mip3（半分辨率下 8x8 纹素 ≈ 屏幕 16x16 平均）
-            //   a → N  → mip 分档降到 0（逐像素原始样本）
-            // 这是"先稳再长细节"的机制。
-            // 关键：**mip 输入必须量化**。a 在静止时也不是常数——4 相位棋盘每帧把历史取样点
-            // 挪 ±1 纹素，4 个 tap 落在不同邻居上 ⇒ maxGeometryWeight 轻微抖动 ⇒ a 抖 ±1。
-            // 若 mip 等级是 a 的连续函数，取样的模糊度就逐帧变 ⇒ 静止画面也在动
-            //（实测：把本项调到 16 后静止又"不稳定"，就是这条路径覆盖了更多像素）。
-            // 量化到 8 帧一档：正常抖动不跨档 ⇒ 静止稳定；细节仍按档位长出来。
+            //   a → N  → mip **连续**降到 0（逐像素原始样本）
+            // 曾经把 a 量化到 8 帧一档（为了压"a 抖动导致 mip 抖"），但实测在画面上留下了
+            // **多层分界线**：每跨一档 mip 就跳一级，模糊度阶跃 ⇒ 累积过程中逐层扫出可见边界
+            //（用户实测："随着逐渐累积，不该出现分界线的地方出现多层分界线，明显程度不等"）。
+            // 而 a 抖动的真凶是"几何判据用带 TAA 抖动的视深"，已在 TemporalFilter 里修掉，
+            // 所以这里恢复**连续** mip，量化只会带来条带。
             if (integratedDiffuse.a < GI_DISOC_DETAIL_FRAMES) {
-                float _aQ = floor(integratedDiffuse.a * 0.125) * 8.0;   // 8 帧一档
-                float mipLevel = 3.0 * saturate(1.0 - _aQ * rcp(GI_DISOC_DETAIL_FRAMES));
+                float mipLevel = 3.0 * saturate(1.0 - integratedDiffuse.a * rcp(GI_DISOC_DETAIL_FRAMES));
                 integratedDiffuse.rgb = textureLod(colortex3, currCoord, mipLevel).rgb;
             } else {
                 integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
