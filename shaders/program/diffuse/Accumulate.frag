@@ -328,6 +328,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         {
             vec3 _fixSum = vec3(0.0);
             float _fixW = 0.0;
+            float _fixA = 0.0;
             for (int _fy = -2; _fy <= 2; ++_fy) {
                 for (int _fx = -2; _fx <= 2; ++_fx) {
                     ivec2 _ft = texelPos + ivec2(_fx, _fy);
@@ -339,12 +340,21 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     // 法线权重：同表面才参与
                     _w *= linearstep(0.5, 0.9, saturate(dot(OctDecodeSnorm(_fa.xy), worldNormal)));
                     _fixSum += _fc * _w;
+                    // 官方 HistoryFix 同时重建**历史长度**：邻居累积到多少帧，新像素就继承多少。
+                    // 不重建长度的后果（实测「新像素闪得厉害」）：新像素 a 恒为 1 ⇒ alpha ≈ 0.83
+                    // ⇒ 输出 83% 是本帧单采样 ⇒ 每帧都在跳。继承邻居 a 后 alpha 立刻很小，
+                    // 输出≈重建值（平滑），随后正常累积。
+                    _fixA += texelFetch(colortex2, _ft, 0).a * _w;
                     _fixW += _w;
                 }
             }
-            integratedDiffuse.rgb = _fixW > 1e-4
-                ? _fixSum / _fixW
-                : textureLod(colortex3, currCoord, 3.0).rgb;
+            if (_fixW > 1e-4) {
+                integratedDiffuse.rgb = _fixSum / _fixW;
+                // 打个折扣（0.5）：邻居的长度不完全代表这个新像素，避免过度自信而不响应变化
+                integratedDiffuse.a = clamp(_fixA / _fixW * 0.5, 1.0, accumCap);
+            } else {
+                integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
+            }
         }
     #else
         integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
