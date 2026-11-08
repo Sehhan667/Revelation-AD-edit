@@ -213,44 +213,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 integratedDiffuse.a = min(prevDiffuse.a * maxGeometryWeight + 1.0, accumCap);
             #endif
 
-            // [输入采样：与累积帧数**解耦**] 此前这里是「a 越小、输入 mip 越糊」的斜坡，
-            // 目的是让新像素先平滑。但 a 在静止时也会微抖（4 相位棋盘每帧换邻居 ⇒
-            // `maxGeometryWeight` 抖一点点），任何"采样强度依赖 a"的写法都会把这个微抖
-            // 翻译成画面上的**细微呼吸**；量化又会变成**分界线**。两条路都试过，都有副作用。
-            // 结论：输入采样**不看 a**，恒定走 32 px 预滤波（官方 prepass 本来也是无条件执行的），
-            // 新像素的平滑交给 alpha 封顶（a<8 时 ≤ 1/8）与 HistoryFix，不再让采样强度参与。
-            {
-                integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
-                // [REBLUR prepass 等价物 / spatial reuse] 官方 diffusePrepassBlurRadius = 30
-                // （注释：「0 = disabled, must be used in case of badly defined signals and
-                //   probabilistic sampling」）—— 本包 GI 正是这种信号（1spp、命中率 1~3%）。
-                // 官方 prepass：对**噪声输入**做 30 px 半径的空间重用，把稀疏噪声稠密化后才进累积。
-                // 我们无法新开 pass（deferred1/2/3 槽位全占用），因此在取输入处做等价重用：
-                //   9×9、步长 2 ⇒ 覆盖 ±16 画布纹素 ≈ ±32 屏幕像素（画布是半分辨率），对齐官方 30 px；
-                //   **无条件执行**（官方如此；历史占主导后 alpha 很小，等效影响自然衰减）；
-                //   深度/法线加权挡跨表面 —— 视深用同帧口径（`GICanvasNeighbourViewDepth`），
-                //   法线用 `colortex14`（世界空间方向，跨帧安全）。
-                #ifdef VOXEL_GI_NRD_ACTIVE
-                {
-                    vec3 _rsSum = integratedDiffuse.rgb;
-                    float _rsW = 1.0;
-                    for (int _ry = -8; _ry <= 8; _ry += 2) {
-                        for (int _rx = -8; _rx <= 8; _rx += 2) {
-                            if (_rx == 0 && _ry == 0) continue;
-                            ivec2 _rt = texelPos + ivec2(_rx, _ry);
-                            if (clamp(_rt, ivec2(1), canvasEnd - 2) != _rt) continue;
-                            vec3 _ra = texelFetch(colortex14, _rt, 0).rgb;   // 邻居法线 + 视深
-                            float _rw = saturate(1.0 - abs(GICanvasNeighbourViewDepth(_rt) - viewPos.z) / max(abs(viewPos.z) * 0.1, 1e-3));
-                            _rw *= linearstep(0.5, 0.9, saturate(dot(OctDecodeSnorm(_ra.xy), worldNormal)));
-                            _rw *= 1.0 / (1.0 + float(_rx * _rx + _ry * _ry) * 0.02);   // 径向衰减
-                            _rsSum += texelFetch(colortex3, _rt, 0).rgb * _rw;
-                            _rsW += _rw;
-                        }
-                    }
-                    integratedDiffuse.rgb = _rsSum / _rsW;
-                }
-                #endif
-            }
+            // [输入采样 = REBLUR prepass 的输出] 官方把 prepass 做成一个**独立 pass**
+            // (diffusePrepassBlurRadius = 30；注释：must be used in case of badly defined
+            //  signals and probabilistic sampling)，在累积之前完成 30 px 空间重用，并把
+            // 「归一化命中距离」写进输出的 .a 供空间 pass 使用。
+            // 我们已按官方把它实现为 program/diffuse/GIPrepass.comp（deferred1_b），
+            // 输出在 colortex22：rgb = 重用后的 YCoCg 输入，a = 归一化命中距离。
+            // 这里只负责取它——不再在采样处顺手平均（那是之前的近似做法）。
+            integratedDiffuse.rgb = texelFetch(colortex22, texelPos, 0).rgb;
 
             // [官方 convergenceSettings] f = 1 / (1 + k*N)，其中
             //     k = s * lerp( b, 1, saturate( N / (p * maxAccumulatedFrameNum) ) )

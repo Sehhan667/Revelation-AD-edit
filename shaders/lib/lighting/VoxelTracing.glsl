@@ -84,7 +84,11 @@ bool VoxelMaskSolid(ivec3 vc) {
 // 官方默认 A = 3.0、B = 0.1、C = 20.0、D = -25.0（单位已按米标定）。
 // 消费者是空间 pass 里的 minHitDistanceWeight（默认 0.1）与 hitDistanceReconstructionMode（概率采样才需要）。
 // 注意：不要只在出口写值却不接消费者——那会变成"看起来实现了"的假信号。
+// 上一次追踪的命中距离（格）。出界/未命中 = 射程上限。
+float gHitDistance = 0.0;
+
 vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist, float skyLightmap, float blockLightmap, ivec2 pixel, int sampleIndex, inout uint seed) {
+    gHitDistance = float(VOXEL_TRACE_DISTANCE);
     // 世界对齐网格对齐：origin 为相机相对坐标，+cameraPositionFract 抵消小数 +VOXEL_RADIUS
     // 转网格坐标（[0,VOXEL_AREA)）——与 Terrain.vert 体素化 / VoxelGI.frag 注入端
     // （起点 vec3(c)+0.5）同一坐标系。漏加 VOXEL_RADIUS 会让起点落在 -32..32 的负半区，
@@ -307,6 +311,7 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
         // 起始体素形状命中：rayLength 可能为负（起点在子盒内部，tEnter<0）→
         // 钳到 0，避免 hitVoxelPos 落到起点后方（阴影判定/IRC 重投影位置错误）
         if (i == 0) rayLength = max(rayLength, 0.0);
+        gHitDistance = max(rayLength, 0.0);
 
         // 反弹 albedo：固体格 r/g=染过色中心色 RG、w 高 8 位=染过色 B（Shadow.frag 草方块
         // tint 修复）；不再采样 atlas2D（64³ 无法表达 16px 细节，中心色=体素平均反照率）。

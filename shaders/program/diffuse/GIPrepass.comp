@@ -1,0 +1,105 @@
+/*
+--------------------------------------------------------------------------------
+  Revelation-AD-edit  —  REBLUR Prepass（官方 diffusePrepassBlurRadius = 30）
+--------------------------------------------------------------------------------
+
+  官方 NRD `ReblurSettings`：
+      // (pixels) - pre-accumulation spatial reuse pass blur radius
+      // (0 = disabled, must be used in case of badly defined signals and probabilistic sampling)
+      float diffusePrepassBlurRadius = 30.0f;
+
+  它的职责有两个（都在**累积之前**完成）：
+  1. **空间重用**：把稀疏的 1 spp 噪声输入在 30 px 半径内加权平均，得到"稠密"的输入，
+     这样时域累积器与后面的空间滤波面对的不再是大量 0；
+  2. **归一化命中距离**：官方定义
+         normHitDist = saturate( hitDistance / f )
+         f = ( A + viewZ * B ) * lerp( 1, C, exp2( D * roughness^2 ) )
+     A=3.0, B=0.1, C=20.0, D=-25.0；漫反射 roughness=1 时 exp2(-25)≈0 ⇒ 因子塌缩为 1
+     ⇒ `f = A + viewZ * B`。该值写入输出 .a，供空间 pass 的 `minHitDistanceWeight` 使用。
+
+  输出：colortex22（半分辨率，RGBA16F）
+      rgb = 空间重用后的 YCoCg 输入
+      a   = 归一化命中距离
+--------------------------------------------------------------------------------
+*/
+
+//======// Input //===============================================================================//
+
+layout (local_size_x = 8, local_size_y = 8) in;
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+#ifdef VXGI_FULLRES
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+#else
+const vec2 workGroupsRender = vec2(0.5, 0.5);
+#endif
+
+//======// Uniform //=============================================================================//
+
+layout (rgba16f) restrict uniform image2D colorimg22;   // 输出：rgb = 重用后输入，a = 归一化命中距离
+
+#include "/lib/universal/Uniform.glsl"
+#include "/lib/universal/Transform.glsl"
+#include "/lib/universal/Fetch.glsl"
+
+//======// Function //============================================================================//
+
+// 官方默认参数（ReblurHitDistanceParameters）
+#define REBLUR_HITDIST_A 3.0
+#define REBLUR_HITDIST_B 0.1
+
+// 30 px 半径 ⇒ 半分辨率 15 纹素。用 9x9/步长 2 采样，覆盖 ±16 画布纹素（≈ ±32 屏幕像素）。
+// 与官方 30 px 同量级；单遍完成（官方内部实现细节不同，但半径与"无条件执行"这两点一致）。
+#define PREPASS_RADIUS_TEXELS 8
+#define PREPASS_STEP 2
+
+void main() {
+    ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+#ifdef VXGI_FULLRES
+    if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+    ivec2 rt = texelPos;
+#else
+    if (any(greaterThanEqual(texelPos, ivec2(halfViewSize)))) return;
+    ivec2 rt = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+#endif
+
+    float depth = loadDepth0(rt);
+    float viewZ = ScreenToViewDepth(depth);
+    vec3 normal = FetchSurfaceNormal(rt);
+
+    ivec2 canvasEnd = ivec2(textureSize(colorimg22, 0));
+    vec3 sum = vec3(0.0);
+    float wSum = 0.0;
+
+    for (int dy = -PREPASS_RADIUS_TEXELS; dy <= PREPASS_RADIUS_TEXELS; dy += PREPASS_STEP) {
+        for (int dx = -PREPASS_RADIUS_TEXELS; dx <= PREPASS_RADIUS_TEXELS; dx += PREPASS_STEP) {
+            ivec2 t = texelPos + ivec2(dx, dy);
+            if (clamp(t, ivec2(1), canvasEnd - 2) != t) continue;
+            // 同帧视深（从 depthtex 取，避免跨帧口径）
+#ifdef VXGI_FULLRES
+            float nz = ScreenToViewDepth(loadDepth0(t));
+#else
+            float nz = ScreenToViewDepth(loadDepth0(t * 2 + checkerboardOffset2x2[frameCounter & 3u]));
+#endif
+            // 法线来自 colortex14（世界空间方向，跨帧安全）
+            vec3 nrm = OctDecodeSnorm(texelFetch(colortex14, t, 0).xy);
+            float w = saturate(1.0 - abs(nz - viewZ) / max(abs(viewZ) * 0.1, 1e-3));
+            w *= linearstep(0.5, 0.9, saturate(dot(nrm, normal)));
+            w *= 1.0 / (1.0 + float(dx * dx + dy * dy) * 0.01);   // 径向衰减
+            sum += texelFetch(colortex3, t, 0).rgb * w;
+            wSum += w;
+        }
+    }
+
+    vec3 reused = wSum > 1e-4 ? sum / wSum : texelFetch(colortex3, texelPos, 0).rgb;
+
+    // 归一化命中距离：命中距离写在 colortex3.a（追踪端输出）；本包 tracer 目前不输出，
+    // 该分支保持 0（= 完全未被遮挡）以便后续接入，不影响 radiance。
+    float hitDist = saturate(texelFetch(colortex3, texelPos, 0).a);
+    float normHit = saturate(hitDist * rcp(REBLUR_HITDIST_A + max(viewZ, 0.0) * REBLUR_HITDIST_B));
+
+    imageStore(colorimg22, texelPos, vec4(reused, normHit));
+}

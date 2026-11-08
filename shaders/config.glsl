@@ -57,6 +57,9 @@
 	const int 	colortex19Format 			= RGBA16F;	// SSS 横向模糊结果（半分辨率）
 	const int 	colortex20Format 			= RGBA16F;	// SSS 纵向模糊结果（半分辨率）
 	// REBLUR 短历史（fastHistory）：只累积、不掺滤波结果，用作长历史的裁剪参考。
+	// REBLUR prepass 输出：rgb = 空间重用后的噪声输入（YCoCg），a = 归一化命中距离。
+	// 独立缓冲是官方做法（prepass 是一个 pass，不是采样处顺手平均）。
+	const int 	colortex22Format 			= RGBA16F;
 	const int 	colortex21Format 			= RGBA16F;
 
 	// [2026-09-10] Iris 官方常量（location: composite/deferred/final/prepare）：
@@ -86,6 +89,7 @@
 	const bool	colortex19Clear				= false;
 	const bool	colortex20Clear				= false;
 	const bool 	colortex21Clear			= false;
+	const bool 	colortex22Clear			= true;   // 每帧重写，自动清屏即可
 
 	const vec4	colortex6ClearColor			= vec4(0.0, 0.0, 0.0, 1.0);
 
