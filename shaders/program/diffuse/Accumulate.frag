@@ -156,7 +156,6 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         // 判成不同表面 → maxGeometryWeight 骤降 → 累积帧数塌到 1~2 → 每像素独立噪点（满天星）。
         // 纯 A/D 横移时视深几乎不变，所以看着稳定；前后移动与转视角立刻暴露。
         // 改成比 prevViewPos.z 后：静止时它与 viewPos.z 完全相同（行为逐位不变），运动时恒为同帧口径。
-        // 容差 = max(固定相对 12.5%, GI_ACCUM_DEPTH_GRAD_SLACK x 屏幕空间视深梯度)。
         // 掠射面（法线近乎垂直于视线）上一个纹素的视深变化可达自身深度的 5%~10%，而 4 个历史 tap
         // 天然偏离重投影像素 0~1 个纹素 ⇒ 固定容差会把它们全判成不同表面，累积帧数永远上不去
         //（实测：近乎垂直于摄像机的表面完全累积不下来）。
@@ -167,8 +166,13 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         // 16~57 帧，**没有任何像素能达到满累积**（诊断视图 5 看不到绿色），且掠射/远处最差。
         // 因此容差必须显式覆盖这段相位偏移：加上 `相位跨度 × 每纹素视深梯度`。
         // 相位跨度最多 3 个画布纹素，每纹素 ≈ 2 个屏幕像素 ⇒ 6 x giDepthGrad。
-        float depthTol = max(abs(prevViewPos.z) * 0.125,
-                             GI_ACCUM_DEPTH_GRAD_SLACK * giDepthGrad + 6.0 * giDepthGrad);
+        // 官方 `disocclusionThreshold = 0.01`（CommonSettings）："two samples considered occluded
+        // if relative distance difference is greater than this **slope-scaled** threshold"。
+        // 即比较**相对**深度差，并按局部斜率放宽；这里用屏幕空间视深梯度做斜率项。
+        // 另外仍保留一项"棋盘相位偏移"补偿（6×屏幕梯度）：我们的历史取样点带 1~3 画布纹素
+        // 的相位偏移，不补偿会让掠射面被系统性误判（这是本包特有、官方无此问题的地方）。
+        float _slopeScale = 1.0 + giDepthGrad * rcp(max(abs(viewPos.z), 1e-3));
+        float depthTol = abs(prevViewPos.z) * (GI_DISOC_THRESHOLD * _slopeScale) + 6.0 * giDepthGrad;
 
         for (uint i = 0u; i < 4u; ++i) {
             ivec2 sampleTexel = floorTexel + offset2x2[i];
@@ -183,7 +187,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 // 改成容差与该 tap 自身偏移成正比：相位怎么转，判据都一致。
                 // 画布纹素 → 屏幕像素 = ×2；giDepthGrad = 每屏幕像素的视深变化（|dFdx|+|dFdy|）。
                 float _tapOffPx = 2.0 * length(vec2(sampleTexel - texelPos));
-                float _tapTol = depthTol + _tapOffPx * giDepthGrad;
+                float _tapTol = depthTol + _tapOffPx * giDepthGrad;   // 相位偏移补偿（同帧口径）
 
                 float tapGeo = saturate(1.0 - distance(prevViewPos.z, sampleAux.z) / _tapTol);
                 tapGeo *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));

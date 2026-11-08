@@ -262,15 +262,6 @@ void main() {
 	float depthFactor = NRD_RADIUS <= 0.0 ? 1.0
 	                    : clamp(NRD_RADIUS * pxPerWorldAtZ1 / viewDist, 0.5, 1.5);
 	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost;
-	// [滤波半径随收敛衰减] NRD 的 `maxBlurRadius`(30px) → `minBlurRadius`(1px)：
-	//   "...base (max) denoising radius (gets reduced over time)"
-	// 这是"先平滑、细节随时间增加"的正确实现：刚出现/刚开始累积的像素用大半径压噪，
-	// 随累积帧数增加，半径收到最小（下面的 max(...,1.0) 就是 1 px 下限）。
-	// 代价：收敛后残留噪声会更明显（细节与噪声是同一频段），所以默认关、由用户按需开启。
-	if (GI_RADIUS_DECAY > 0.0) {
-		float _t = saturate(frameIndex * rcp(max(GI_RADIUS_DECAY, 1.0)));
-		offsetScale *= mix(1.0, 1.0 / 30.0, _t);   // 官方 minBlurRadius/maxBlurRadius = 1/30
-	}
 	// 每轴步长至少 1 px：掠射面上 offsetScaleBase 会被压到 <0.5（例：斜墙 n≈(0.9,0.1) 时
 	// x 轴只剩 0.1），round() 后该轴整列 tap 全部塌到中心 ⇒ 9-tap 退化成 1D 竖/横条，
 	// 屏幕上表现为随朝向变化的条纹/纹路。下限 1 px 保住 2D 核。

@@ -722,14 +722,12 @@ option.VOXEL_GI_FULLRES=Full Resolution
 option.VOXEL_GI_FULLRES.comment=Off = 2x2 checkerboard half res (1/4 of the pixels traced per frame, filled in over time). On = one ray per pixel per frame (no checkerboard, no quadrant canvas): finer noise, faster convergence. Cost: roughly 4x the tracing and GI buffer size.
 option.VOXEL_GI_DARK_ACCUM=Low-light Denoise
 option.VOXEL_GI_DARK_ACCUM.comment=In dark areas, raise the temporal accumulation cap 4x (32 to 128 frames). Longer history only, no extra spatial blur, so the image is not smeared; the cost is longer trails when lighting changes in the dark.
-option.GI_ACCUM_DEPTH_GRAD_SLACK=Grazing Depth Slack
-option.GI_ACCUM_DEPTH_GRAD_SLACK.comment=Depth tolerance of the history geometry check = max(fixed 12.5%, this x screen-space depth gradient). On grazing surfaces (normal nearly perpendicular to the view ray) one texel changes depth by a large fraction of the depth itself, so a fixed tolerance makes them never accumulate; raising this accumulates better but more easily bleeds the GI of an occluder in front onto the wall. 4 = current.
 option.GI_ACCUM_TIME=Accumulation Time (s)
 option.GI_ACCUM_TIME.comment=Converted to a frame cap by FPS (cap = time / frameTime, hard-capped by Max Accum Frames). NRD REBLUR default for diffuse is 0.5 s; larger = cleaner but longer ghosting.
+option.GI_DISOC_THRESHOLD=Disocclusion Threshold
+option.GI_DISOC_THRESHOLD.comment=Official disocclusionThreshold (0.01): two samples count as different surfaces when their relative depth difference exceeds threshold x slope scale. Smaller = stricter (less ghosting, harder accumulation on grazing surfaces).
 option.GI_DEBUG_VIEW=GI Debug View
 option.GI_DEBUG_VIEW.comment=Paints GI internals as colors (1 = history length + unreliable flag, 2 = variance, 3 = filter delta, 4 = left accumulated vs right filtered, 5 = history length buckets). Use it to tell whether flicker comes from history, filtering or sampling.
-option.GI_RADIUS_DECAY=Radius Decay
-option.GI_RADIUS_DECAY.comment=NRD maxBlurRadius(30px) to minBlurRadius(1px): freshly accumulated pixels use a large radius for noise suppression, then the radius shrinks with accumulated frames so detail emerges over time. Cost: more visible residual noise at convergence (0=off).
 option.GI_FAST_CLAMP_SIGMA=Fast-History Clamp Sigma
 option.GI_FAST_CLAMP_SIGMA.comment=Official fastHistoryClampingSigmaScale (default 2.0): the long history is clamped to the fast history mean +/- k sigma. Larger = looser (more ghosting, more detail preserved); 1.5 works for dirty signals.
 option.GI_KERNEL_ROT_PER_FRAME=Rotate Kernel Per Frame
