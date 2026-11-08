@@ -308,25 +308,6 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 alpha *= 0.25;
             #endif
 
-            // [逐样本钳制] 弱光的噪声主体是冲激（大多数帧 0、偶发一个很大值）：稀疏命中、二值阳光反弹。
-            // 空间滤波只能把它抹成脏污；在**入样**处按当前累积均值的 K 倍封顶则只压尖峰、不模糊。
-            // K=0 关闭；a 太小时跳过（均值≈0 会把真实光照一起压掉）。
-            // [REBLUR firefly suppressor] 官方 enableAntiFirefly = true **默认开启**，
-            // fireflySuppressorMinRelativeScale = 2.0（「[1;3] undesired sporadic outliers suppression
-            // to keep output stable；smaller values maximize suppression in exchange of bias」）。
-            // 做法与官方一致：把本帧入样按「历史均值的 k 倍」封顶 ⇒ 孤亮点顶不进历史。
-            // NRD 模式下若用户把 VOXEL_GI_SAMPLE_CLAMP 设为 0，则取官方默认 2.0（= 官方默认开启）。
-            {
-                float _fireflyK = VOXEL_GI_SAMPLE_CLAMP;
-                #ifdef VOXEL_GI_NRD_ACTIVE
-                    if (_fireflyK <= 0.0) _fireflyK = 2.0;   // 官方 fireflySuppressorMinRelativeScale
-                #endif
-                if (_fireflyK > 0.0 && integratedDiffuse.a > 4.0) {
-                    vec3 _meanClamp = max(prevDiffuse.rgb, vec3(1e-5));
-                    integratedDiffuse.rgb = min(integratedDiffuse.rgb, _meanClamp * _fireflyK);
-                }
-            }
-
             integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), integratedDiffuse.rgb, alpha);
             // 短历史：固定 1/6 混合率（官方 maxFastAccumulatedFrameNum = 6）、**永不掺滤波结果**
             // ⇒ 几帧级的新鲜参考（REBLUR fastHistory）。.a 目前未使用（保留 1.0）。
