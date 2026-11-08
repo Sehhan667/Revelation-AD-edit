@@ -210,6 +210,8 @@ void main() {
 	// 的样本越容易受阴影/遮挡影响，空间 pass 里应降权。归一化命中距离由 ① prepass 写进
 	// `colortex22.a`（官方 ReblurHitDistanceParameters 的 saturate(hitDistance / (A + viewZ*B))）。
 	const float MIN_HITDIST_WEIGHT = 0.1;
+	// 声明必须放在所有使用者（fireflyRef / centerLuma）之前，否则 GLSL 报 C1503 undefined。
+	f16vec4 filteredColVar = f16vec4(imageLoad(colorimg3, texelPos));
 	// [⑦ firefly 抑制] 官方 `enableAntiFirefly = true`、`fireflySuppressorMinRelativeScale = 2.0`
 	// （原文：undesired sporadic outliers suppression to keep output stable；smaller = 更强抑制、更大偏差）。
 	// 参考取稳定化辐射（self-guided 引导），把每个 tap 钳到 `参考 × 2`：孤亮点无法主导加权。
@@ -223,7 +225,6 @@ void main() {
 	// 退回用本帧滤波对象自身作为参考（等价于"这一帧不做额外抑制"）。
 	if (max(max(fireflyRef.r, fireflyRef.g), fireflyRef.b) <= 1e-6) fireflyRef = filteredColVar.rgb;
 	vec3 fireflyCeil = max(fireflyRef, vec3(1e-6)) * FIREFLY_SCALE;
-	f16vec4 filteredColVar = f16vec4(imageLoad(colorimg3, texelPos));
 	// [③ self-guided] 官方 REBLUR 的空间滤波是 self-guided：引导信号用**稳定化后的历史**
 	// (stabilized radiance，我们放在 colortex23)，而不是当前噪声输入。这样边缘保持权重
 	// 不会随每帧噪声跳动 —— 这正是官方消除滤波输出残余起伏的办法。
