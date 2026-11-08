@@ -348,7 +348,9 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     //   · 起点是已累积信号 ⇒ 不含本帧冲激（不闪）；
     //   · 亮度正确 ⇒ 不会像 mip3 那样偏暗；
     //   · 与周围像素连续 ⇒ 新区域不出现"补丁"。
-    // 半径取 5×5（画布是半分辨率，相当于屏幕 10×10），比官方 5×5@stride14 保守。
+    // 步长取官方 historyFixBasePixelStride = 14（像素）：5×5 个 tap、相邻 tap 相隔 14 px，
+    // 而不是紧凑 5×5。画布是半分辨率 ⇒ 画布步长 = 14/2 = 7 纹素，覆盖 ±14 画布纹素（≈ ±28 屏幕像素）。
+    // 官方这么做的原因：历史失效区域往往成片，采样更远的邻居才能找到"仍有效"的历史。
     #ifdef VOXEL_GI_NRD_ACTIVE
         {
             vec3 _fixSum = vec3(0.0);
@@ -356,7 +358,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             float _fixA = 0.0;
             for (int _fy = -2; _fy <= 2; ++_fy) {
                 for (int _fx = -2; _fx <= 2; ++_fx) {
-                    ivec2 _ft = texelPos + ivec2(_fx, _fy);
+                    ivec2 _ft = texelPos + ivec2(_fx, _fy) * 7;   // 官方 historyFixBasePixelStride = 14 px（画布半分辨率 ⇒ 7 纹素）
                     if (clamp(_ft, ivec2(1), canvasEnd - 2) != _ft) continue;
                     vec3 _fa = texelFetch(colortex14, _ft, 0).rgb;      // 该邻居的法线+视深
                     vec3 _fc = texelFetch(colortex21, _ft, 0).rgb;      // 该邻居的短历史（已累积）

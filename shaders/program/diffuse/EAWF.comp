@@ -211,6 +211,11 @@ void main() {
 	// `colortex22.a`（官方 ReblurHitDistanceParameters 的 saturate(hitDistance / (A + viewZ*B))）。
 	const float MIN_HITDIST_WEIGHT = 0.1;
 	float centerNormHit = saturate(texelFetch(colortex22, texelPos, 0).a);
+	// [⑦ firefly 抑制] 官方 `enableAntiFirefly = true`、`fireflySuppressorMinRelativeScale = 2.0`
+	// （原文：undesired sporadic outliers suppression to keep output stable；smaller = 更强抑制、更大偏差）。
+	// 参考取稳定化辐射（self-guided 引导），把每个 tap 钳到 `参考 × 2`：孤亮点无法主导加权。
+	const float FIREFLY_SCALE = 2.0;
+	vec3 fireflyCeil = max(texelFetch(colortex23, texelPos, 0).rgb, vec3(1e-6)) * FIREFLY_SCALE;
 	f16vec4 filteredColVar = f16vec4(imageLoad(colorimg3, texelPos));
 	// [③ self-guided] 官方 REBLUR 的空间滤波是 self-guided：引导信号用**稳定化后的历史**
 	// (stabilized radiance，我们放在 colortex23)，而不是当前噪声输入。这样边缘保持权重
@@ -218,6 +223,7 @@ void main() {
 	// 数据仍取 colorimg3（本帧滤波对象），只有**权重用的亮度**换成稳定化值。
 	float16_t centerLuma = float16_t(texelFetch(colortex23, texelPos, 0).r);
 	if (centerLuma <= 1e-6) centerLuma = filteredColVar.r;   // 首帧/未就绪兜底
+	filteredColVar.rgb = min(filteredColVar.rgb, f16vec3(fireflyCeil));   // ⑦ 中心同样钳制（须在声明之后）
 
 	float frameIndex = texelFetch(colortex2, texelPos, 0).a;
 	// [2026-08-09 同步官方 SVGF] 历史帧因子：帧数越多信任度越高
@@ -317,6 +323,7 @@ void main() {
 			f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 
 			f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
+			sampleColVar.rgb = min(sampleColVar.rgb, f16vec3(fireflyCeil));   // ⑦ firefly 抑制
 			// 引导亮度取稳定化辐射（见 centerLuma 处说明）；数据仍用本帧滤波对象
 			float16_t sampleLuma = float16_t(texelFetch(colortex23, sampleTexel, 0).r);
 			if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
@@ -357,6 +364,7 @@ void main() {
 	        if (clamp(sampleTexel, ivec2(1), canvasEnd - 2) == sampleTexel) {
 	            f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 	            f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
+	            sampleColVar.rgb = min(sampleColVar.rgb, f16vec3(fireflyCeil));   // ⑦ firefly 抑制
 	            float16_t sampleLuma = float16_t(texelFetch(colortex23, sampleTexel, 0).r);
 	            if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 	            // [⑤] 官方几何/法线拒判（同 9-tap）
