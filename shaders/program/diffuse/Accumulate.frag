@@ -81,7 +81,15 @@ float GICanvasNeighbourViewDepth(in ivec2 canvasTexel) {
 }
 
 void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, in float accumCap, in float giDepthGrad) {
-	vec3 viewPos = ScreenToViewPos(screenPos);
+	// [无抖动口径] 必须用 `ScreenToViewPosRaw`（不减 `taaJitter`）。
+	// 原因（实测：静止时大角度远距离的垂直墙面在橙/黄之间**平滑、长周期**来回跳）：
+	// `ScreenToViewPos` 会减掉本帧的 taaJitter，而 TAA 抖动图案本身是几十帧的平滑序列。
+	// 于是本帧重建出的 `viewPos.z` / `prevViewPos.z` 带本帧抖动偏移，而历史里存的
+	// `sampleAux.z` 是**上一帧**（不同抖动相位）写下的 ⇒ 两边差值随抖动图案缓慢起伏
+	// ⇒ `maxGeometryWeight` 缓慢起伏 ⇒ 稳态累积帧数 a* = 1/(1-w) 在档位间平滑移动。
+	// 掠射面深度斜率大，抖动偏移被放大 ⇒ 垂直墙最明显。
+	// 抖动只应影响**采样位置**，不应参与几何判据；这里统一改成无抖动口径。
+	vec3 viewPos = ScreenToViewPosRaw(screenPos);
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
     // GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
 #ifdef VXGI_FULLRES
@@ -101,7 +109,11 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 
     vec2 currCoord = texelToUv(texelPos);
     // a 默认 0（可靠）；不可靠/重投影失效路径在下方置 1
-    encodedNormalDepth = vec4(OctEncodeSnorm(worldNormal), viewPos.z, 0.0);
+    // 视深用 `ScreenToViewDepth(depth)`（纯投影逆变换，与 taaJitter 无关）——
+    // 与 TemporalFilter 里无抖动的 `viewPos`、以及 `GICanvasNeighbourViewDepth()` 同口径。
+    // 若这里写 `viewPos.z`（带抖动），下一帧的判据就会读到上一帧抖动相位的深度，
+    // 造成"静止时累积帧数平滑缓慢起伏"（见 TemporalFilter 顶部注释）。
+    encodedNormalDepth = vec4(OctEncodeSnorm(worldNormal), ScreenToViewDepth(screenPos.z), 0.0);
 
     if (saturate(prevCoord) == prevCoord && !historyReset) {
         vec4 prevDiffuse = vec4(0.0);
@@ -159,7 +171,16 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 			    vec3 sampleAux = texelFetch(colortex14, sampleTexel, 0).xyz;
                 vec4 sampleIrradiance = texelFetch(colortex2, sampleTexel, 0);
 
-                float tapGeo = saturate(1.0 - distance(prevViewPos.z, sampleAux.z) / depthTol);
+                // [逐 tap 容差] 每个 tap 相对本像素中心的偏移量不同（双线性 0~1 纹素 + 棋盘相位
+                // 1~3 纹素），而偏移越大、视深偏差越大。若所有 tap 用同一个容差，就会出现
+                // **哪些 tap 落在容差内随相位循环变化** 的现象 ⇒ maxGeometryWeight 周期性抖动
+                // ⇒ 稳态累积帧数在"橙/黄"之间来回跳（实测：大角度远距离的垂直墙面）。
+                // 改成容差与该 tap 自身偏移成正比：相位怎么转，判据都一致。
+                // 画布纹素 → 屏幕像素 = ×2；giDepthGrad = 每屏幕像素的视深变化（|dFdx|+|dFdy|）。
+                float _tapOffPx = 2.0 * length(vec2(sampleTexel - texelPos));
+                float _tapTol = depthTol + _tapOffPx * giDepthGrad;
+
+                float tapGeo = saturate(1.0 - distance(prevViewPos.z, sampleAux.z) / _tapTol);
                 tapGeo *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
                 maxGeometryWeight = max(maxGeometryWeight, tapGeo);
 
