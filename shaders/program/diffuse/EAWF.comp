@@ -277,7 +277,13 @@ void main() {
 
 	float16_t sumWeight = float16_t(1.0);
 	// filteredColVar *= vec4(vec3(sumWeight), sumWeight * sumWeight);
-	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, frameCounter + FILTER_PASS_INDEX) - vec2(0.5)) * jitterSize;
+	// [2026-11-08 去掉逐帧抖动] 原来这里把 `frameCounter` 传进 BlueNoise，即**每帧换一个
+	// 滤波取样偏移**。后果：即使输入（累积结果）几乎不变，滤波 tap 的位置每帧在 ±0.5 px 内跳，
+	// 输出就逐帧变化 ⇒ **静止也在闪**（实测：强制历史永远有效、alpha ≈ 0.01 的情况下仍然闪）。
+	// 官方 NRD/SVGF 的 a-trous **核位置是固定的**：抖动只用于追踪采样，不用于滤波 tap。
+	// 去掉 `frameCounter` 后偏移变成「每像素固定」，滤波输出对静态输入完全稳定。
+	// 若需要打散图案，用既有的「滤波核逐帧旋转」(GI_KERNEL_ROT_PER_FRAME) 那个独立开关。
+	vec2 sampleTexelBase = vec2(texelPos) + (BlueNoise(texelPos, FILTER_PASS_INDEX) - vec2(0.5)) * jitterSize;
 
 	// 整核旋转：把 3x3 方形格点整体绕像素中心旋转，方形印记在统计上被抹平（NRD 用旋转 Poisson 盘
 	// 是同一目的）。角度 = 每像素 hash + 每 pass 黄金角（≈137.5°，让四级方向均匀铺开，不再叠成四折十字）。
