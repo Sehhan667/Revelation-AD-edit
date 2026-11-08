@@ -294,7 +294,16 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     vec3 _sigma = sqrt(max(_fSum2 / _fN - _mu * _mu, vec3(0.0)));
                     vec3 _tol = GI_FAST_CLAMP_SIGMA * _sigma + 0.15 * _mu + vec3(0.01);
                     vec3 _histOld = prevDiffuse.rgb;
-                    prevDiffuse.rgb = clamp(_histOld, _mu - _tol, _mu + _tol);
+                    // [门控] 参考（短历史）本身每帧在变，5×5 的 μ/σ 也跟着变。若每帧都裁剪，
+                    // 60 帧的长历史会被反复拉向噪声 ⇒ 静止永远不稳（实测两轮）。
+                    // 只处理"真实变化"：偏差超过 max(3σ, 50%·μ) 才裁剪，噪声幅度内完全不碰。
+                    float _devMax = max(max(_sigma.r, _sigma.g), _sigma.b);
+                    float _muMax  = max(max(_mu.r, _mu.g), _mu.b);
+                    float _gate   = max(3.0 * _devMax, 0.5 * _muMax);
+                    float _devLen = length(_histOld - _mu);
+                    if (_devLen > _gate) {
+                        prevDiffuse.rgb = clamp(_histOld, _mu - _tol, _mu + _tol);
+                    }
                     // [⑧ 官方 antilag] 替换此前"裁剪量→加速"的 RELAX 式近似。
                     // 官方 ReblurAntilagSettings：亮度梯度 delta 与「局部方差 × luminanceSigmaScale」比较，
                     // 超出阈值即缩短历史（提高 alpha），luminanceSensitivity 控制灵敏度（越小越敏感）。
