@@ -171,6 +171,40 @@ void main() {
 	// 视锥短边在该深度处的世界尺寸（官方 GetFrustumSize）：几何权重的归一化尺度。
 	float frustumSize = 2.0 * viewDist * rcp(max(gbufferProjection[1][1], 1e-3));
 
+	// 官方 POST_BLUR：a-trous 之后再做一次 3x3，消除波纹状块感（这正是"大团斑块"的块状边缘）。
+	// 这里合并进第 4 级——调度次数与乒乓不变，下游无需改；步长固定 1 画布纹素、不旋转，
+	// 权重仍走几何/法线判据，避免跨表面糊边。
+#if FILTER_PASS_INDEX == 3
+	{
+		const ivec2 postOff[8] = ivec2[8](
+			ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1),
+			ivec2(-1,  0),                ivec2(1,  0),
+			ivec2(-1,  1), ivec2(0,  1), ivec2(1,  1)
+		);
+		f16vec3 postSum = centerSample.rgb;
+		float postW = 1.0;
+		for (int i = 0; i < 8; ++i) {
+			ivec2 smp = texelPos + postOff[i];
+			if (clamp(smp, ivec2(1), canvasEnd - 2) != smp) continue;
+			f16vec3 sampleAux = f16vec3(texelFetch(colortex14, smp, 0).rgb);
+			f16vec4 sampleColVar = f16vec4(imageLoad(EAWF_SRC, smp));
+			if (any(isnan(sampleColVar.rgb)) || any(isinf(sampleColVar.rgb))) continue;
+
+			vec2 tapUv = (vec2(smp) + 0.5) / vec2(canvasEnd);
+			vec3 tapViewPos = ScreenToViewPosRaw(tapUv, sampleAux.z);
+			float planeDist = abs(dot(tapViewPos - centerViewPos, centerN));
+			float w = exp(-planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
+			w *= smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02,
+			                dot(OctDecodeSnorm(sampleAux.xy), OctDecodeSnorm(normalDepthData.xy)));
+
+			postSum += sampleColVar.rgb * f16vec3(w);
+			postW += w;
+		}
+		imageStore(EAWF_DST, texelPos, min(f16vec4(postSum * f16vec3(rcp(postW)), centerSample.a), FP16_MAX));
+		return;
+	}
+#endif
+
 	// 官方 Poisson 盘（REBLUR_POISSON_SAMPLE_NUM = 8）。这里用黄金角 Vogel 螺旋生成 8 个
 	// 等面积样本（比固定表更均匀），再整体按像素/Pass 旋转，等价于官方 rotated Poisson disk。
 	const int POISSON_SAMPLES = 8;

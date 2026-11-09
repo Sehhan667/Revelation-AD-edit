@@ -53,10 +53,14 @@ layout (rgba16f) restrict uniform image2D colorimg24;   // 输出：r = 方差�
 #define REBLUR_HITDIST_B 0.1
 
 // 官方 diffusePrepassBlurRadius = 30（屏幕像素）。画布是半分辨率 ⇒ 15 画布纹素。
-// 这里取 12（±24 屏幕像素）、步长 3（9x9 = 81 tap）：覆盖接近官方，
-// 1spp 输入先做一次大范围重用，后面的 EAWF 与时域累积面对的不再是孤立噪声。
-#define PREPASS_RADIUS_TEXELS 12
-#define PREPASS_STEP 3
+// 采样用 Poisson 盘（官方 REBLUR_POISSON_SAMPLE_NUM = 8）；我们的输入是 1spp、比官方
+// 假设的"well defined signal"更噪，故样本数取 16 —— 覆盖范围一致、稠密度更足，
+// 同时比原来的 9x9 网格（81 tap）便宜得多。
+#define PREPASS_RADIUS_TEXELS 15
+#define PREPASS_SAMPLES 16
+
+// 官方 planeDistanceSensitivity = 0.02（相对视锥短边世界尺寸）
+#define PLANE_DIST_SENS 0.02
 
 // 官方 lobeAngleFraction = 0.15（漫反射 90° 瓣角的 15% ≈ 13.5°）
 #define LOBE_COS 0.9723699
@@ -77,10 +81,6 @@ void main() {
     vec3 centerN = mat3(gbufferModelView) * normal;                      // 视空间（切平面判据用）
     vec3 centerViewPos = ScreenToViewPosRaw((vec2(rt) + 0.5) * viewPixelSize, viewZ);
 
-    // 半径固定。官方 prepass 也乘 sqrt(hitDistFactor)，但官方的 hitDistance 是**时域累积**量；
-    // 我们的命中距离是 1spp 即时值，逐帧抖动会让整个 prepass 的采样图案在静止时扭动。
-    float prepassRadius2 = float(PREPASS_RADIUS_TEXELS * PREPASS_RADIUS_TEXELS);
-
     // 注意：image2D 只能用 imageSize()，不能用 textureSize()（后者是 sampler 的重载）。
     // 这里直接用视口尺寸，语义等价且无重载风险。
 #ifdef VXGI_FULLRES
@@ -88,6 +88,10 @@ void main() {
 #else
     ivec2 canvasEnd = ivec2(halfViewSize);
 #endif
+
+    // 视锥短边在该深度处的世界尺寸（官方 GetFrustumSize）：几何权重的归一化尺度。
+    float frustumSize = 2.0 * max(abs(viewZ), 1e-3) * rcp(max(gbufferProjection[1][1], 1e-3));
+
     vec3 sum = vec3(0.0);
     float wSum = 0.0;
     // 官方 prepass 会把命中距离随颜色一起加权平均（不是只取中心像素）；噪声小得多。
@@ -96,40 +100,41 @@ void main() {
     float lSum = 0.0;
     float lSum2 = 0.0;
 
-    for (int dy = -PREPASS_RADIUS_TEXELS; dy <= PREPASS_RADIUS_TEXELS; dy += PREPASS_STEP) {
-        for (int dx = -PREPASS_RADIUS_TEXELS; dx <= PREPASS_RADIUS_TEXELS; dx += PREPASS_STEP) {
-            ivec2 t = texelPos + ivec2(dx, dy);
-            float _r2 = float(dx * dx + dy * dy);
-            if (_r2 > prepassRadius2) continue;   // 命中距离缩放后的有效半径
-            if (clamp(t, ivec2(1), canvasEnd - 2) != t) continue;
-            // 同帧视深 + 同帧法线（法线不能再取 colortex14：那是上一帧的，跨帧混用会在运动时误拒）
+    // Poisson 盘（黄金角 Vogel）在整个盘内均匀铺开；2x2 画布块共享旋转，不逐帧变化。
+    ivec2 rotCell = texelPos >> 1;
+    float ang0 = hash13(vec3(rotCell, 3.0)) * 6.2831853;
+
+    for (int i = 0; i < PREPASS_SAMPLES; ++i) {
+        float rn = sqrt((float(i) + 0.5) * rcp(float(PREPASS_SAMPLES)));   // 0..1
+        float an = float(i) * 2.39996323 + ang0;
+        ivec2 t = texelPos + ivec2(round(vec2(cos(an), sin(an)) * rn * float(PREPASS_RADIUS_TEXELS)));
+        if (clamp(t, ivec2(1), canvasEnd - 2) != t) continue;
+        // 同帧视深 + 同帧法线（法线不能再取 colortex14：那是上一帧的，跨帧混用会在运动时误拒）
 #ifdef VXGI_FULLRES
-            ivec2 tapScreen = t;
+        ivec2 tapScreen = t;
 #else
-            ivec2 tapScreen = t * 2 + GI_CANVAS_PHASE;
+        ivec2 tapScreen = t * 2 + GI_CANVAS_PHASE;
 #endif
-            float nz = ScreenToViewDepth(loadDepth0(tapScreen));
-            vec3 tapN = FetchSurfaceNormal(tapScreen);                   // 世界空间（本帧）
-            vec4 tapSample = texelFetch(colortex3, t, 0);
-            vec3 tapCol = tapSample.rgb;
-            if (any(isnan(tapCol)) || any(isinf(tapCol))) continue;      // 官方 Denanify
+        float nz = ScreenToViewDepth(loadDepth0(tapScreen));
+        vec3 tapN = FetchSurfaceNormal(tapScreen);                   // 世界空间（本帧）
+        vec4 tapSample = texelFetch(colortex3, t, 0);
+        vec3 tapCol = tapSample.rgb;
+        if (any(isnan(tapCol)) || any(isinf(tapCol))) continue;      // 官方 Denanify
 
-            // 官方 planeDistanceSensitivity = 0.02：tap 到中心切平面的归一化偏离
-            vec3 tapViewPos = ScreenToViewPosRaw((vec2(tapScreen) + 0.5) * viewPixelSize, nz);
-            float planeDist = abs(dot(tapViewPos - centerViewPos, centerN)) / max(abs(centerViewPos.z), 1e-3);
-            // 容差下限：2 个世界单位/视距（近处相对百分比会折成极小的绝对值）
-            float planeTol = max(0.02, 2.0 * rcp(max(abs(centerViewPos.z), 1.0)));
-            float w = saturate(1.0 - planeDist / planeTol);
-            // 法线拒判：夹角上限 = 瓣角 × lobeAngleFraction（官方 lobeAngleFraction）
-            w *= smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, dot(tapN, normal));
-            w *= exp(-2.0 * _r2 / prepassRadius2);                       // 高斯（官方 GetGaussianWeight）
+        // 几何：官方 `GetGeometryWeightParams` ⇒ exp( -|planeDist| / (planeDistanceSensitivity · frustumSize) )
+        // planeDist 用**世界距离**（与 EAWF 保持同一口径）。
+        vec3 tapViewPos = ScreenToViewPosRaw((vec2(tapScreen) + 0.5) * viewPixelSize, nz);
+        float planeDist = abs(dot(tapViewPos - centerViewPos, centerN));
+        float w = exp(-planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
+        // 法线拒判：夹角上限 = 瓣角 × lobeAngleFraction（官方 lobeAngleFraction）
+        w *= smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, dot(tapN, normal));
+        w *= exp(-2.0 * rn * rn);                                    // 高斯（官方 GetGaussianWeight）
 
-            sum += tapCol * w;
-            hitSum += max(tapSample.a, 0.0) * w;
-            lSum  += tapCol.r * w;
-            lSum2 += tapCol.r * tapCol.r * w;
-            wSum += w;
-        }
+        sum += tapCol * w;
+        hitSum += max(tapSample.a, 0.0) * w;
+        lSum  += tapCol.r * w;
+        lSum2 += tapCol.r * tapCol.r * w;
+        wSum += w;
     }
 
     vec3 reused = wSum > 1e-4 ? sum / wSum : texelFetch(colortex3, texelPos, 0).rgb;
