@@ -1,6 +1,6 @@
 /*
 --------------------------------------------------------------------------------
-  Revelation-AD-edit  —  REBLUR Stabilization pass
+  Revelation-AD-edit  —  REBLUR Temporal Stabilization pass
 --------------------------------------------------------------------------------
 
   官方 NRD `ReblurSettings`：
@@ -9,15 +9,20 @@
       // Values ">= maxAccumulatedFrameNum" get clamped to "maxAccumulatedFrameNum"
       uint32_t maxStabilizedFrameNum = REBLUR_MAX_HISTORY_FRAME_NUM;   // = 63
 
-  职责：把**空间滤波之后**的结果再做一次长时间累积，消除滤波输出的残余时域起伏。
-  但官方 TS 并不是"同 texel 混一混"：
-    · 历史用 surface motion **重投影**采样（官方 gHistory_DiffStabilized 按 smbPixelUv 取）；
-    · 用当前滤波结果的邻域 μ/σ 把历史夹进颜色盒（Color::Clamp）；
-    · 帧数上限按 accumulationTime×FPS 算，并夹到 maxAccumulatedFrameNum。
-  只做同 texel 累积时，新暴露像素会继承**旧表面**的稳定化值（屏幕空间），
-  EAWF 又拿它当亮度引导和 firefly 参考 ⇒ 移动时新出现像素被旧值压住、剧烈跳。
+  官方 `REBLUR_TemporalStabilization.hlsli` 的实际结构（本文件逐条对齐）：
+    · surface motion 重投影采样长历史（这里 4-tap 双线性）；
+    · `smbFootprintQuality` = sqrt(上一帧 occlusion 的双线性加权) —— 新暴露像素的历史被降权；
+    · `ComputeAntilag`（REBLUR_ANTILAG_MODE 2）：
+          hc  = clamp(history, m1 - σ·luminanceSigmaScale, m1 + σ·luminanceSigmaScale)
+          d   = |h - hc| / (max(h, hc) + eps)
+          antilag = 1 / (1 + d · accumSpeed / magic),  magic = luminanceSensitivity · framerateScale²
+    · 历史权重 = footprintQuality · accumSpeed/(1 + accumSpeed) · antilag
+    · 颜色盒 = m1 ± σ·(1 + 3·framerateScale·historyWeight)（`GetTemporalAccumulationParams.y`）
+    · RCRS：把本帧滤波结果的亮度夹到邻域亮度范围（抑制空间离群亮斑）
+    · 历史长度：每帧 +1（上限 maxStabilizedFrameNum），再按 antilag 拉回 historyFixFrameNum
 
-  输入：colortex3（EAWF 四遍滤波后的结果）
+  注意：RCRS 在官方属于本 pass，**不属于** Blur；EAWF 因此不再做 firefly 钳制。
+  输入：colortex3（EAWF 滤波后结果）、colortex21（短历史的几何可信度，作 footprint 质量）
   输出：colortex23（rgb = 稳定化辐射，a = 已累积帧数）
 --------------------------------------------------------------------------------
 */
@@ -48,6 +53,11 @@ layout (rgba16f) restrict uniform image2D colorimg23;            // 稳定化输
 
 // 官方 REBLUR_MAX_HISTORY_FRAME_NUM = 63
 #define STABILIZE_MAX_FRAMES 63.0
+// 官方 historyFixFrameNum = 3：antilag 触发时历史长度最低回落到这里
+#define HISTORY_FIX_FRAME_NUM 3.0
+// 官方 antilagSettings：luminanceSigmaScale = 2.0 / luminanceSensitivity = 3.0
+#define ANTILAG_LUMA_SIGMA_SCALE 2.0
+#define ANTILAG_LUMA_SENSITIVITY 3.0
 
 //======// Function //============================================================================//
 
@@ -78,19 +88,31 @@ void main() {
     vec3 filtered = imageLoad(colorimg3, texelPos).rgb;
     if (any(isnan(filtered)) || any(isinf(filtered))) filtered = vec3(0.0);
 
-    // 局部颜色盒（3×3 μ/σ）：官方 TS 用当前滤波结果的邻域把历史夹住
+    // 邻域矩 + 亮度范围：官方 TS 在 shared memory 里对**本帧滤波结果**取 BORDER 邻域，
+    // 同时得到 σ（颜色盒 / antilag）与 min/max（RCRS）。这里用 3×3 等价实现。
     vec3 m1 = vec3(0.0);
     vec3 m2 = vec3(0.0);
+    float lumaMin = filtered.r;
+    float lumaMax = filtered.r;
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
             vec3 c = imageLoad(colorimg3, clamp(texelPos + ivec2(x, y), ivec2(0), canvasEnd - 1)).rgb;
             if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
             m1 += c;
             m2 += c * c;
+            lumaMin = min(lumaMin, c.r);
+            lumaMax = max(lumaMax, c.r);
         }
     }
     vec3 mu = m1 * rcp(9.0);
     vec3 sigma = sqrt(max(m2 * rcp(9.0) - mu * mu, vec3(0.0)));
+
+    // RCRS：把本帧结果的亮度夹到邻域范围（官方在 TS 里做，Blur 不做）。
+    // YCoCg 下亮度就是 .r，整体缩放 xyz 等价于官方的 ChangeLuma。
+    if (filtered.r > 1e-6) {
+        float newLuma = clamp(filtered.r, lumaMin, lumaMax);
+        filtered *= newLuma * rcp(filtered.r);
+    }
 
     // 重投影：本帧画布 texel 的世界点 → 上一帧屏幕 → 上一帧画布 texel
     // 注意 rt 是**屏幕**纹素（不是画布纹素），UV 必须按全分辨率像素尺寸换算。
@@ -115,19 +137,34 @@ void main() {
     vec2 f = prevTexelF - vec2(p0);
     valid = valid && all(greaterThanEqual(p0, ivec2(0))) && all(lessThanEqual(p0 + 1, canvasEnd - 1));
 
+    // 4-tap 双线性采样长历史；同时按官方 `smbFootprintQuality` 统计每个 tap 的几何可信度。
+    // colortex21.a = Accumulate 写下的 `maxGeometryWeight`（逐 tap 几何验证后的连续质量），
+    // 正是官方 occlusion 位掩码双线性质量的等价物：新暴露/重投影失效的 tap 会接近 0。
     vec4 prev = vec4(0.0);
+    float qualitySum = 0.0;
+    float qualityWeight = 0.0;
     if (valid) {
-        prev  = texelFetch(colortex23, p0, 0)                 * (oms(f.x) * oms(f.y));
-        prev += texelFetch(colortex23, p0 + ivec2(1, 0), 0)  * (f.x * oms(f.y));
-        prev += texelFetch(colortex23, p0 + ivec2(0, 1), 0)  * (oms(f.x) * f.y);
-        prev += texelFetch(colortex23, p0 + ivec2(1, 1), 0)  * (f.x * f.y);
+        const float bilinearWeight[4] = {
+            oms(f.x) * oms(f.y),
+            f.x      * oms(f.y),
+            oms(f.x) * f.y,
+            f.x      * f.y
+        };
+        for (uint i = 0u; i < 4u; ++i) {
+            ivec2 sampleTexel = p0 + offset2x2[i];
+            prev += texelFetch(colortex23, sampleTexel, 0) * bilinearWeight[i];
+            // saturate(-1) = 0：Accumulate 的兜底路径用 -1 标记"历史无效"
+            qualitySum += saturate(texelFetch(colortex21, sampleTexel, 0).a) * bilinearWeight[i];
+            qualityWeight += bilinearWeight[i];
+        }
     }
+    float quality = qualityWeight > 1e-4 ? sqrt(saturate(qualitySum * rcp(qualityWeight))) : 0.0;
 
     float bad = texelFetch(colortex14, texelPos, 0).a;
     float prevAge = prev.a;
     // 首次使用/NaN/越界/主历史失效 → 重置
     if (!(prevAge >= 0.0) || prevAge > STABILIZE_MAX_FRAMES) prevAge = 0.0;
-    if (!valid || bad > 0.5) prevAge = 0.0;
+    if (!valid || bad > 0.5 || quality < 0.25) prevAge = 0.0;
     if (any(isnan(prev.rgb)) || any(isinf(prev.rgb))) prevAge = 0.0;
 
     // 官方：maxStabilizedFrameNum 不得超过 maxAccumulatedFrameNum（同一 FPS 公式重算，
@@ -136,14 +173,38 @@ void main() {
     cap = max(floor(cap * 0.125) * 8.0, 8.0);
     cap = min(cap, STABILIZE_MAX_FRAMES);
 
-    // 历史夹到当前邻域（官方 Color::Clamp；2σ + 5% μ 的下限防暗处过紧）
-    vec3 tol = 2.0 * sigma + 0.05 * mu + vec3(0.01);
+    // 官方 framerateScale = clamp(fps / 60, 0.5, 2.0)：低帧率时时间步更大，antilag 更敏感
+    float framerateScale = clamp(rcp(60.0 * max(frameTime, 1e-4)), 0.5, 2.0);
+    float magic = ANTILAG_LUMA_SENSITIVITY * framerateScale * framerateScale;
+
+    // 官方 ComputeAntilag（mode 2）：历史亮度偏离「邻域均值 ± σ·luminanceSigmaScale」多少
+    float antilag = 1.0;
+    if (prevAge > 0.0) {
+        float sL = max(sigma.r, 1e-5) * ANTILAG_LUMA_SIGMA_SCALE;
+        float hL = prev.r;
+        float hc = clamp(hL, mu.r - sL, mu.r + sL);
+        float dL = abs(hL - hc) * rcp(max(hL, hc) + 1e-5);
+        // 官方 accumSpeed = footprintQuality × data1.x
+        float accumSpeed = prevAge * quality;
+        antilag = rcp(1.0 + dL * accumSpeed * rcp(max(magic, 1e-3)));
+    }
+
+    // 历史夹到当前邻域（官方 Color::Clamp；σ 乘数随历史权重增长 ⇒ 越稳定越收紧）
+    float historyWeight = quality * (prevAge * rcp(1.0 + max(prevAge, 1e-3)));
+    historyWeight *= antilag;
+    historyWeight = saturate(historyWeight);
+
+    vec3 tol = sigma * (1.0 + 3.0 * framerateScale * historyWeight) + vec3(0.01);
     vec3 hist = clamp(prev.rgb, mu - tol, mu + tol);
 
     float age = (prevAge <= 0.0) ? 1.0 : min(prevAge + 1.0, cap);
-    vec3 stab = (prevAge <= 0.0) ? filtered : mix(hist, filtered, 1.0 / age);
+    vec3 stab = (prevAge <= 0.0) ? filtered : mix(filtered, hist, historyWeight);
 
-    imageStore(colorimg23, texelPos, vec4(stab, age));
+    // 官方：data1.x += 1 之后按 antilag 拉回（变化大 ⇒ 历史长度回落到 historyFixFrameNum）
+    float ageOut = age;
+    if (prevAge > 0.0) ageOut = mix(min(age, HISTORY_FIX_FRAME_NUM), age, antilag);
+
+    imageStore(colorimg23, texelPos, vec4(stab, ageOut));
 
 #endif
 }

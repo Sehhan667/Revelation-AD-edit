@@ -307,23 +307,11 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     if (_devLen > _gate) {
                         prevDiffuse.rgb = clamp(_histOld, _mu - _tol, _mu + _tol);
                     }
-                    // [⑧ 官方 antilag] 替换此前"裁剪量→加速"的 RELAX 式近似。
-                    // 官方 ReblurAntilagSettings：亮度梯度 delta 与「局部方差 × luminanceSigmaScale」比较，
-                    // 超出阈值即缩短历史（提高 alpha），luminanceSensitivity 控制灵敏度（越小越敏感）。
-                    const float ANTILAG_SIGMA_SCALE = 2.0;   // luminanceSigmaScale
-                    const float ANTILAG_SENSITIVITY = 3.0;   // luminanceSensitivity
-                    float _deltaL = abs(integratedDiffuse.r - _histOld.r);
-                    float _sigmaChar = max(_sigma.r, 1e-5) * ANTILAG_SIGMA_SCALE;
-                    // [噪声地板] delta 是时间维变化量，_sigma 是空间维标准差——两者量纲不同。
-                    // 平滑区域空间 σ≈0 ⇒ 只看空间 σ 会让 1spp 的逐帧噪声**每帧都触发** antilag
-                    //（实测：静止时无法稳定）。真实可分辨的变化至少要是采样噪声量级：
-                    //     noiseFloor ≈ mean / sqrt(a) · k
-                    // a 越大（累积越深）可分辨的变化越小，与官方"按方差自适应"的意图一致。
-                    float _meanHist = max(prevDiffuse.r, 1e-5);
-                    float _noiseFloor = _meanHist * 1.5 * rsqrt(max(integratedDiffuse.a, 1.0));
-                    float _thr = max(max(_sigmaChar * ANTILAG_SENSITIVITY, _noiseFloor), 1e-5);
-                    // 限制单帧贡献（≤0.5）：一次噪声尖峰不应把历史清空。
-                    alpha = max(alpha, saturate((_deltaL - _thr) * rcp(_thr)) * 0.5);
+                    // [官方位置] antilag **不在**主累积里：NRD 的 `ComputeAntilag` 只在
+                    // REBLUR_TemporalStabilization 中调用（TA 只有 convergenceSettings +
+                    // fastHistory clamp）。此前在这里用「裁剪量 → 抬 alpha」是自造近似，
+                    // 每帧都会在噪声幅度内抬高 alpha ⇒ 静止时累积帧数上不去 ⇒ GI 小幅闪。
+                    // 现在统一由 GIStabilize（TS）按官方 mode 2 公式处理，这里不再干预 alpha。
                 }
             #endif
 
