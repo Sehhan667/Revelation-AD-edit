@@ -165,6 +165,8 @@ void main() {
 
 	vec3 centerViewPos = ScreenToViewPosRaw(centerCanvasUv, normalDepthData.z);
 	vec3 centerN = mat3(gbufferModelView) * vec3(OctDecodeSnorm(normalDepthData.xy));
+	// 视锥短边在该深度处的世界尺寸（官方 GetFrustumSize）：几何权重的归一化尺度。
+	float frustumSize = 2.0 * viewDist * rcp(max(gbufferProjection[1][1], 1e-3));
 
 	// 官方 Poisson 盘（REBLUR_POISSON_SAMPLE_NUM = 8）。这里用黄金角 Vogel 螺旋生成 8 个
 	// 等面积样本（比固定表更均匀），再整体按像素/Pass 旋转，等价于官方 rotated Poisson disk。
