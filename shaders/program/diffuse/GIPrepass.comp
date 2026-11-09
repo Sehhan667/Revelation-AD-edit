@@ -52,11 +52,11 @@ layout (rgba16f) restrict uniform image2D colorimg24;   // 输出：r = 方差�
 #define REBLUR_HITDIST_A 3.0
 #define REBLUR_HITDIST_B 0.1
 
-// 官方 diffusePrepassBlurRadius = 30（去噪分辨率像素），且还会按命中距离缩放半径。
-// 这里用 9x9 / 步长 2 ⇒ ±8 画布纹素 = ±16 屏幕像素：比官方小，是为补偿"没有命中距离缩放"
-//（固定 30 会在近处把接触区 GI 抹平）。采样图案固定、不逐帧旋转。
-#define PREPASS_RADIUS_TEXELS 8
-#define PREPASS_STEP 2
+// 官方 diffusePrepassBlurRadius = 30（屏幕像素）。画布是半分辨率 ⇒ 15 画布纹素。
+// 这里取 12（±24 屏幕像素）、步长 3（9x9 = 81 tap）：覆盖接近官方，
+// 1spp 输入先做一次大范围重用，后面的 EAWF 与时域累积面对的不再是孤立噪声。
+#define PREPASS_RADIUS_TEXELS 12
+#define PREPASS_STEP 3
 
 // 官方 lobeAngleFraction = 0.15（漫反射 90° 瓣角的 15% ≈ 13.5°）
 #define LOBE_COS 0.9723699
