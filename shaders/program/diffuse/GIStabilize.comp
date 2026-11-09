@@ -59,7 +59,7 @@ void main() {
     ivec2 rt = texelPos;
 #else
     ivec2 canvasEnd = ivec2(halfViewSize);
-    ivec2 rt = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+    ivec2 rt = texelPos * 2 + GI_CANVAS_PHASE;
 #endif
     if (any(greaterThanEqual(texelPos, canvasEnd))) return;
 
@@ -109,7 +109,7 @@ void main() {
 #ifdef VXGI_FULLRES
     vec2 prevTexelF = prevCoord * viewSize - 0.5;
 #else
-    vec2 prevTexelF = (prevCoord * viewSize - checkerboardOffset2x2[(frameCounter - 1) & 3u] - 0.5) * 0.5;
+    vec2 prevTexelF = (prevCoord * viewSize - GI_CANVAS_PHASE - 0.5) * 0.5;
 #endif
     ivec2 p0 = ivec2(floor(prevTexelF));
     vec2 f = prevTexelF - vec2(p0);

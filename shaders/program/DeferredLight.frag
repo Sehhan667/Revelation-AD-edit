@@ -1024,8 +1024,14 @@ void main() {
                 #ifdef GI_ACTIVE_VXGI
                     #ifdef VOXEL_GI_DENOISE
                         #ifdef SVGF_ENABLED
-                            // UpscaleDiffuseIndirect 返回 YCoCg 空间信号（colortex3 全链路 YCoCg），须显式转回 RGB
-                            voxelGI = YCoCgToRGB(UpscaleDiffuseIndirect(texelPos, viewPos.z));
+                            // UpscaleDiffuseIndirect 返回 YCoCg 空间信号（全链路 YCoCg），须显式转回 RGB
+                            #ifdef VOXEL_GI_NRD_ACTIVE
+                                // 官方 REBLUR 的最终输出是稳定化结果（maxStabilizedFrameNum=63），
+                                // 不是空间滤波输出：后者仍带残余时域起伏（静止小闪的直接来源）。
+                                voxelGI = YCoCgToRGB(UpscaleDiffuseIndirectFrom(colortex23, texelPos, viewPos.z));
+                            #else
+                                voxelGI = YCoCgToRGB(UpscaleDiffuseIndirect(texelPos, viewPos.z));
+                            #endif
                         #else
                             voxelGI = YCoCgToRGB(texelFetch(colortex3, GICanvasCoord(texelPos), 0).rgb);
                         #endif

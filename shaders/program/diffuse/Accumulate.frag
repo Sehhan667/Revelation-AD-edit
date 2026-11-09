@@ -75,7 +75,7 @@ float GICanvasNeighbourViewDepth(in ivec2 canvasTexel) {
 #ifdef VXGI_FULLRES
     ivec2 rt = canvasTexel;
 #else
-    ivec2 rt = canvasTexel * 2 + checkerboardOffset2x2[frameCounter & 3u];
+    ivec2 rt = canvasTexel * 2 + GI_CANVAS_PHASE;
 #endif
     return ScreenToViewDepth(loadDepth0(rt));
 }
@@ -137,7 +137,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         vec2 prevTexel = prevCoord * viewSize - 0.5;
         #else
         vec2 prevTexel = (prevCoord * viewSize
-         - checkerboardOffset2x2[(frameCounter - 1) & 3u]
+         - GI_CANVAS_PHASE
          - 0.5) * 0.5;
         #endif
 
@@ -444,7 +444,7 @@ void main() {
     #ifdef VXGI_FULLRES
     ivec2 renderTexel = texelPos;
     #else
-    ivec2 renderTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+    ivec2 renderTexel = texelPos * 2 + GI_CANVAS_PHASE;
     #endif
     vec2 renderCoord = texelToUv(renderTexel);
 

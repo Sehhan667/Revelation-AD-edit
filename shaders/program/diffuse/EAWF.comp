@@ -293,7 +293,7 @@ void main() {
 #ifdef VXGI_FULLRES
 	ivec2 centerScreenTexel = texelPos;
 #else
-	ivec2 centerScreenTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+	ivec2 centerScreenTexel = texelPos * 2 + GI_CANVAS_PHASE;
 #endif
 	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(centerScreenTexel);
 

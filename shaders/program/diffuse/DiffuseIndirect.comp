@@ -599,7 +599,7 @@ void main() {
 	// 全分辨率：本像素自己就是采样像素（无棋盘相位）
 	ivec2 renderTexel = texelPos;
 	#else
-	ivec2 renderTexel = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+	ivec2 renderTexel = texelPos * 2 + GI_CANVAS_PHASE;
 	#endif
 	#endif
 	float depth = loadDepth0(renderTexel);

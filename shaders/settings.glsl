@@ -329,9 +329,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 光照突变快速响应：已建立像素（a 足够大）且入样与均值偏离很大时，
 	// 临时放大 alpha 让光照变化（火把移动/放挖）快速跟上，避免方块光拖影。 0=关。
 	// ===== REBLUR 式降噪（默认关）=====
-	// 结构：长历史 = **滤波后**结果（稳定、干净）；短历史 = **只累积、不掺滤波**（新鲜，4 帧级）；
-	// 每帧把长历史夹到短历史的邻域 ⇒ 既拿到降噪收益，又不会把细节逐帧滤掉、也不会拖影。
-	// 上次失败的根因：短历史也被滤波回写了（0.5），参考自己滞后 ⇒ 裁剪失效 + 细节衰减。
+	// 结构（对齐 NRD v4.11）：主历史只累积输入信号；短历史提供新鲜参考用于裁剪；
+	// 空间滤波（EAWF）的输出再经稳定化 pass 累积，**稳定化结果才是最终 GI**
+	// （官方 ReblurSettings::maxStabilizedFrameNum，默认 63 帧）。
 	//#define VOXEL_GI_NRD
 	#ifdef VOXEL_GI_NRD
 		// 需要 SVGF(EAWF) 链路：PTGI 中值模式没有可回写的滤波结果
@@ -339,6 +339,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 			#define VOXEL_GI_NRD_ACTIVE
 		#endif
 	#endif
+	// 半分辨率 GI 画布的采样相位见 lib/utility/Offset.glsl 的 GI_CANVAS_PHASE。
 
 /* Ambient Occlusion */
 	#define OFF 0

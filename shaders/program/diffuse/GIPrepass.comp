@@ -64,7 +64,7 @@ void main() {
     ivec2 rt = texelPos;
 #else
     if (any(greaterThanEqual(texelPos, ivec2(halfViewSize)))) return;
-    ivec2 rt = texelPos * 2 + checkerboardOffset2x2[frameCounter & 3u];
+    ivec2 rt = texelPos * 2 + GI_CANVAS_PHASE;
 #endif
 
     float depth = loadDepth0(rt);
@@ -93,7 +93,7 @@ void main() {
 #ifdef VXGI_FULLRES
             float nz = ScreenToViewDepth(loadDepth0(t));
 #else
-            float nz = ScreenToViewDepth(loadDepth0(t * 2 + checkerboardOffset2x2[frameCounter & 3u]));
+            float nz = ScreenToViewDepth(loadDepth0(t * 2 + GI_CANVAS_PHASE));
 #endif
             // 法线来自 colortex14（世界空间方向，跨帧安全）
             vec3 nrm = OctDecodeSnorm(texelFetch(colortex14, t, 0).xy);

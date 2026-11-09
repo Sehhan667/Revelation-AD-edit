@@ -1,20 +1,18 @@
 /*
 --------------------------------------------------------------------------------
-  Revelation-AD-edit  —  REBLUR 式「长历史回写」：把本帧滤波结果写成下一帧的长历史
+  Revelation-AD-edit  —  REBLUR 主历史保留（默认不掺滤波结果，仅保留 A/B 开关）
 --------------------------------------------------------------------------------
 
-  为什么需要：
-  本包原来的顺序是「先累积 1spp 原始样本 → 再空间滤波」。弱光下逐像素 1spp 的相对噪声约 88%
-  （命中率 1~3%），滤波只能把它摊成低频斑块。REBLUR 的顺序相反：**长历史里存滤波后的结果**，
-  时域环看到的是已经平滑的信号，方差逐级衰减而不是每帧重置。
+  官方口径（NRD v4.11）：
+      主历史（main history）只累积**输入信号**；空间滤波结果不写回主历史，
+      它只进入 TemporalStabilization 的稳定化结果（colortex23），作为最终输出。
+  这一点由 README 原文确认："Fast history is the input signal, accumulated for a few frames.
+  Fast history helps to minimize lags in the main history, which is accumulated for more frames."
+  早期版本的「滤波结果回写 0.6」会让空间核逐帧复合，细节被慢慢抹平；
+  现在默认不回写（0.0），仅保留 GI_BISECT bit1 作为 A/B 开关。
 
-  为什么不会像上一版那样「细节越来越少」：
-  长历史每帧都会被 Accumulate 夹到**短历史**（colortex21）的邻域内。短历史只累积、不掺滤波
-  结果（4 帧级新鲜），所以长历史始终被钉在「当前信号附近」，滤波反馈不会逐帧把细节压掉。
-  这是 REBLUR 的关键：**稳定历史 + 每帧夹回新鲜参考**，两者缺一不可。
-
-  本 pass 只写长历史（colortex2）。短历史由 Accumulate 自己按 1/4 混合率写，绝不经过本 pass。
-  关闭（VOXEL_GI_NRD 未定义）时本 pass 不调度，pipeline 与改动前逐位一致。
+  本 pass 因此只做一件事：把 Accumulate 写好的长历史原样保留（可选 A/B 回写）。
+  关闭（VOXEL_GI_NRD 未定义）时本 pass 不调度，pipeline 与改动前一致。
 --------------------------------------------------------------------------------
 */
 
@@ -53,15 +51,14 @@ void main() {
 
     // 此时：colortex2 = Accumulate 本帧的「时域混合」结果（滤波前），.a = 累积帧数 a；
     //       colortex3 = EAWF 四遍滤波后的结果。
+    // 官方口径：主历史不掺空间滤波结果（滤波只进稳定化 colortex23）。
+    // 默认 0.0；GI_BISECT bit1 打开时用 0.6 做 A/B 对比（旧行为）。
+    float _wb = ((GI_BISECT & 2) != 0) ? 0.6 : 0.0;
+    // 不回写时 colortex2 已是 Accumulate 的输出，本 pass 无事可做。
+    if (_wb <= 0.0) return;
+
     vec4 mixed = imageLoad(colorimg2, texelPos);
     vec3 filtered = imageLoad(colorimg3, texelPos).rgb;
-
-    // 回写权重 0.6：全量回写（1.0）会让空间滤波每帧反复作用于自己的输出（等效核半径随帧数变宽）；
-    // 0.6 保留「时域环看到平滑信号」的主要收益，同时给新样本留进入通道。
-    // 细节保护由 Accumulate 的「长历史夹到短历史」负责，不靠这个系数。
-    // GI_BISECT bit1：把回写权重设为 0（history = 时域混合值），用来判断静止不稳
-    // 是否来自"滤波结果回流历史"这个正反馈环。
-    float _wb = ((GI_BISECT & 2) == 0) ? 0.6 : 0.0;
     vec3 history = mix(mixed.rgb, filtered, _wb);
 
     // .a 保留累积帧数（Accumulate 下一帧的计数）；只替换 rgb。
