@@ -38,7 +38,20 @@ const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 //======// Image //===============================================================================//
 
+// a-trous ping-pong：compute pass 不会自动 flip（Iris 只在有片元的程序后 flip），
+// 同一张 image 上 imageLoad 邻居再 imageStore = 同一 dispatch 内的读写竞态。
+// 四个 EAWF pass 在 colortex3 与 colortex25 之间交替读写：
+//   pass0: 3 -> 25 / pass1: 25 -> 3 / pass2: 3 -> 25 / pass3: 25 -> 3（最终结果回到 colortex3）。
 layout (rgba16f) restrict uniform image2D colorimg3;
+layout (rgba16f) restrict uniform image2D colorimg25;
+
+#if (FILTER_PASS_INDEX % 2) == 0
+    #define EAWF_SRC colorimg3
+    #define EAWF_DST colorimg25
+#else
+    #define EAWF_SRC colorimg25
+    #define EAWF_DST colorimg3
+#endif
 
 //======// Uniform //=============================================================================//
 
@@ -121,7 +134,7 @@ void SharedPreload() {
     ivec2 localID = ivec2(localIndex % sharedSize.x, localIndex / sharedSize.x);
 
     ivec2 loadTexel = groupBase + localID;
-    sharedVariance[localID.x][localID.y] = imageLoad(colorimg3, loadTexel).a;
+    sharedVariance[localID.x][localID.y] = imageLoad(EAWF_SRC, loadTexel).a;
 
     for (uint stage = 1u; stage < stageNum; ++stage) {
         localIndex = gl_LocalInvocationIndex + stage * groupArea;
@@ -130,7 +143,7 @@ void SharedPreload() {
             localID = ivec2(localIndex % sharedSize.x, localIndex / sharedSize.x);
 
             loadTexel = groupBase + localID;
-        	sharedVariance[localID.x][localID.y] = imageLoad(colorimg3, loadTexel).a;
+        	sharedVariance[localID.x][localID.y] = imageLoad(EAWF_SRC, loadTexel).a;
         }
     }
 
@@ -176,7 +189,7 @@ void main() {
 	// 透传 colortex3（保持棋盘信号，不做边缘保持滤波）。SSILVB 不受影响（非光追模式正常降噪）。
 	#ifdef GI_ACTIVE_VXGI
 		#ifndef VOXEL_GI_DENOISE
-			imageStore(colorimg3, texelPos, imageLoad(colorimg3, texelPos));
+			imageStore(EAWF_DST, texelPos, imageLoad(EAWF_SRC, texelPos));
 			return;
 		#endif
 	#endif
@@ -185,7 +198,7 @@ void main() {
 	// 屏蔽空间降噪——透传 colortex3（Accumulate 的时域累积结果），不做边缘保持滤波；
 	// 靠时域持续累积收敛，F2 出高画质静帧。关闭宏则此分支不参与，与之前完全一致。
 	#ifdef OFFLINE_RENDER
-		imageStore(colorimg3, texelPos, imageLoad(colorimg3, texelPos));
+		imageStore(EAWF_DST, texelPos, imageLoad(EAWF_SRC, texelPos));
 		return;
 	#endif
 
@@ -211,7 +224,7 @@ void main() {
 	// `colortex22.a`（官方 ReblurHitDistanceParameters 的 saturate(hitDistance / (A + viewZ*B))）。
 	const float MIN_HITDIST_WEIGHT = 0.1;
 	// 声明必须放在所有使用者（fireflyRef / centerLuma）之前，否则 GLSL 报 C1503 undefined。
-	f16vec4 filteredColVar = f16vec4(imageLoad(colorimg3, texelPos));
+	f16vec4 filteredColVar = f16vec4(imageLoad(EAWF_SRC, texelPos));
 	// [⑦ firefly 抑制] 官方 `enableAntiFirefly = true`、`fireflySuppressorMinRelativeScale = 2.0`
 	// （原文：undesired sporadic outliers suppression to keep output stable；smaller = 更强抑制、更大偏差）。
 	// 参考取稳定化辐射（self-guided 引导），把每个 tap 钳到 `参考 × 2`：孤亮点无法主导加权。
@@ -345,7 +358,7 @@ void main() {
 		if (clamp(sampleTexel, ivec2(1), canvasEnd - 2) == sampleTexel) {
 			f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
 
-			f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
+			f16vec4 sampleColVar = f16vec4(imageLoad(EAWF_SRC, sampleTexel));
 			sampleColVar.rgb = min(sampleColVar.rgb, f16vec3(fireflyCeil));   // ⑦ firefly 抑制
 			// 引导亮度取稳定化辐射（见 centerLuma 处说明）；数据仍用本帧滤波对象
 #if defined VOXEL_GI_NRD_ACTIVE
@@ -399,7 +412,7 @@ void main() {
 	        ivec2 sampleTexel = texelPos + ivec2(round(_axis * _len * (_d == 0 ? 1.0 : -1.0)));
 	        if (clamp(sampleTexel, ivec2(1), canvasEnd - 2) == sampleTexel) {
 	            f16vec3 sampleAux = f16vec3(texelFetch(colortex14, sampleTexel, 0).rgb);
-	            f16vec4 sampleColVar = f16vec4(imageLoad(colorimg3, sampleTexel));
+	            f16vec4 sampleColVar = f16vec4(imageLoad(EAWF_SRC, sampleTexel));
 	            sampleColVar.rgb = min(sampleColVar.rgb, f16vec3(fireflyCeil));   // ⑦ firefly 抑制
 #if defined VOXEL_GI_NRD_ACTIVE
 	            float16_t sampleLuma = (GI_BISECT & 1) == 0
@@ -452,7 +465,7 @@ void main() {
 	        for (int _dx = -1; _dx <= 1; ++_dx) {
 	            ivec2 _t = clamp(texelPos + ivec2(_dx, _dy), ivec2(0), canvasEnd - 1);
 	            _ts[_k] = _t;
-	            _ys[_k] = float(imageLoad(colorimg3, _t).r);
+	            _ys[_k] = float(imageLoad(EAWF_SRC, _t).r);
 	            _oi[_k] = _k;
 	            ++_k;
 	        }
@@ -468,9 +481,9 @@ void main() {
 	            _oi[_b + 1] = _key;
 	        }
 	    }
-	    filteredColVar = f16vec4(imageLoad(colorimg3, _ts[_oi[4]]));
+	    filteredColVar = f16vec4(imageLoad(EAWF_SRC, _ts[_oi[4]]));
 	}
 	#endif
 
-	imageStore(colorimg3, texelPos, min(filteredColVar, FP16_MAX));
+	imageStore(EAWF_DST, texelPos, min(filteredColVar, FP16_MAX));
 }

@@ -65,6 +65,8 @@
 	// REBLUR prepass 的方差输出（官方在 prepass 里用空间重用样本的离散度估方差）。
 	// r = 方差；其余通道留空。
 	const int 	colortex24Format 			= RGBA16F;
+	// EAWF a-trous ping-pong scratch（compute pass 不自动 flip，原地读写会竞态）
+	const int 	colortex25Format 			= RGBA16F;
 	const int 	colortex23Format 			= RGBA16F;
 	const int 	colortex22Format 			= RGBA16F;
 	const int 	colortex21Format 			= RGBA16F;
@@ -99,6 +101,7 @@
 	const bool 	colortex22Clear			= true;
 	const bool 	colortex23Clear			= false;   // 时域缓冲，必须保留
 	const bool 	colortex24Clear			= true;   // 每帧重写
+	const bool 	colortex25Clear			= false;  // EAWF 每遍全量覆盖，不需要清
 
 	const vec4	colortex6ClearColor			= vec4(0.0, 0.0, 0.0, 1.0);
 
