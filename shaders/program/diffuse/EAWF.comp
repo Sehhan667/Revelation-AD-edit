@@ -230,7 +230,13 @@ void main() {
 	// 参考取稳定化辐射（self-guided 引导），把每个 tap 钳到 `参考 × 2`：孤亮点无法主导加权。
 	const float FIREFLY_SCALE = 2.0;
 #ifdef VOXEL_GI_NRD_ACTIVE
-	vec3 fireflyRef = texelFetch(colortex23, texelPos, 0).rgb;
+	// 稳定化缓冲是屏幕空间的，没有重投影：新暴露像素的 colortex23 里还是**旧表面**的值。
+	// 直接拿它当引导/火fly参考，会把新像素按旧值压住 ⇒ 移动时新像素剧烈跳。
+	// 用本像素的累积帧数给 guide 加权：a≤2 完全不信（用自身），a≥10 完全信稳定化值。
+	float _histLenC = texelFetch(colortex2, texelPos, 0).a;
+	float _guideTrustC = saturate((_histLenC - 2.0) * 0.125);
+	vec3 _stabC = texelFetch(colortex23, texelPos, 0).rgb;
+	vec3 fireflyRef = mix(filteredColVar.rgb, _stabC, _guideTrustC);
 #else
 	vec3 fireflyRef = filteredColVar.rgb;   // 非 NRD：没有稳定化缓冲，用自身当参考
 #endif
@@ -238,6 +244,10 @@ void main() {
 	// 退回用本帧滤波对象自身作为参考（等价于"这一帧不做额外抑制"）。
 	if (max(max(fireflyRef.r, fireflyRef.g), fireflyRef.b) <= 1e-6) fireflyRef = filteredColVar.rgb;
 	vec3 fireflyCeil = max(fireflyRef, vec3(1e-6)) * FIREFLY_SCALE;
+#ifdef VOXEL_GI_NRD_ACTIVE
+	// 新像素（历史很短）不参与火fly钳制：参考本身不可信，钳了反而把真实亮部压掉。
+	if (_guideTrustC < 0.05) fireflyCeil = vec3(FP16_MAX);
+#endif
 	// [③ self-guided] 官方 REBLUR 的空间滤波是 self-guided：引导信号用**稳定化后的历史**
 	// (stabilized radiance，我们放在 colortex23)，而不是当前噪声输入。这样边缘保持权重
 	// 不会随每帧噪声跳动 —— 这正是官方消除滤波输出残余起伏的办法。
@@ -245,7 +255,7 @@ void main() {
 #if defined VOXEL_GI_NRD_ACTIVE
 	// GI_BISECT bit0：临时退回"噪声输入引导"，用来判断静止不稳是否来自稳定化引导
 	float16_t centerLuma = (GI_BISECT & 1) == 0
-	    ? float16_t(texelFetch(colortex23, texelPos, 0).r)
+	    ? float16_t(mix(filteredColVar.r, _stabC.r, _guideTrustC))
 	    : filteredColVar.r;
 	if (centerLuma <= 1e-6) centerLuma = filteredColVar.r;
 #else
@@ -360,11 +370,15 @@ void main() {
 
 			f16vec4 sampleColVar = f16vec4(imageLoad(EAWF_SRC, sampleTexel));
 			sampleColVar.rgb = min(sampleColVar.rgb, f16vec3(fireflyCeil));   // ⑦ firefly 抑制
-			// 引导亮度取稳定化辐射（见 centerLuma 处说明）；数据仍用本帧滤波对象
+			// 引导亮度取稳定化辐射（见 centerLuma 处说明）；数据仍用本帧滤波对象。
+			// tap 的 guide 同样按该 tap 的累积帧数加权（新暴露 tap 用自身亮度，避免跨表面误拒）。
 #if defined VOXEL_GI_NRD_ACTIVE
-			float16_t sampleLuma = (GI_BISECT & 1) == 0
-			    ? float16_t(texelFetch(colortex23, sampleTexel, 0).r)
-			    : sampleColVar.r;
+			float16_t sampleLuma;
+			if ((GI_BISECT & 1) == 0) {
+			    float _tapLen = texelFetch(colortex2, sampleTexel, 0).a;
+			    float _tapTrust = saturate((_tapLen - 2.0) * 0.125);
+			    sampleLuma = float16_t(mix(sampleColVar.r, float(texelFetch(colortex23, sampleTexel, 0).r), _tapTrust));
+			} else sampleLuma = sampleColVar.r;
 			if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 #else
 			float16_t sampleLuma = sampleColVar.r;
@@ -415,9 +429,12 @@ void main() {
 	            f16vec4 sampleColVar = f16vec4(imageLoad(EAWF_SRC, sampleTexel));
 	            sampleColVar.rgb = min(sampleColVar.rgb, f16vec3(fireflyCeil));   // ⑦ firefly 抑制
 #if defined VOXEL_GI_NRD_ACTIVE
-	            float16_t sampleLuma = (GI_BISECT & 1) == 0
-	                ? float16_t(texelFetch(colortex23, sampleTexel, 0).r)
-	                : sampleColVar.r;
+	            float16_t sampleLuma;
+	            if ((GI_BISECT & 1) == 0) {
+	                float _tapLen = texelFetch(colortex2, sampleTexel, 0).a;
+	                float _tapTrust = saturate((_tapLen - 2.0) * 0.125);
+	                sampleLuma = float16_t(mix(sampleColVar.r, float(texelFetch(colortex23, sampleTexel, 0).r), _tapTrust));
+	            } else sampleLuma = sampleColVar.r;
 	            if (sampleLuma <= 1e-6) sampleLuma = sampleColVar.r;
 #else
 	            float16_t sampleLuma = sampleColVar.r;
