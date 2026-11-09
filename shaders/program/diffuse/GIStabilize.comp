@@ -108,11 +108,8 @@ void main() {
     vec3 sigma = sqrt(max(m2 * rcp(9.0) - mu * mu, vec3(0.0)));
 
     // RCRS：把本帧结果的亮度夹到邻域范围（官方在 TS 里做，Blur 不做）。
-    // YCoCg 下亮度就是 .r，整体缩放 xyz 等价于官方的 ChangeLuma。
-    if (filtered.r > 1e-6) {
-        float newLuma = clamp(filtered.r, lumaMin, lumaMax);
-        filtered *= newLuma * rcp(filtered.r);
-    }
+    // 只替换亮度分量：整体缩放在暗部（Y 很小）会把色差噪声同比放大 ⇒ 弱光下越描越脏。
+    if (filtered.r > 1e-6) filtered.r = clamp(filtered.r, lumaMin, lumaMax);
 
     // 重投影：本帧画布 texel 的世界点 → 上一帧屏幕 → 上一帧画布 texel
     // 注意 rt 是**屏幕**纹素（不是画布纹素），UV 必须按全分辨率像素尺寸换算。
@@ -194,7 +191,10 @@ void main() {
     historyWeight *= antilag;
     historyWeight = saturate(historyWeight);
 
-    vec3 tol = sigma * (1.0 + 3.0 * framerateScale * historyWeight) + vec3(0.01);
+    // 相对地板 mu*0.1：弱光下 sigma/μ 比值很高，纯 sigma 容差会让长历史每帧都被拉向
+    // 本帧噪声（实测：暗处静止也在持续蠕动，且越暗越明显）。给一个 10% 的亮度相对容差，
+    // 噪声幅度内的偏差就不再触发 clamp，只有真实变化（火把/开灯）才会拉动历史。
+    vec3 tol = sigma * (1.0 + 3.0 * framerateScale * historyWeight) + mu * 0.1 + vec3(0.01);
     vec3 hist = clamp(prev.rgb, mu - tol, mu + tol);
 
     float age = (prevAge <= 0.0) ? 1.0 : min(prevAge + 1.0, cap);

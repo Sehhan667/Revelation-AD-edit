@@ -144,11 +144,10 @@ void main() {
 	// 即时值，逐帧抖动会让半径/采样图案跟着跳（实测＝静止时斑块扭动）。命中距离缩放只留在 prepass。
 	float fade = saturate(frameIndex * rcp(max(SSILVB_MAX_ACCUM_FRAMES, 1.0)));   // N / maxAccum
 	float nonLinearSpeed = rcp(1.0 + fade * max(frameIndex, 1.0));
-	// 下限 1.0：官方基础 blurRadius 是 30 px（全分辨率），我们的基础只有 8 画布纹素
-	//（=16 屏幕像素）。再乘 nonLinearAccumSpeed 会把稳定像素的四级覆盖压到 ~6 纹素，
-	// 时域残噪（~1/sqrt(N)）直接裸露 ⇒ 表现为"站得越久噪点越密"。
-	// 稳定像素保持满核（图案固定、不随时间变），新像素另由 stepBoost 额外放大。
-	float radiusScale = max(sqrt(nonLinearSpeed), 1.0);
+	// 下限 0.5：满核（1.0）在稳定像素上等于 16 屏幕像素的大核，半分辨率画布上会形成
+	// "大团斑块"；而按 nonLinearAccumSpeed 收到 0 又会露出时域残噪。取中间值：
+	// 最后一个 pass 约 4 画布纹素（8 屏幕像素），既能压残噪又不产生团块。
+	float radiusScale = max(sqrt(nonLinearSpeed), 0.5);
 
 	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost * radiusScale;
 	// 每轴至少 1 px：掠射面上 offsetScaleBase 会被压到 <0.5，整列 tap 塌到中心 ⇒ 9-tap 退化成 1D 条带。

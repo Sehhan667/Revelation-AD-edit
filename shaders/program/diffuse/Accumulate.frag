@@ -300,9 +300,12 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     // [门控] 参考（短历史）本身每帧在变，5×5 的 μ/σ 也跟着变。若每帧都裁剪，
                     // 60 帧的长历史会被反复拉向噪声 ⇒ 静止永远不稳（实测两轮）。
                     // 只处理"真实变化"：偏差超过 max(3σ, 50%·μ) 才裁剪，噪声幅度内完全不碰。
+                    // 门控再加绝对地板 0.02：弱光下 μ/σ 都极小，`max(3σ, 0.5μ)` 会小到
+                    // 噪声幅度之外，于是长历史每帧都被拉向 6 帧的短历史 ⇒ 暗处静止也持续蠕动。
+                    // 0.02 在亮处可忽略，在暗部（Y≈0.02）等于 100% ⇒ 噪声完全不动历史。
                     float _devMax = max(max(_sigma.r, _sigma.g), _sigma.b);
                     float _muMax  = max(max(_mu.r, _mu.g), _mu.b);
-                    float _gate   = max(3.0 * _devMax, 0.5 * _muMax);
+                    float _gate   = max(3.0 * _devMax, 0.5 * _muMax) + 0.02;
                     float _devLen = length(_histOld - _mu);
                     if (_devLen > _gate) {
                         prevDiffuse.rgb = clamp(_histOld, _mu - _tol, _mu + _tol);
