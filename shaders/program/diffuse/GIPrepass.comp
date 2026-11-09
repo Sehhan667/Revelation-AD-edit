@@ -77,15 +77,9 @@ void main() {
     vec3 centerN = mat3(gbufferModelView) * normal;                      // 视空间（切平面判据用）
     vec3 centerViewPos = ScreenToViewPosRaw((vec2(rt) + 0.5) * viewPixelSize, viewZ);
 
-    // 官方 prepass 同样按命中距离缩放半径：`blurRadius *= sqrt( hitDistFactor )`，其中
-    // hitDistFactor = saturate( hitDistance / frustumSize )。接触区（命中距离近）半径收小
-    // 以保住接触阴影，远处再扩张压噪。
-    float hitDistCenter = max(texelFetch(colortex3, texelPos, 0).a, 0.0);
-    float frustumSize = 2.0 * max(abs(viewZ), 1e-3) * rcp(max(gbufferProjection[1][1], 1e-3));
-    float hitDistFactor = saturate(hitDistCenter * rcp(max(frustumSize, 1e-3)));
-    float prepassRadius = float(PREPASS_RADIUS_TEXELS) * sqrt(max(hitDistFactor, 0.05));
-    // 下限 2 个画布纹素（= 4 屏幕像素）：半径完全塌到中心时空间重用会失效。
-    float prepassRadius2 = max(prepassRadius * prepassRadius, 4.0);
+    // 半径固定。官方 prepass 也乘 sqrt(hitDistFactor)，但官方的 hitDistance 是**时域累积**量；
+    // 我们的命中距离是 1spp 即时值，逐帧抖动会让整个 prepass 的采样图案在静止时扭动。
+    float prepassRadius2 = float(PREPASS_RADIUS_TEXELS * PREPASS_RADIUS_TEXELS);
 
     // 注意：image2D 只能用 imageSize()，不能用 textureSize()（后者是 sampler 的重载）。
     // 这里直接用视口尺寸，语义等价且无重载风险。
