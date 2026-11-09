@@ -77,6 +77,16 @@ void main() {
     vec3 centerN = mat3(gbufferModelView) * normal;                      // 视空间（切平面判据用）
     vec3 centerViewPos = ScreenToViewPosRaw((vec2(rt) + 0.5) * viewPixelSize, viewZ);
 
+    // 官方 prepass 同样按命中距离缩放半径：`blurRadius *= sqrt( hitDistFactor )`，其中
+    // hitDistFactor = saturate( hitDistance / frustumSize )。接触区（命中距离近）半径收小
+    // 以保住接触阴影，远处再扩张压噪。
+    float hitDistCenter = max(texelFetch(colortex3, texelPos, 0).a, 0.0);
+    float frustumSize = 2.0 * max(abs(viewZ), 1e-3) * rcp(max(gbufferProjection[1][1], 1e-3));
+    float hitDistFactor = saturate(hitDistCenter * rcp(max(frustumSize, 1e-3)));
+    float prepassRadius = float(PREPASS_RADIUS_TEXELS) * sqrt(max(hitDistFactor, 0.05));
+    // 下限 2 个画布纹素（= 4 屏幕像素）：半径完全塌到中心时空间重用会失效。
+    float prepassRadius2 = max(prepassRadius * prepassRadius, 4.0);
+
     // 注意：image2D 只能用 imageSize()，不能用 textureSize()（后者是 sampler 的重载）。
     // 这里直接用视口尺寸，语义等价且无重载风险。
 #ifdef VXGI_FULLRES
@@ -95,6 +105,8 @@ void main() {
     for (int dy = -PREPASS_RADIUS_TEXELS; dy <= PREPASS_RADIUS_TEXELS; dy += PREPASS_STEP) {
         for (int dx = -PREPASS_RADIUS_TEXELS; dx <= PREPASS_RADIUS_TEXELS; dx += PREPASS_STEP) {
             ivec2 t = texelPos + ivec2(dx, dy);
+            float _r2 = float(dx * dx + dy * dy);
+            if (_r2 > prepassRadius2) continue;   // 命中距离缩放后的有效半径
             if (clamp(t, ivec2(1), canvasEnd - 2) != t) continue;
             // 同帧视深 + 同帧法线（法线不能再取 colortex14：那是上一帧的，跨帧混用会在运动时误拒）
 #ifdef VXGI_FULLRES
@@ -116,7 +128,7 @@ void main() {
             float w = saturate(1.0 - planeDist / planeTol);
             // 法线拒判：夹角上限 = 瓣角 × lobeAngleFraction（官方 lobeAngleFraction）
             w *= smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, dot(tapN, normal));
-            w *= 1.0 / (1.0 + float(dx * dx + dy * dy) * 0.01);          // 径向衰减
+            w *= exp(-2.0 * _r2 / prepassRadius2);                       // 高斯（官方 GetGaussianWeight）
 
             sum += tapCol * w;
             hitSum += max(tapSample.a, 0.0) * w;
