@@ -106,6 +106,12 @@ void main() {
     // GIPrepass 单独做时域平滑）。这里只把 TA 的累积结果搬到 colortex3 供 EAWF 读取，
     // 省掉 shared preload 与 3x3 矩计算。
 #ifdef VOXEL_GI_NRD_ACTIVE
+    ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+    #ifdef VXGI_FULLRES
+        if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+    #else
+        if (any(greaterThanEqual(texelPos, ivec2(halfViewSize)))) return;
+    #endif
     vec4 _accum = texelFetch(colortex2, texelPos, 0);
     imageStore(colorimg3, texelPos, vec4(_accum.rgb, 0.0));
     return;
