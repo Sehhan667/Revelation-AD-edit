@@ -528,8 +528,14 @@ void main() {
             //          稳定不动但画面仍闪 ⇒ 闪来自采样或上游。
             finalOut = vec3(saturate(_dbgDelta * 2.0), saturate(1.0 - _dbgDelta * 2.0), 0.0);
         } else if (GI_DEBUG_VIEW == 4) {
-            // 4：左半屏 = 累积(未滤波)，右半屏 = 空间滤波后 —— 直接对比两者
-            finalOut = (texelPos.x < int(viewSize.x * 0.5)) ? _dbgHist.rgb : _dbgFilt.rgb;
+            // 4：左半屏 = 累积(colortex2)，右半屏 = 最终 GI(colortex23，即 DeferredLight 真正用的那份)
+            // 两者都是**线性 HDR**，没有曝光/色调映射，典型值只有 1e-3 量级：直接显示必然一片黑，
+            // 只能看到极少数最亮的点（观感就是"黑底上撒细小红点"）。统一乘 8 增益才能判读。
+            // 判读：右半屏有正常结构 = 最终 GI 有信号；右半屏纯黑 = GI 输出被清空（查天空早退/写入）。
+            const float _DBG_GAIN = 8.0;
+            finalOut = (texelPos.x < int(viewSize.x * 0.5))
+                     ? _dbgHist.rgb * _DBG_GAIN
+                     : texelFetch(colortex23, _dbgT, 0).rgb * _DBG_GAIN;
         } else if (GI_DEBUG_VIEW == 5) {
             // 5：历史长度直方图（分档上色），用来快速看出"整体历史长度"是否健康
             // 归一化基准必须是**本帧真实累积上限**，不能是 SSILVB_MAX_ACCUM_FRAMES：
