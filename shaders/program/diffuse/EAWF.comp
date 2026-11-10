@@ -39,11 +39,20 @@ const vec2 workGroupsRender = vec2(0.5, 0.5);
 // a-trous ping-pong：compute pass 不会自动 flip（Iris 只在有片元的程序后 flip），
 // 同一张 image 上 imageLoad 邻居再 imageStore = 同一 dispatch 内的读写竞态。
 // 四个 pass 在 colortex3 与 colortex25 之间交替读写：
-//   pass0: 3 -> 25 / pass1: 25 -> 3 / pass2: 3 -> 25 / pass3: 25 -> 3（最终结果回到 colortex3）。
+//   pass0: 2 -> 25 / pass1: 25 -> 3 / pass2: 3 -> 25 / pass3: 25 -> 3（最终结果回到 colortex3）。
+//
+// pass0 的源必须是 **colortex2（Accumulate 的累积结果）**，不能是 colortex3：
+// 官方 REBLUR 的顺序是 PrePass -> Accumulate -> Blur，空间滤波作用于**已累积**信号。
+// colortex3 只是 deferred1_a 的 1spp 原始追踪输出；直接拿它当滤波源，prepass 的
+// 30 纹素稠密化与时域累积就全部被绕过（表现为满屏"被抹过但仍在跳"的噪点）。
+layout (rgba16f) restrict readonly uniform image2D colorimg2;   // Accumulate 累积结果（仅 pass0 读）
 layout (rgba16f) restrict uniform image2D colorimg3;
 layout (rgba16f) restrict uniform image2D colorimg25;
 
-#if (FILTER_PASS_INDEX % 2) == 0
+#if FILTER_PASS_INDEX == 0
+    #define EAWF_SRC colorimg2
+    #define EAWF_DST colorimg25
+#elif (FILTER_PASS_INDEX % 2) == 0
     #define EAWF_SRC colorimg3
     #define EAWF_DST colorimg25
 #else
