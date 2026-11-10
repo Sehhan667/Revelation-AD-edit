@@ -490,11 +490,16 @@ void main() {
     #endif
 
     // ===== 临时探针（排查用）=====
-    // VOXEL_GI_NRD_ACTIVE 已定义 ⇒ 整屏偏绿；未定义则画面保持原样。
-    // 只看一眼就能判断 REBLUR 链到底有没有编进程序，不需要打开任何诊断视图。
-    #ifdef VOXEL_GI_NRD_ACTIVE
-        finalOut = mix(finalOut, vec3(0.0, 1.0, 0.0), 0.30);
-    #endif
+    // 左上角 96x96 的纯色块，**无条件**执行（不依赖任何开关），OIT 无关：
+    //   R 通道 = 1 → GI_MODE 在编译期确实是 2
+    //   G 通道 = 1 → VOXEL_GI_DENOISE_MODE 确实是 0
+    //   B 通道 = 1 → 本段代码确实参与编译（蓝是常量 1）
+    // 所以读数：白 = 两个条件都对；蓝 = 该段在跑但两个条件都不满足；黑 = 这段根本没编进去。
+    if (all(lessThan(texelPos, ivec2(96)))) {
+        finalOut = vec3(step(2.0, float(GI_MODE)),
+                        step(0.5, 1.0 - float(VOXEL_GI_DENOISE_MODE)),
+                        1.0);
+    }
 
     // ===== GI 诊断视图（GI_DEBUG_VIEW；0=关闭）=====
     // 放在最后一个 pass ⇒ 不受曝光/色调映射/TAA 影响，颜色可以直接当读数。
