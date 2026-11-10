@@ -41,6 +41,7 @@ const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 layout (rgba16f) restrict uniform image2D colorimg22;   // 输出：rgb = 重用后输入，a = 归一化命中距离
 layout (rgba16f) restrict uniform image2D colorimg24;   // 输出：r = 方差（官方在 prepass 里估方差）
+layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时域平滑后的归一化命中距离
 
 #include "/lib/universal/Uniform.glsl"
 #include "/lib/universal/Transform.glsl"
@@ -146,6 +147,14 @@ void main() {
     float normHit = saturate(hitDist * rcp(REBLUR_HITDIST_A + abs(viewZ) * REBLUR_HITDIST_B));
 
     imageStore(colorimg22, texelPos, vec4(reused, normHit));
+
+    // [命中距离时域平滑] 官方 Blur 的 `minHitDistanceWeight` 与 `sqrt(hitDistFactor)` 缩半径
+    // 都假设命中距离是**稳定量**。我们的 hitDist 是 1spp 即时值（这里只做了空间平均），
+    // 逐帧抖动会让整套采样图案跟着跳。用 EMA 把它稳下来（同一 invocation 先读后写，安全）。
+    // 历史无值（首帧 / 刚清除）时直接取本帧。
+    float prevHit = imageLoad(colorimg26, texelPos).r;
+    float smoothedHit = prevHit > 0.0 ? mix(prevHit, normHit, 0.15) : normHit;
+    imageStore(colorimg26, texelPos, vec4(smoothedHit, 0.0, 0.0, 1.0));
 
     // 加权方差：E[x²] - E[x]²（与 VarianceEstimate 的尺度保持一致：×16）
     float meanL = wSum > 1e-4 ? lSum / wSum : 0.0;

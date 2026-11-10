@@ -149,7 +149,12 @@ void main() {
 	// 最后一个 pass 约 4 画布纹素（8 屏幕像素），既能压残噪又不产生团块。
 	float radiusScale = max(sqrt(nonLinearSpeed), 0.5);
 
-	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost * radiusScale;
+	// 命中距离缩放半径（官方）：命中距离大 ⇒ 该处平坦/信号可靠，可用大核；命中距离小
+	//（接触区/自遮挡）⇒ 收小保细节。用 colortex26 的时域平滑值，避免逐帧抖动带跑采样图案；
+	// 下限 0.08 防止半径塌成 0（此时完全退化成无滤波）。
+	float hitDistFactor = sqrt(max(texelFetch(colortex26, texelPos, 0).r, 0.08));
+
+	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost * radiusScale * hitDistFactor;
 	// 每轴至少 1 px：掠射面上 offsetScaleBase 会被压到 <0.5，整列 tap 塌到中心 ⇒ 9-tap 退化成 1D 条带。
 	offsetScale = max(offsetScale, vec2(1.0));
 
@@ -200,7 +205,31 @@ void main() {
 			postSum += sampleColVar.rgb * f16vec3(w);
 			postW += w;
 		}
-		imageStore(EAWF_DST, texelPos, min(f16vec4(postSum * f16vec3(rcp(postW)), centerSample.a), FP16_MAX));
+		f16vec3 postResult = postSum * f16vec3(rcp(postW));
+
+#ifdef VOXEL_GI_FIREFLY_MEDIAN
+		// 可选：3x3 亮度中值（GUI 项，默认关）。官方用 TA 的 fireflySuppressor，这里保留为
+		// 用户可选的额外手段——只替换亮度分量，色差不动。
+		{
+			float _l[9];
+			int _n = 0;
+			_l[_n++] = postResult.r;
+			for (int i = 0; i < 8; ++i) {
+				ivec2 smp = texelPos + postOff[i];
+				if (clamp(smp, ivec2(1), canvasEnd - 2) != smp) continue;
+				_l[_n++] = f16vec4(imageLoad(EAWF_SRC, smp)).r;
+			}
+			for (int i = 1; i < _n; ++i) {          // 插入排序
+				float v = _l[i];
+				int j = i - 1;
+				while (j >= 0 && _l[j] > v) { _l[j + 1] = _l[j]; --j; }
+				_l[j + 1] = v;
+			}
+			postResult.r = _l[_n / 2];
+		}
+#endif
+
+		imageStore(EAWF_DST, texelPos, min(f16vec4(postResult, centerSample.a), FP16_MAX));
 		return;
 	}
 #endif
@@ -233,9 +262,11 @@ void main() {
 		float _nd = dot(OctDecodeSnorm(sampleAux.xy), vec3(OctDecodeSnorm(normalDepthData.xy)));
 		w *= smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, _nd);
 
-		// 命中距离：越近的样本越易受遮挡影响 ⇒ 降权（官方 minHitDistanceWeight）
+		// 命中距离：越远（信号越可靠）权重越高（官方 GetHitDistanceWeight）。
+		// 用 colortex26 的时域平滑值 —— 逐帧抖动的 hitDist 会让同一像素的权重每帧都变，
+		// 采样图案跟着跳，这也是"静止仍在扭动"的一条来源。
 #ifdef VOXEL_GI_NRD_ACTIVE
-		w *= mix(MIN_HITDIST_WEIGHT, 1.0, saturate(float(texelFetch(colortex22, smp, 0).a)));
+		w *= mix(MIN_HITDIST_WEIGHT, 1.0, saturate(texelFetch(colortex26, smp, 0).r));
 #endif
 
 		// 高斯：官方 GetGaussianWeight( offset.z )，offset.z 是该样本在盘内的归一化半径

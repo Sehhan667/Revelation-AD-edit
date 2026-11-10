@@ -316,6 +316,23 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     // 每帧都会在噪声幅度内抬高 alpha ⇒ 静止时累积帧数上不去 ⇒ GI 小幅闪。
                     // 现在统一由 GIStabilize（TS）按官方 mode 2 公式处理，这里不再干预 alpha。
                 }
+
+                // [官方 fireflySuppressorMinRelativeScale = 2.0] **位置在 TA，不在 Blur/TS**。
+                // 判据：短历史的邻域**最小值**若不到长历史亮度的 1/2，说明长历史里是孤立亮点
+                //（1spp 追踪偶发的超大辐射），会被锁进 63 帧长历史 ⇒ 零星亮闪。
+                // 注意 RCRS 替代不了：它把亮度夹到邻域 min/max，而孤立极大值自己就是 max。
+                {
+                    float _minFastL = prevFast.r;
+                    for (int _fy = -1; _fy <= 1; ++_fy)
+                    for (int _fx = -1; _fx <= 1; ++_fx) {
+                        ivec2 _t = texelPos + ivec2(_fx, _fy);
+                        if (clamp(_t, ivec2(0), canvasEnd - 1) != _t) continue;
+                        _minFastL = min(_minFastL, texelFetch(colortex21, _t, 0).r);
+                    }
+                    // 压到邻域最小值附近而不是清零：清零会让该像素输出接近 0（黑块）。
+                    float _ceil = _minFastL * 2.0;
+                    if (prevDiffuse.r > _ceil) prevDiffuse.rgb = min(prevDiffuse.rgb, vec3(_ceil));
+                }
             #endif
 
             // [2026-08-28 ] 时域累积的连续衰减已由上方 maxGeometryWeight 接管（静止≈1 深累积、
