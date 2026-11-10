@@ -333,11 +333,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 空间滤波（EAWF）的输出再经稳定化 pass 累积，**稳定化结果才是最终 GI**
 	// （官方 ReblurSettings::maxStabilizedFrameNum，默认 63 帧）。
 	#define VOXEL_GI_NRD // REBLUR 式降噪开关（需要 VXGI + SVGF 链路）
-	#ifdef VOXEL_GI_NRD
-		// 需要 SVGF(EAWF) 链路：PTGI 中值模式没有可回写的滤波结果
-		#if defined GI_ACTIVE_VXGI && defined VOXEL_GI_DENOISE && VOXEL_GI_DENOISE_MODE == 0
-			#define VOXEL_GI_NRD_ACTIVE
-		#endif
+	// 临时硬接线：只按 GI_MODE / 降噪模式判定，不再依赖 VOXEL_GI_NRD / VOXEL_GI_DENOISE
+	// 这两个开关是否被正确注入（排查用，确认后再恢复条件判定）。
+	#if GI_MODE == 2 && VOXEL_GI_DENOISE_MODE == 0
+		#define VOXEL_GI_NRD_ACTIVE
 	#endif
 	// 半分辨率 GI 画布的采样相位见 lib/utility/Offset.glsl 的 GI_CANVAS_PHASE。
 
