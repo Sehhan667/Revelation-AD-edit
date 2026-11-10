@@ -1,0 +1,185 @@
+/*
+--------------------------------------------------------------------------------
+  Revelation-AD-edit  —  REBLUR HistoryFix
+--------------------------------------------------------------------------------
+
+  官方 NRD `ReblurSettings`：
+      // (pixels) - history fix pass, pixel stride
+      float historyFixBasePixelStride = 14.0f;
+      // [0; max] - a maximum number of linearly accumulated frames to fix
+      uint32_t historyFixFrameNum = 3;
+
+  官方管线顺序（`Reblur_DiffuseDenoiser`）：
+      DiffusePrePass → **HistoryFix** → DiffuseTemporalAccumulation → Blur → TemporalStabilization
+  即 HistoryFix 在**累积之前**、作用于**历史缓冲本身**：历史坏掉的像素先用邻居里
+  仍然有效的历史把它填上，然后 Accumulate 走正常路径继续累积（而不是"先拒绝历史、
+  再从本帧噪声重建、再把重建值写回历史"——那会一代一代自我复制，表现为快速转头时
+  出现几帧才消散的大团斑块）。
+
+  本 pass 的位置：deferred1_c（GIPrepass 之后、Accumulate 之前）。
+      · 输入  colortex2  上一帧的长历史（rgb = YCoCg 辐射，a = 已累积帧数）
+              colortex14 上一帧的法线(xy) / 视深(z) / 去遮挡标记(a)  —— 与历史同源同纹素
+              colortex22 本帧 prepass 的 30px 空间重用结果（无有效邻居时的起点）
+              depthtex0  本帧深度（同帧几何判据）
+      · 输出  colortex25 修复后的历史 —— 由 Accumulate 当作历史读取。
+    为什么写 colortex25 而不是就地写 colortex2：compute pass 不会自动 flip（见
+    EAWF.comp 顶部注释），同一个 dispatch 里"读 colortex2 + 写 colorimg2"是读写竞态。
+    colortex25 在此时刻没有读者（EAWF 的乒乓在后面的 pass 才用到它）。
+
+  与官方一致的两条硬约束：
+    1. **只从仍然有效的历史继承**（官方要求邻居 historyLength ≥ 1）。以前的重建路径
+       不检查邻居是否也坏 ⇒ 全屏失效时用噪声去重建噪声，团块会自我维持好几帧。
+    2. 继承**历史长度**（上限 historyFixFrameNum = 3）。长度恒为 1 时 alpha ≈ 0.83，
+       新像素每帧 83% 用单采样 ⇒ 亮暗抖动；继承后 alpha ≈ 0.25，几帧内收敛。
+--------------------------------------------------------------------------------
+*/
+
+//======// Input //===============================================================================//
+
+layout (local_size_x = 8, local_size_y = 8) in;
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+#ifdef VXGI_FULLRES
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+#else
+const vec2 workGroupsRender = vec2(0.5, 0.5);
+#endif
+
+//======// Uniform //=============================================================================//
+
+layout (rgba16f) restrict uniform image2D colorimg25;   // 修复后的历史（下一帧 Accumulate 的输入）
+
+#include "/lib/universal/Uniform.glsl"
+#include "/lib/universal/Transform.glsl"
+#include "/lib/universal/Fetch.glsl"
+
+//======// Function //============================================================================//
+
+// 官方默认值
+#define HISTORY_FIX_FRAME_NUM 3.0   // historyFixFrameNum：修复后继承的帧数上限
+// 官方 historyFixBasePixelStride = 14（屏幕像素）。画布是半分辨率 ⇒ 7 纹素；
+// 全分辨率模式（VOXEL_GI_FULLRES）下画布 = 屏幕，直接用 14。
+#ifdef VXGI_FULLRES
+#define HISTORY_FIX_STRIDE 14
+#else
+#define HISTORY_FIX_STRIDE 7
+#endif
+// 官方 planeDistanceSensitivity = 0.02（相对视锥短边世界尺寸）
+#define PLANE_DIST_SENS 0.02
+// 法线判据：同表面才继承。阈值比 EAWF 宽（0.4），因为这里比的是上一帧存下的法线，
+// 掠射面在跨帧量化后会有几度误差；过严会让掠射面整片找不到可用邻居。
+#define NORMAL_COS_MIN 0.4
+#define NORMAL_COS_MAX 0.9
+
+void main() {
+    ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+
+#ifdef VXGI_FULLRES
+    ivec2 canvasEnd = ivec2(viewSize);
+    ivec2 rt = texelPos;
+#else
+    ivec2 canvasEnd = ivec2(halfViewSize);
+    ivec2 rt = texelPos * 2 + GI_CANVAS_PHASE;
+#endif
+    if (any(greaterThanEqual(texelPos, canvasEnd))) return;
+
+    vec4 hist = texelFetch(colortex2, texelPos, 0);
+
+    float depth = loadDepth0(rt);
+    // 天空/远景：与 Accumulate 同口径清零（那里天空也写 0）
+    if (depth >= 1.0) {
+        imageStore(colorimg25, texelPos, vec4(0.0));
+        return;
+    }
+
+    // ---- 本像素历史是否可用 ----
+    // (1) 上一帧 Accumulate 在该纹素给出的去遮挡标记：1 = 它的历史是重建/无效的。
+    //     与 colortex2 的历史值**同源同纹素**，所以这个判据是自洽的。
+    // (2) 累积帧数 < 1：没有历史。
+    // (3) 重投影出屏：本像素在上一帧不存在（快速转头最典型的情况）。
+    float disoccFlag = texelFetch(colortex14, texelPos, 0).a;
+    float age = hist.a;
+    if (!(age >= 0.0) || age > 1e6) age = 0.0;
+
+    vec2 screenUv = (vec2(rt) + 0.5) * viewPixelSize;
+    float viewZ = ScreenToViewDepth(depth);
+    vec3 viewPos = ScreenToViewPosRaw(screenUv, viewZ);
+    vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
+    vec3 prevWorldPos = worldPos + (cameraPosition - previousCameraPosition) * step(0.56, depth); // 与 Accumulate 同口径（手持物不加相机位移）
+    vec3 prevViewPos = transMAD(gbufferPreviousModelView, prevWorldPos);
+    vec3 prevNDC = projMAD(gbufferPreviousProjection, prevViewPos) * rcp(max(-prevViewPos.z, 1e-3));
+#ifdef TAA_ENABLED
+    prevNDC.xy += taaJitterPrev;
+#endif
+    vec2 prevCoord = prevNDC.xy * 0.5 + 0.5;
+    bool onScreen = all(greaterThanEqual(prevCoord, vec2(0.0))) && all(lessThanEqual(prevCoord, vec2(1.0)));
+
+    bool needFix = !onScreen || age < 1.0 || disoccFlag > 0.5;
+    if (!needFix) {
+        // 历史可用：原样搬到目标缓冲（目标缓冲是**另一个** buffer，不写就是两帧前的旧内容）
+        imageStore(colorimg25, texelPos, hist);
+        return;
+    }
+
+    // ---- 从有效邻居重建 ----
+    vec3 geoNormal, normal;
+    FetchNormalData(rt, geoNormal, normal);
+    vec3 planeN = mat3(gbufferModelView) * geoNormal;
+    vec3 centerViewPos = viewPos;
+    // 视锥短边在该深度处的世界尺寸（官方 GetFrustumSize）
+    float frustumSize = 2.0 * max(abs(viewZ), 1e-3) * rcp(max(gbufferProjection[1][1], 1e-3));
+
+    vec3 sumRGB = vec3(0.0);
+    float sumW = 0.0;
+    float ageMax = 0.0;
+
+    // 官方 5x5 大步长搜索（历史失效区域往往成片，必须看更远的邻居才找得到有效历史）
+    for (int i = 0; i < 25; ++i) {
+        ivec2 t = texelPos + offset5x5[i] * HISTORY_FIX_STRIDE;
+        if (clamp(t, ivec2(1), canvasEnd - 2) != t) continue;
+
+        vec4 nHist = texelFetch(colortex2, t, 0);
+        float nAge = nHist.a;
+        if (!(nAge >= 1.0)) continue;                       // 邻居自己也没有有效历史 → 不继承
+        vec4 nAux = texelFetch(colortex14, t, 0);
+        if (nAux.a > 0.5) continue;                         // 邻居的历史本身是重建出来的 → 不继承
+
+        // 同帧几何：邻居的当前视深 → 切平面距离（与 EAWF / prepass 同一口径）
+#ifdef VXGI_FULLRES
+        ivec2 tScreen = t;
+#else
+        ivec2 tScreen = t * 2 + GI_CANVAS_PHASE;
+#endif
+        float nz = ScreenToViewDepth(loadDepth0(tScreen));
+        vec3 nViewPos = ScreenToViewPosRaw((vec2(tScreen) + 0.5) * viewPixelSize, nz);
+        float planeDist = abs(dot(nViewPos - centerViewPos, planeN));
+        float w = exp(-planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
+        // 法线：用邻居上一帧存下的世界法线（与它的历史同源），避免再取一次 gbuffer
+        w *= smoothstep(NORMAL_COS_MIN, NORMAL_COS_MAX, dot(OctDecodeSnorm(nAux.xy), normal));
+        if (w <= 1e-4) continue;
+
+        sumRGB += nHist.rgb * w;
+        sumW += w;
+        ageMax = max(ageMax, min(nAge, HISTORY_FIX_FRAME_NUM));
+    }
+
+    if (sumW > 1e-4) {
+        // 继承历史长度（官方 historyFixFrameNum = 3）。但当本像素**完全没有**上一帧历史
+        //（重投影出屏）时只给 1：那种情况下邻居的值本身也属于屏幕另一侧的表面，
+        // 继承 3 帧会让旧画面的 GI 在屏幕上多停留几帧（拖影），用户明确不要拖影。
+        float ageOut = onScreen ? max(min(ageMax, HISTORY_FIX_FRAME_NUM), 1.0) : 1.0;
+        imageStore(colorimg25, texelPos, vec4(sumRGB * rcp(sumW), ageOut));
+    } else {
+#ifdef VOXEL_GI_NRD_ACTIVE
+        // 没有任何可用邻居（整片新露出）：用本帧 prepass 的 30px 稠密结果当起点。
+        // 比 mip 采样原始追踪值可靠得多，也不会把噪声写进历史。
+        imageStore(colorimg25, texelPos, vec4(texelFetch(colortex22, texelPos, 0).rgb, 1.0));
+#else
+        // 非 NRD 保护：colortex22 只由 prepass 写入，这里退回本像素原有历史（长度 1 强制重建）
+        imageStore(colorimg25, texelPos, vec4(hist.rgb, 1.0));
+#endif
+    }
+}

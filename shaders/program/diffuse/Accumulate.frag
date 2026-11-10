@@ -66,6 +66,16 @@ layout (location = 2) out vec4 fastHistory;
     #define SHOULD_APPLY_JITTER
 #endif
 
+// [REBLUR HistoryFix] 官方顺序是 PrePass → HistoryFix → Accumulate：历史先在独立 pass 里
+// 被修复（坏掉的像素用邻居的有效历史填上、并继承历史长度），然后走正常累积。
+// GIHistoryFix（deferred1_c）把修复结果写进 colortex25；非 NRD 路径没有这个 pass，
+// 仍直接读 colortex2 里的上一帧累积结果。
+#ifdef VOXEL_GI_NRD_ACTIVE
+    #define GI_HISTORY_TEX colortex25
+#else
+    #define GI_HISTORY_TEX colortex2
+#endif
+
 // GI 画布某个纹素「**本帧**」的视深（负值，与 viewPos.z 同口径）。
 // 为什么需要：空间重用块要判断"邻居是不是同一个表面"，而 `colortex14` 里存的是**上一帧**的
 // 视深。静止时两者相等；一移动，同一世界点在两帧的视深整体错位 ⇒ 邻居全被误判为不同表面
@@ -181,7 +191,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             ivec2 sampleTexel = floorTexel + offset2x2[i];
             if (clamp(sampleTexel, ivec2(0), canvasEnd - 1) == sampleTexel) {
 			    vec3 sampleAux = texelFetch(colortex14, sampleTexel, 0).xyz;
-                vec4 sampleIrradiance = texelFetch(colortex2, sampleTexel, 0);
+                vec4 sampleIrradiance = texelFetch(GI_HISTORY_TEX, sampleTexel, 0);
 
                 // [逐 tap 容差] 每个 tap 相对本像素中心的偏移量不同（双线性 0~1 纹素 + 棋盘相位
                 // 1~3 纹素），而偏移越大、视深偏差越大。若所有 tap 用同一个容差，就会出现
@@ -400,7 +410,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     // 不重建长度的后果（实测「新像素闪得厉害」）：新像素 a 恒为 1 ⇒ alpha ≈ 0.83
                     // ⇒ 输出 83% 是本帧单采样 ⇒ 每帧都在跳。继承邻居 a 后 alpha 立刻很小，
                     // 输出≈重建值（平滑），随后正常累积。
-                    _fixA += texelFetch(colortex2, _ft, 0).a * _w;
+                    _fixA += texelFetch(GI_HISTORY_TEX, _ft, 0).a * _w;
                     _fixW += _w;
                 }
             }
