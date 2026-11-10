@@ -489,16 +489,6 @@ void main() {
         finalOut = vec3(saturate(_dbgAccum * rcp(max(SSILVB_MAX_ACCUM_FRAMES, 1.0))), _dbgBad, 0.0);
     #endif
 
-    // ===== 临时探针（排查用，确认后删除）=====
-    // 屏幕左下角 96x96：绿 = VOXEL_GI_NRD_ACTIVE 已定义（REBLUR 链生效），红 = 未定义。
-    if (all(lessThan(texelPos, ivec2(96)))) {
-        #ifdef VOXEL_GI_NRD_ACTIVE
-            finalOut = vec3(0.0, 1.0, 0.0);
-        #else
-            finalOut = vec3(1.0, 0.0, 0.0);
-        #endif
-    }
-
     // ===== GI 诊断视图（GI_DEBUG_VIEW；0=关闭）=====
     // 放在最后一个 pass ⇒ 不受曝光/色调映射/TAA 影响，颜色可以直接当读数。
     // 每个模式都是"看一个具体量"，用来区分"闪"到底来自哪一环，而不是继续猜。
@@ -541,17 +531,9 @@ void main() {
             // 4：三段对比整条链路（左→右）：prepass(colortex22) | 累积(colortex2) | 最终 GI(colortex23)
             // 全是**线性 HDR**、没有曝光/色调映射，典型值 1e-3 量级 ⇒ 必须乘增益才可判读。
             // 22/23 用 400 倍增益：这两条真的可能是 0（没写入/被清空），小增益看不出区别。
-            // 顶部 10 像素色带 = 宏状态探针：绿 = VOXEL_GI_NRD_ACTIVE 已定义（NRD 链路已编入），
-            // 红 = 未定义（说明 REBLUR 降噪根本没参与编译，改这里的一切都不会生效）。
             const float _DBG_GAIN_HI = 400.0;
             const float _DBG_GAIN_LO = 8.0;
-            if (texelPos.y > int(viewSize.y) - 10) {
-#ifdef VOXEL_GI_NRD_ACTIVE
-                finalOut = vec3(0.0, 1.0, 0.0);
-#else
-                finalOut = vec3(1.0, 0.0, 0.0);
-#endif
-            } else if (texelPos.x * 3 < int(viewSize.x)) {
+            if (texelPos.x * 3 < int(viewSize.x)) {
 #ifdef VOXEL_GI_NRD_ACTIVE
                 finalOut = texelFetch(colortex22, _dbgT, 0).rgb * _DBG_GAIN_HI;
 #else
