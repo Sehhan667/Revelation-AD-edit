@@ -333,11 +333,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 空间滤波（EAWF）的输出再经稳定化 pass 累积，**稳定化结果才是最终 GI**
 	// （官方 ReblurSettings::maxStabilizedFrameNum，默认 63 帧）。
 	#define VOXEL_GI_NRD // REBLUR 式降噪开关（需要 VXGI + SVGF 链路）
-	// 临时硬接线：只按 GI_MODE / 降噪模式判定，不再依赖 VOXEL_GI_NRD / VOXEL_GI_DENOISE
-	// 这两个开关是否被正确注入（排查用，确认后再恢复条件判定）。
-	#if GI_MODE == 2 && VOXEL_GI_DENOISE_MODE == 0
-		#define VOXEL_GI_NRD_ACTIVE
-	#endif
+	// 注意：VOXEL_GI_NRD_ACTIVE 在文件后段（GI_MODE / GI_ACTIVE_VXGI 定义之后）才推导。
+	// 预处理器对"尚未定义的标识符"按 0 处理，因此任何 `#if GI_MODE == ...` 都必须写在
+	// 第 630 行 `#define GI_MODE` 之后，否则恒为假——这里曾经因此让整条 REBLUR 链形同虚设。
 	// 半分辨率 GI 画布的采样相位见 lib/utility/Offset.glsl 的 GI_CANVAS_PHASE。
 
 /* Ambient Occlusion */
@@ -646,6 +644,12 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#elif GI_MODE == 3
 		#define GI_ACTIVE_IRC
 		#define IRC_GI_ENABLED
+	#endif
+	// REBLUR 式降噪生效条件：VXGI + 自动降噪模式。必须写在这里——GI_MODE / GI_ACTIVE_VXGI
+	// 到这一行才真正定义，写在前面会让 `#if` 恒假（预处理器把未定义标识符当 0）。
+	#if defined GI_ACTIVE_VXGI && defined VOXEL_GI_NRD && defined VOXEL_GI_DENOISE \
+	    && VOXEL_GI_DENOISE_MODE == 0
+		#define VOXEL_GI_NRD_ACTIVE
 	#endif
 	// [2026-10-08] SSILVB/VXGI 开启时自动关掉独立的 AO：这两种模式自带屏幕空间遮蔽
 	// （SSILVB 的线性深度 AO / VXGI 的体素遮蔽），再叠一层 GTAO/SSAO 等于同一处遮蔽算两遍，

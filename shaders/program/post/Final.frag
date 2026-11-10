@@ -489,16 +489,14 @@ void main() {
         finalOut = vec3(saturate(_dbgAccum * rcp(max(SSILVB_MAX_ACCUM_FRAMES, 1.0))), _dbgBad, 0.0);
     #endif
 
-    // ===== 临时探针（排查用）=====
-    // 左上角 96x96 的纯色块，**无条件**执行（不依赖任何开关），OIT 无关：
-    //   R 通道 = 1 → GI_MODE 在编译期确实是 2
-    //   G 通道 = 1 → VOXEL_GI_DENOISE_MODE 确实是 0
-    //   B 通道 = 1 → 本段代码确实参与编译（蓝是常量 1）
-    // 所以读数：白 = 两个条件都对；蓝 = 该段在跑但两个条件都不满足；黑 = 这段根本没编进去。
+    // ===== 临时探针（排查用，确认后删除）=====
+    // 屏幕左下角 96x96：绿 = VOXEL_GI_NRD_ACTIVE 已定义（REBLUR 链生效），红 = 未定义。
     if (all(lessThan(texelPos, ivec2(96)))) {
-        finalOut = vec3(step(2.0, float(GI_MODE)),
-                        step(0.5, 1.0 - float(VOXEL_GI_DENOISE_MODE)),
-                        1.0);
+        #ifdef VOXEL_GI_NRD_ACTIVE
+            finalOut = vec3(0.0, 1.0, 0.0);
+        #else
+            finalOut = vec3(1.0, 0.0, 0.0);
+        #endif
     }
 
     // ===== GI 诊断视图（GI_DEBUG_VIEW；0=关闭）=====
