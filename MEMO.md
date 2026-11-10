@@ -1504,3 +1504,190 @@ A/D 横移垂直于视线、z 几乎不变，所以只有它表现正常。
    0.90→10。任何"轻微不匹配"都会被放大成"累积骤降"。看这类代码时要先算稳态。
 4. **别用开关给 bug 打补丁**：本轮先加了 STABLE_GUIDE / ROBUST_ACCUM，只是掩盖症状，
    根因修好后立刻删掉（留着会误导下一次排查）。
+
+# 备忘：ReBLUR 对照官方收口（2026-11-10）
+
+对照 NRD v4.11.4 的 ReBLUR 源码/README，修了四处口径，并纠正一条误判。
+
+## Iris 缓冲 flip 的真实语义（先记住，能省很多排查）
+
+- **deferred/composite 的片元程序默认 flip**：读 main、写 alt，pass 结束交换。
+  所以在 `Accumulate.frag`（deferred4）里读自己写的 `colortex2/14/21` **不是 UB**，
+  "读自己 RT 导致拉丝"的旧结论只适用于 compute pass。
+- **compute pass 不触发 flip**（Iris 文档明说），且 `colorimgN` 绑定的就是 main。
+  所以 compute 里"imageLoad 邻居 + imageStore 自己"是**真竞态**。EAWF ×4 已改成
+  `colortex3 ↔ colortex25` 乒乓（pass0/2 写 25，pass1/3 写 3，最终结果回到 3）。
+- Iris ≥1.10.5 支持 colortex0–31，新增 25 号缓冲不需要动别的。
+
+## 官方 ReBLUR 的最终输出是稳定化结果
+
+- 官方 pass 顺序：PrePass → TemporalAccumulation → HistoryFix → Blur → PostBlur →
+  Copy → TemporalStabilization。`maxStabilizedFrameNum=63` 时 TS 是最后一级视觉 pass，
+  COPY 只在 rect 变化时搬历史；Blur **不读** stabilized（v4.11 不自引导）。
+- 因此 `DeferredLight` 在 NRD 模式下改读 `colortex23`（稳定化），不再读 `colortex3`
+  （空间滤波输出）。这是"静止小闪"的直接来源——滤波输出本身不保证时间平滑。
+- 主历史只累积**输入信号**；空间滤波结果不写回（GIHistoryStore 默认 `_wb=0`，
+  `GI_BISECT bit1` 保留旧 0.6 做 A/B）。0.6 回写会让空间核逐帧复合、细节被抹平。
+- 官方 TS 的三件套：surface motion 重投影 + 邻域 σ 颜色盒 clamp + antilag；
+  帧数上限要被 `maxAccumulatedFrameNum` 夹住。我们至少补了重投影与 clamp。
+
+## 半分辨率画布不要逐帧轮转 2x2
+
+官方 README：quarter-res 去噪用 `pixelPos/2`，rotated grid（每帧换 2x2 内的像素）
+会显著提高 non-noisy 输入的熵、增加 disocclusion。`GI_CANVAS_PHASE`（现在在
+`lib/utility/Offset.glsl`）固定为 `ivec2(0)`；旧的 4 帧轮转会让轮廓/台阶处
+历史判据周期性失配，形成"四帧一循环"的边缘闪。
+
+## 其他
+
+- prepass 的法线必须取**本帧** G-buffer（`FetchSurfaceNormal(tapScreen)`），不能用
+  `colortex14`（上一帧）；判据用官方 planeDistanceSensitivity=0.02 / lobeAngleFraction=0.15，
+  命中距离要随颜色一起加权平均，否则 `minHitDistanceWeight` 是噪声。
+- `scripts/preproc_check.js` 不认识 `settings.glsl`（它先替换标识符再处理 `defined`，
+  `#if !defined INCLUDE_SETTINGS` 被判 false，整个文件被跳过）。新宏放 settings 里会误报
+  "未定义"；放在 `lib/utility/Offset.glsl` 之类的 lib 文件即可被识别。
+
+# 备忘：ReBLUR 对照 NRD v4.11.4 源码收口（2026-11-10，全部未实机验证）
+
+## 三条源头结论（纠正此前的错误推断）
+
+1. **NRD 不负责追踪**。它是纯降噪库，`denoiserResolutionScale` 只描述输入分辨率。
+   "官方全分辨率追踪 + 半分辨率降噪"是错误说法；半分辨率追踪 + 半分辨率降噪 + 上采样
+   就是常规集成方式，和我们一样。半分辨率唯一的固有代价是同样屏幕覆盖下样本数 1/4。
+2. **ReBLUR 有 antilag**。`REBLUR_TemporalStabilization.hlsli:257` 调 `ComputeAntilag(...)`，
+   注释写着 `// this is important`。之前按"配置项名"（`gAntilagSettings`）搜索才误判为
+   只有 RELAX 有；ReBLUR 是直接调函数、常量在函数内部。**TS 的 antilag 必须保留。**
+3. **官方 TS 最终混合**：`lerp(diff, smbDiffHistory, min(diffHistoryWeight, gStabilizationStrength))`，
+   `diffHistoryWeight = getTemporalAccumulationParams(smbFootprintQuality, framesAccumulated)`，
+   颜色盒 σ 随权重放宽。我们的结构与之逐行对应。
+
+## 官方 firefly suppressor（此前写反方向，已按源码重写）
+
+```
+maxRel = 2.0 + 38.0 / (accumSpeed + 1.0)
+amount = saturate(accumSpeed * maxBlurRadius * 0.1)
+luma   = lerp(luma(result), min(luma(result), luma(history) * maxRel), amount)
+```
+
+判据是**混合结果相对历史过亮**，压的是本帧 1spp 的离群亮点，写在 TA 里。
+不是"用邻域 min 压历史"（那是之前的错误实现，已删）。
+
+## 已对齐的项（提交 a6616d45 → e6b7b7d2，均在 shaders/ 内）
+
+- prepass：Poisson 盘 32 样本、半径 30 **画布纹素**（官方 30 是按降噪分辨率定义的，
+  半分辨率下 = 60 屏幕像素；此前按全分辨率口径只给了 15，少一半）、平面判据用
+  **几何法线**（含贴图的表面法线只用于瓣角判据）、命中距离加权平均 + Denanify、
+  天空早退。
+- hitDist：`colortex26` 做 EMA 0.15，EAWF 才敢用 `sqrt(hitDistFactor)` 缩半径与
+  `minHitDistanceWeight`。官方有 hitdist reconstruction；我们确定性追踪 + 射程哨兵，
+  无成片空洞，不做 reconstruction。
+- EAWF：Vogel 盘 8 点、官方四类权重、半径下限 0.5、第 4 级 3×3 post blur、天空早退、
+  删掉 SVGF 的亮度方差权重与 colortex23 引导。
+- TA：删 `_preSmooth`（其动作门控用全分辨率 UV 减象限 screenPos，恒为 1，等于每帧
+  无条件把上一帧滤波结果掺回累积——静止蠕动的主要来源）、删新像素 alpha 封顶 1/8、
+  firefly 按官方公式、fast clamp 保留 5×5 σ 与暗部地板。
+- TS：surface motion 重投影、4-tap 双线性、颜色盒 + `μ*0.1` 地板、footprint quality、
+  antilag（保留）、RCRS 只替换 Y。
+- 其他：`colortex25` 乒乓（EAWF 原地读写竞态）、`colortex26` 新增并在 config/properties
+  注册、SVGF 路径下 `colortex26` 不读（已加 ifdef）。
+
+## 刻意偏离（有理由，勿"优化"掉）
+
+- prepass 16→32 样本：输入是 1spp 且无 reconstruction，噪声比官方假设高一档。
+- a-trous 3 级 + post（官方最多 5 级）：基础半径只有官方的 1/4，加满无意义。
+- fast clamp 用 5×5（官方 3×3）：半分辨率下 3×3 画布纹素只等于 6×6 屏幕像素。
+- history fix 继承长度打 0.5 折：我们的邻域重建不如官方按 stride 分层精确。
+- EAWF 半径下限 0.5：基础半径小，趋 0 等于关掉空间滤波、露时域残噪。
+- firefly 压到 `2×邻域 min` 而非清零：清零会让该像素输出趋 0 形成黑块。
+- 颜色盒/ clamp 加 `μ`、绝对地板：官方只有 σ 项，我们暗部 σ/μ 过大。
+- RCRS 只改 Y：YCoCg 暗部色差极小，整体缩放会同比放大色差噪声。
+
+## 已知未做 / 待实测
+
+- **实测是唯一阻塞项**：以上全部改动均未进游戏验证。
+- 回退对照表（按现象倒推）：
+  | 现象 | 参数 | 从 → 到 |
+  |---|---|---|
+  | 细节糊 | prepass 半径 | 30 → 20 |
+  | 墙角渗色 | hitDist EMA | 0.15 → 0.3 |
+  | 稳定区块感 | EAWF 半径下限 | 0.5 → 0.25 |
+  | 暗部黑块 | firefly 阈值 | 2.0 → 3.0 |
+- 可选性能项（未做）：tile classification（省 10~30% 降噪开销，做错会块状缺失）；
+  `VOXEL_TRACE_SPP=2`（噪声降 √2，光线数翻倍）。
+- 已知小偏差（不急着动）：TS 重投影起点没扣当前帧 `taaJitter`（亚像素，理论贡献边缘细闪）；
+  prepass 在屏幕边缘因 Poisson 盘越界而采样不足（官方同样存在）。
+- 体素注入在 `deferred23`、追踪在 `deferred1_a`，**追踪用上一帧体素**。用户判断
+  "前面的时候也没观察到异常"，保留不动。
+- `GIHistoryStore` 在 `GI_BISECT=0` 时首行 return（空转一个半分辨率 dispatch）。
+  无法删：`shaders.properties` 不能对 `const int GI_BISECT` 求值。
+---
+
+# 根因：REBLUR 链从未生效（2026-11-10，血债）
+
+## 现象
+REBLUR 全套改写后，反复调参实机**毫无变化**：噪点依旧、诊断视图里 prepass(colortex22)/最终 GI(colortex23) 全黑。
+
+## 根因（共三层，最后一层是致命的）
+1. `#define VOXEL_GI_NRD_ACTIVE` 的推导用 `#if GI_MODE == 2 && GI_ACTIVE_VXGI`，**却写在 `#define GI_MODE`（第 630 行）之前**。
+   预处理器对未定义标识符按 0 处理 ⇒ `0 == 2` ⇒ 恒假。整条链（prepass / EAWF 的 NRD 分支 /
+   VarianceEstimate 桥接 / 稳定化 / DeferredLight 读 colortex23）从未参与编译。
+2. `shaders.properties` 的预处理器**只看得到选项宏**，看不到 settings.glsl 里推导出来的宏；
+   在 properties 里 `#ifdef VOXEL_GI_NRD_ACTIVE` 永远假 ⇒ 三个 compute pass 从未派发。
+   必须在 properties 里用选项宏重新推导（`#if GI_MODE == 2` -> `REBLUR_ON`）。
+3. 宏真正生效后，一批**从未被编译过**的代码暴露出编译错误（`VarianceEstimate` 的 NRD 分支缺
+   `texelPos`，改名后又与 main 后段重复声明）。这类只会在"开关第一次打开"时炸。
+
+## 教训
+- **任何 `#if` 判定的宏必须已在其上方定义**。settings.glsl 的选项定义集中在文件后半段，
+  派生宏一律放在 `GI_MODE / GI_ACTIVE_VXGI` 定义之后。
+- 改 properties 的 `#ifdef` 前，先确认那个宏是不是选项宏；不是就重新推导。
+- 判断"开关是否生效"别靠猜：Final.frag 里放一个**无条件**的纯色探针（左下角，注意
+  gl_FragCoord.y 是反的），比反复调参快一百倍。
+- 调试视图直接显示线性 HDR 缓冲时**必须乘增益**，否则 1e-3 量级看起来就是"全黑"，
+  会被误判成"缓冲没写"。
+
+## 结果
+修复后实机反馈：降噪干净、无蠕动、无噪点。
+
+---
+
+# REBLUR HistoryFix（2026-11-10，**待实测**）
+
+针对剩下的唯一现象：**快速转头时出现几帧才消散的大团斑块（弱光更明显）**。
+
+## 为什么原来会成团而不是细噪
+
+旧路径只在"历史完全无效"时用邻居重建，而且**不检查邻居自己有没有有效历史**：
+全屏/成片失效时是"用噪声重建噪声"，再把重建结果写回 `colortex2/21` 当历史
+⇒ 团块顺着时间自我维持、逐帧扩散（"快速消散"= 要好几帧才被真信号冲掉）。
+官方 `REBLUR_HistoryFix` 的两条硬约束正是这里缺的：**只从 historyLength ≥ 1 的邻居继承**，
+以及**继承历史长度**（`historyFixFrameNum = 3`）。
+
+## 实现
+
+- 新 pass `program/diffuse/GIHistoryFix.comp` → `world{0,-1,1}/deferred1_c.csh`，
+  位置 **deferred1_b（prepass）之后、deferred4（Accumulate）之前**，与官方顺序一致。
+- 输入 `colortex2`（上一帧长历史 + a=帧数）、`colortex14`（上一帧法线/视深 + a=去遮挡标记，
+  与历史同源同纹素）、`colortex22`（本帧 prepass 稠密输入）、`depthtex0`；
+  输出 `colortex25`。
+- 修复判据：重投影出屏 / `a < 1` / 上一帧在该纹素的去遮挡标记 = 1。
+- 邻居搜索：官方 `historyFixBasePixelStride = 14` 屏幕像素 ⇒ 画布 7 纹素，5×5；
+  权重 = 切平面距离（`planeDistanceSensitivity = 0.02`）× 法线（用邻居存下的上一帧世界法线）。
+- 无任何有效邻居时用 `colortex22`（30px 稠密）当起点、长度 1；避免把 1spp 噪声写进历史。
+- `Accumulate.frag` 在 `VOXEL_GI_NRD_ACTIVE` 下改读 `colortex25`（`GI_HISTORY_TEX`）。
+
+## 关键工程点（别再踩）
+
+- **不能就地写 `colortex2`**：compute pass 不 flip、`colorimgN` 就是 main，
+  "读 colortex2 邻居 + 写 colorimg2" 是真竞态（同 EAWF 当年的问题）。
+  写 `colortex25` 后由片元 pass 读取：片元读 main、写 alt，读到的是 HistoryFix 的结果。
+- 目标缓冲必须**逐像素全写**（含不需要修复的像素原样搬运），否则没写的纹素会留着两帧前的旧内容。
+- `VOXEL_GI_DENOISE` 关闭时 Accumulate 不能读 `colortex25`（那个 pass 没派发）
+  ⇒ 用 `#ifdef VOXEL_GI_NRD_ACTIVE` 选历史源，properties 也用选项宏重新推导 A/B。
+
+## 待复验（HistoryFix 上线后单独做，不要混在一起）
+
+1. `GIPrepass` / `EAWF` 的**天空早退**（`depth >= 1` 直接写 0）。
+2. `EAWF` 的 `radiusScale` 下限 0.5 与 `hitDist` EMA 0.15。
+   若团块仍在，下一个嫌疑是**低累积帧像素上的大核**（`stepBoost` + 半径随 age 变化），
+   而不是 HistoryFix 没生效——先看团块是否只出现在 age 低的地方。
