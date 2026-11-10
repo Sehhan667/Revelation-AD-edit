@@ -151,7 +151,11 @@ void main() {
 	// 命中距离缩放半径（官方）：命中距离大 ⇒ 该处平坦/信号可靠，可用大核；命中距离小
 	//（接触区/自遮挡）⇒ 收小保细节。用 colortex26 的时域平滑值，避免逐帧抖动带跑采样图案；
 	// 下限 0.08 防止半径塌成 0（此时完全退化成无滤波）。
-	float hitDistFactor = sqrt(max(texelFetch(colortex26, texelPos, 0).r, 0.08));
+	// 必须包在 NRD 宏里：colortex26 只由 GIPrepass（NRD 路径）写入，SVGF 路径下是未初始化内容。
+	float hitDistFactor = 1.0;
+#ifdef VOXEL_GI_NRD_ACTIVE
+	hitDistFactor = sqrt(max(texelFetch(colortex26, texelPos, 0).r, 0.08));
+#endif
 
 	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost * radiusScale * hitDistFactor;
 	// 每轴至少 1 px：掠射面上 offsetScaleBase 会被压到 <0.5，整列 tap 塌到中心 ⇒ 9-tap 退化成 1D 条带。
