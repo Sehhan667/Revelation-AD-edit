@@ -253,12 +253,10 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 alpha = rcp(1.0 + _k * _N);
             }
 
-            // [新像素防闪] a < 8（刚出现/历史长度重建不足）时把 alpha 封顶到 1/8：
-            // 否则 alpha 可以到 0.8 量级 ⇒ 输出几乎全是**本帧单次采样** ⇒ 逐帧独立跳动（闪）。
-            // 这不是新增机制：官方 convergenceSettings 的 b < 1 表达的是同一意图
-            //（「a blurry result is better on average than a dirty result」），我们只是把
-            // "年轻像素"的混合率再收紧一点；a ≥ 8 后 alpha ≤ 1/a 已经更小，本式不再生效。
-            alpha = min(alpha, rcp(max(integratedDiffuse.a, 8.0)));
+            // [2026-11 回正] 原"新像素 alpha 封顶 1/8"已删除。它把年轻像素的混合率压到比
+            // 官方 b=0.2（N=1 时 alpha=0.83）还小一个数量级，方向与官方相反：官方要求新像素
+            // 快速采纳本帧。之所以能删，是因为新像素的稳定性现在由 prepass（30px 稠密化）与
+            // history fix（邻域重建）承担，不再需要靠压低混合率硬拖。
 
             // [REBLUR 历史裁剪] 官方做法（`fastHistoryClampingSigmaScale = 2.0`，原文：「REBLUR clamps
             // the spatially processed main history to the spatially unprocessed fast history」）：
@@ -335,25 +333,10 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 }
             #endif
 
-            // [2026-08-28 ] 时域累积的连续衰减已由上方 maxGeometryWeight 接管（静止≈1 深累积、
-            // 几何剧变骤降少混合历史），这里不再重复调 alpha。仅保留：运动时对该像素做一次
-            // 3×3 当前帧邻域平均（前置空间滤波），再进 EAWF，缓解转动脏污。
-            {
-                // 用全分辨率 UV 与 screenPos.xy（本帧 renderCoord）比：currCoord 是象限空间 UV，
-                // 两者相减自带 ≈0.25 的假底盘 ⇒ _preSmooth 恒为 1，前置滤波变成每帧无条件执行。
-                float _motion = length(prevCoord - screenPos.xy);
-                float _preSmooth = smoothstep(0.02, 0.06, _motion);
-                if (_preSmooth > 0.0) {
-                    vec3 _sum = integratedDiffuse.rgb;
-                    for (int _dy = -1; _dy <= 1; ++_dy) { for (int _dx = -1; _dx <= 1; ++_dx) {
-                        ivec2 _t = texelPos + ivec2(_dx, _dy);
-                        if (clamp(_t, ivec2(0), canvasEnd - 1) == _t)
-                            _sum += texelFetch(colortex3, _t, 0).rgb;
-                    }}
-                    _sum *= 1.0 / 9.0;
-                    integratedDiffuse.rgb = mix(integratedDiffuse.rgb, _sum, _preSmooth * 0.5);
-                }
-            }
+            // [2026-11 回正] 原"_preSmooth 运动前置平滑"已删除。它用全分辨率 UV 与象限空间的
+            // screenPos 相减，恒带 ≈0.25 的假底盘 ⇒ 平滑每帧无条件执行；而且混合源 colortex3
+            // 是上一帧的 EAWF 输出 ⇒ 空间滤波结果被反复掺回累积，是"静止持续蠕动"的直接来源。
+            // 稠密化交给 prepass（已对齐官方 30px），官方也没有这个前置滤波。
 
             // ====== 峰值保持：亮度下降慢，上升快 ======
             #ifdef SSILVB_PEAK_HOLD
