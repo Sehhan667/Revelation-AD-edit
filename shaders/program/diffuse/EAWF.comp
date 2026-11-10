@@ -175,6 +175,9 @@ void main() {
 	const float MIN_HITDIST_WEIGHT = 0.1; // minHitDistanceWeight
 
 	vec3 centerViewPos = ScreenToViewPosRaw(centerCanvasUv, normalDepthData.z);
+	// centerN 是**表面法线**（含法线贴图），用于瓣角判据——必须与追踪采样半球一致。
+	// 平面距离判据一律用上面的 geoNormal（几何法线）：拿含贴图的法线做切平面点积，会在
+	// 砖/木板/树叶这类强凹凸区把同一面墙的邻居判成不同平面，整片拒绝 ⇒ 降噪不足。
 	vec3 centerN = mat3(gbufferModelView) * vec3(OctDecodeSnorm(normalDepthData.xy));
 	// 视锥短边在该深度处的世界尺寸（官方 GetFrustumSize）：几何权重的归一化尺度。
 	float frustumSize = 2.0 * viewDist * rcp(max(gbufferProjection[1][1], 1e-3));
@@ -200,7 +203,7 @@ void main() {
 
 			vec2 tapUv = (vec2(smp) + 0.5) / vec2(canvasEnd);
 			vec3 tapViewPos = ScreenToViewPosRaw(tapUv, sampleAux.z);
-			float planeDist = abs(dot(tapViewPos - centerViewPos, centerN));
+			float planeDist = abs(dot(tapViewPos - centerViewPos, geoNormal));
 			float w = exp(-planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
 			w *= smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02,
 			                dot(OctDecodeSnorm(sampleAux.xy), OctDecodeSnorm(normalDepthData.xy)));
@@ -258,7 +261,7 @@ void main() {
 		// 近处容差被放宽到 0.2·z（约 2 米），不同深度表面会混进同一个核 ⇒ 边缘/台阶斑块。
 		vec2 tapCanvasUv = (vec2(smp) + 0.5) / vec2(canvasEnd);
 		vec3 tapViewPos = ScreenToViewPosRaw(tapCanvasUv, sampleAux.z);
-		float planeDist = abs(dot(tapViewPos - centerViewPos, centerN));
+		float planeDist = abs(dot(tapViewPos - centerViewPos, geoNormal));
 		float w = exp(-planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
 
 		// 法线：夹角上限 = 瓣角 × lobeAngleFraction（官方 lobeAngleFraction）

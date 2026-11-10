@@ -78,8 +78,13 @@ void main() {
 
     float depth = loadDepth0(rt);
     float viewZ = ScreenToViewDepth(depth);
-    vec3 normal = FetchSurfaceNormal(rt);                                // 世界空间
-    vec3 centerN = mat3(gbufferModelView) * normal;                      // 视空间（切平面判据用）
+    // 法线要按用途分开取（FetchNormalData 一次给出两者）：
+    //   平面距离判据 → **几何法线**。FetchSurfaceNormal 含法线贴图，砖/木板/树叶的凹凸会把
+    //                  同一面墙的邻居判成"不同平面"而整片拒绝 ⇒ 这些区域降噪不足。
+    //   瓣角判据     → **表面法线**，必须与追踪采样半球所用法线一致。
+    vec3 geoNormal, normal;
+    FetchNormalData(rt, geoNormal, normal);
+    vec3 planeN = mat3(gbufferModelView) * geoNormal;                    // 视空间（切平面判据用）
     vec3 centerViewPos = ScreenToViewPosRaw((vec2(rt) + 0.5) * viewPixelSize, viewZ);
 
     // 注意：image2D 只能用 imageSize()，不能用 textureSize()（后者是 sampler 的重载）。
@@ -125,7 +130,7 @@ void main() {
         // 几何：官方 `GetGeometryWeightParams` ⇒ exp( -|planeDist| / (planeDistanceSensitivity · frustumSize) )
         // planeDist 用**世界距离**（与 EAWF 保持同一口径）。
         vec3 tapViewPos = ScreenToViewPosRaw((vec2(tapScreen) + 0.5) * viewPixelSize, nz);
-        float planeDist = abs(dot(tapViewPos - centerViewPos, centerN));
+        float planeDist = abs(dot(tapViewPos - centerViewPos, planeN));
         float w = exp(-planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
         // 法线拒判：夹角上限 = 瓣角 × lobeAngleFraction（官方 lobeAngleFraction）
         w *= smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, dot(tapN, normal));

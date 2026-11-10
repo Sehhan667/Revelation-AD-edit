@@ -884,6 +884,13 @@ void main() {
 				imageStore(reservoirW, texelPos, vec4(_wpos, 0.0));
 			}
 #endif
+			// [2026-11] 官方 Denanify：NaN/inf 一旦进入时域累积，会被 63 帧长历史锁住。
+			// 上面的 min(32) 拦不住 NaN（GLSL min 的 NaN 行为未定义），这里显式清零。
+			// 命中距离同样要兜底：它经 prepass 归一化 + EMA 后参与空间权重，
+			// 一个 NaN 会顺着 EMA 污染该像素整片区域（!(x>=0) 对 NaN 与负数都成立）。
+			if (any(isnan(result.rgb)) || any(isinf(result.rgb))) result.rgb = vec3(0.0);
+			else result.rgb = clamp(result.rgb, 0.0, 32.0);
+			if (!(result.a >= 0.0)) result.a = 0.0;
 			result.rgb = RGBToYCoCg(result.rgb); // Convert to YCoCg color space (for filtering)
 		imageStore(colorimg3, texelPos, result);
 	} else {
