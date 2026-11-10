@@ -489,6 +489,13 @@ void main() {
         finalOut = vec3(saturate(_dbgAccum * rcp(max(SSILVB_MAX_ACCUM_FRAMES, 1.0))), _dbgBad, 0.0);
     #endif
 
+    // ===== 临时探针（排查用）=====
+    // VOXEL_GI_NRD_ACTIVE 已定义 ⇒ 整屏偏绿；未定义则画面保持原样。
+    // 只看一眼就能判断 REBLUR 链到底有没有编进程序，不需要打开任何诊断视图。
+    #ifdef VOXEL_GI_NRD_ACTIVE
+        finalOut = mix(finalOut, vec3(0.0, 1.0, 0.0), 0.30);
+    #endif
+
     // ===== GI 诊断视图（GI_DEBUG_VIEW；0=关闭）=====
     // 放在最后一个 pass ⇒ 不受曝光/色调映射/TAA 影响，颜色可以直接当读数。
     // 每个模式都是"看一个具体量"，用来区分"闪"到底来自哪一环，而不是继续猜。
