@@ -532,9 +532,13 @@ void main() {
             finalOut = (texelPos.x < int(viewSize.x * 0.5)) ? _dbgHist.rgb : _dbgFilt.rgb;
         } else if (GI_DEBUG_VIEW == 5) {
             // 5：历史长度直方图（分档上色），用来快速看出"整体历史长度"是否健康
-            finalOut = (_dbgA > 0.9 * _dbgNorm) ? vec3(0.0, 1.0, 0.0)
-                     : (_dbgA > 0.5 * _dbgNorm) ? vec3(1.0, 1.0, 0.0)
-                     : (_dbgA > 0.25 * _dbgNorm) ? vec3(1.0, 0.5, 0.0)
+            // 归一化基准必须是**本帧真实累积上限**，不能是 SSILVB_MAX_ACCUM_FRAMES：
+            // 上限 = clamp(GI_ACCUM_TIME / frameTime, 8, 128) 量化到 8 帧一档，低 fps 时会远小于 128
+            //（1.0s / 28fps ⇒ 24）。拿 128 归一化时健康状态也永远落在最低档（全红），无法判读。
+            float _dbgCap = max(floor(clamp(GI_ACCUM_TIME / max(frameTime, 1e-4), 8.0, SSILVB_MAX_ACCUM_FRAMES) * 0.125) * 8.0, 8.0);
+            finalOut = (_dbgA > 0.9 * _dbgCap) ? vec3(0.0, 1.0, 0.0)
+                     : (_dbgA > 0.5 * _dbgCap) ? vec3(1.0, 1.0, 0.0)
+                     : (_dbgA > 0.25 * _dbgCap) ? vec3(1.0, 0.5, 0.0)
                      : vec3(1.0, 0.0, 0.0);
         } else if (GI_DEBUG_VIEW == 6) {
             // 6：上一帧的「几何可信度 maxGeometryWeight」（存于 colortex21.a）
