@@ -328,11 +328,11 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 这是“先稳再长细节”的关键参数：只改起点（mip/邻居）而不封速率，单帧样本仍会一帧顶进来 ⇒ 忽闪。
 	// 光照突变快速响应：已建立像素（a 足够大）且入样与均值偏离很大时，
 	// 临时放大 alpha 让光照变化（火把移动/放挖）快速跟上，避免方块光拖影。 0=关。
-	// ===== REBLUR 式降噪（默认关）=====
+	// ===== REBLUR 式降噪（默认开）=====
 	// 结构（对齐 NRD v4.11）：主历史只累积输入信号；短历史提供新鲜参考用于裁剪；
 	// 空间滤波（EAWF）的输出再经稳定化 pass 累积，**稳定化结果才是最终 GI**
 	// （官方 ReblurSettings::maxStabilizedFrameNum，默认 63 帧）。
-	//#define VOXEL_GI_NRD
+	#define VOXEL_GI_NRD // REBLUR 式降噪开关（需要 VXGI + SVGF 链路）
 	#ifdef VOXEL_GI_NRD
 		// 需要 SVGF(EAWF) 链路：PTGI 中值模式没有可回写的滤波结果
 		#if defined GI_ACTIVE_VXGI && defined VOXEL_GI_DENOISE && VOXEL_GI_DENOISE_MODE == 0

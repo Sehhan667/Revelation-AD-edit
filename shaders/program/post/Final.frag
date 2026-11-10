@@ -535,7 +535,7 @@ void main() {
             // 红 = 未定义（说明 REBLUR 降噪根本没参与编译，改这里的一切都不会生效）。
             const float _DBG_GAIN_HI = 400.0;
             const float _DBG_GAIN_LO = 8.0;
-            if (texelPos.y < 10) {
+            if (texelPos.y > int(viewSize.y) - 10) {
 #ifdef VOXEL_GI_NRD_ACTIVE
                 finalOut = vec3(0.0, 1.0, 0.0);
 #else
