@@ -533,9 +533,15 @@ void main() {
             // 只能看到极少数最亮的点（观感就是"黑底上撒细小红点"）。统一乘 8 增益才能判读。
             // 判读：右半屏有正常结构 = 最终 GI 有信号；右半屏纯黑 = GI 输出被清空（查天空早退/写入）。
             const float _DBG_GAIN = 8.0;
+            // colortex23 只在 NRD 模式写入；非 NRD 下最终 GI 就是 colortex3（EAWF 输出）。
+#ifdef VOXEL_GI_NRD_ACTIVE
+            vec3 _dbgFinal = texelFetch(colortex23, _dbgT, 0).rgb;
+#else
+            vec3 _dbgFinal = _dbgFilt.rgb;
+#endif
             finalOut = (texelPos.x < int(viewSize.x * 0.5))
                      ? _dbgHist.rgb * _DBG_GAIN
-                     : texelFetch(colortex23, _dbgT, 0).rgb * _DBG_GAIN;
+                     : _dbgFinal * _DBG_GAIN;
         } else if (GI_DEBUG_VIEW == 5) {
             // 5：历史长度直方图（分档上色），用来快速看出"整体历史长度"是否健康
             // 归一化基准必须是**本帧真实累积上限**，不能是 SSILVB_MAX_ACCUM_FRAMES：
