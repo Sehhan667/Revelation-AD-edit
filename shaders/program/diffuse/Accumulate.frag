@@ -315,22 +315,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                     // 现在统一由 GIStabilize（TS）按官方 mode 2 公式处理，这里不再干预 alpha。
                 }
 
-                // [官方 fireflySuppressorMinRelativeScale = 2.0] **位置在 TA，不在 Blur/TS**。
-                // 判据：短历史的邻域**最小值**若不到长历史亮度的 1/2，说明长历史里是孤立亮点
-                //（1spp 追踪偶发的超大辐射），会被锁进 63 帧长历史 ⇒ 零星亮闪。
-                // 注意 RCRS 替代不了：它把亮度夹到邻域 min/max，而孤立极大值自己就是 max。
-                {
-                    float _minFastL = prevFast.r;
-                    for (int _fy = -1; _fy <= 1; ++_fy)
-                    for (int _fx = -1; _fx <= 1; ++_fx) {
-                        ivec2 _t = texelPos + ivec2(_fx, _fy);
-                        if (clamp(_t, ivec2(0), canvasEnd - 1) != _t) continue;
-                        _minFastL = min(_minFastL, texelFetch(colortex21, _t, 0).r);
-                    }
-                    // 压到邻域最小值附近而不是清零：清零会让该像素输出接近 0（黑块）。
-                    float _ceil = _minFastL * 2.0;
-                    if (prevDiffuse.r > _ceil) prevDiffuse.rgb = min(prevDiffuse.rgb, vec3(_ceil));
-                }
+                // firefly 抑制见下方「混合之后」处（官方位置：TA 的 diffResult，不在历史侧）。
             #endif
 
             // [2026-11 回正] 原"_preSmooth 运动前置平滑"已删除。它用全分辨率 UV 与象限空间的
@@ -355,12 +340,31 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 alpha *= 0.25;
             #endif
 
-            integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), integratedDiffuse.rgb, alpha);
+            vec3 _currRaw = integratedDiffuse.rgb;   // 短历史必须用**未经压制**的本帧输入（见下）
+            integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), _currRaw, alpha);
+
+            // [官方 firefly suppressor] 逐字对齐 `REBLUR_TemporalAccumulation` 的 diffuse 分支：
+            //   maxRel  = gFireflySuppressorMinRelativeScale + 38.0 / (accumSpeed + 1.0)
+            //   amount  = accumSpeed * maxBlurRadius * 0.1  →  饱和
+            //   luma    = lerp( luma(result), min( luma(result), luma(history) * maxRel ), amount )
+            // 判据是「**混合结果**比**历史**亮太多」——即本帧 1spp 的离群亮点，被按历史亮度封顶；
+            // 阈值随累积速度衰减（N=1 时 21 倍 ≈ 不压，N=63 时 2.6 倍），强度随 N 增长。
+            // 短历史（fastHistory）仍取原始 _currRaw：官方 fast 也用 `GetLuma(diff)`，不受压制影响。
+            {
+                float _ffN      = max(prevDiffuse.a, 1.0);
+                float _ffMaxRel = 2.0 + 38.0 / (_ffN + 1.0);
+                float _ffAmt    = _ffN * 8.0 * 0.1;   // 8.0 = EAWF 基础半径（画布纹素），替代 gMaxBlurRadius
+                _ffAmt /= 1.0 + _ffAmt;
+                float _ffLuma   = max(integratedDiffuse.r, 1e-6);
+                float _ffCap    = prevDiffuse.r * _ffMaxRel;
+                integratedDiffuse.rgb *= mix(_ffLuma, min(_ffLuma, _ffCap), _ffAmt) / _ffLuma;
+            }
+
             // 短历史：固定 1/6 混合率（官方 maxFastAccumulatedFrameNum = 6）、**永不掺滤波结果**
             // ⇒ 几帧级的新鲜参考（REBLUR fastHistory）。
             // .a 存**本帧的几何可信度 maxGeometryWeight**（诊断用，见 GI_DEBUG_VIEW 6 档）：
             // 累积帧数的稳态只取决于它（a* = 1/(1-w)），所以 a 停在半途就说明它在扣权重。
-            fastHistory = vec4(mix(prevFast, integratedDiffuse.rgb, 1.0 / 6.0),
+            fastHistory = vec4(mix(prevFast, _currRaw, 1.0 / 6.0),
                                saturate(maxGeometryWeight));
             return;
         }
