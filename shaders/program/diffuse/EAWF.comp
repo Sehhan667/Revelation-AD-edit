@@ -75,11 +75,17 @@ layout (rgba16f) restrict uniform image2D colorimg25;
 #endif
 
 //======// NRD 风格滤波参数 //==================================================================//
-// hit-distance 世界空间滤波半径：每 pass 的世界空间覆盖近似恒定——近处物体每屏像素
-// 覆盖的世界范围小，步长相应放大；远处则收窄防过度模糊。单位 = 米；0 = 用固定像素步长。
-#ifndef NRD_RADIUS
-    #define NRD_RADIUS 0.5 // [0.0 0.05 0.1 0.15 0.2 0.3 0.5 0.75 1.0] 世界空间滤波半径（米）
-#endif
+// 滤波半径：单位是**屏幕像素**，指第 0 级（最小步长）的半径，每级 a-trous 翻倍。
+// 四个 pass 的总覆盖 ≈ (1+2+4+8) × 该值 = 15 × 该值（屏幕像素）。
+//
+// [2026-11-10 口径修正] 旧写法是
+//     clamp( NRD_RADIUS(米) · pxPerWorldAtZ1 / viewDist, 0.5, 1.5 )
+// 在 1080p 下 `pxPerWorldAtZ1` 约 800，任何 1 米以外的表面都会把乘积顶到 1.5 ⇒
+// 滑条实际上只有"两档"，而且单位是**画布纹素**（1.5 画布 = 3 屏幕像素）。
+// 更糟的是同级的各向异性因子 `oms(|n.xy| · oms(NdotV))` 在正对镜头（n≈(0,0,-1)）时
+// 恒为 0 ⇒ 半径被 `max(..,1)` 钉死在 1 画布纹素，四遍滤波退化成同一个 3×3，滑条彻底失效。
+// 现在改成「屏幕像素 + 每级翻倍 + 各向同性 Vogel 盘」：值即倍率，范围可量化。
+// 选项在 settings.glsl（NRD_RADIUS_PX，随 settings 一起进来）。
 
 // 去遮挡修复（colortex14.a = 1 = 不可靠）：不可靠像素放大空间步长，从周围可靠邻居补填。
 // 0 = 关闭；1.0 = 均衡；越大越强。
@@ -94,10 +100,8 @@ void main() {
 
 #ifdef VXGI_FULLRES
 	ivec2 canvasEnd = ivec2(viewSize);
-	float canvasHeight = viewSize.y;
 #else
 	ivec2 canvasEnd = ivec2(halfViewSize);
-	float canvasHeight = halfViewSize.y;
 #endif
 
 	// 关降噪（仅光追路径）：透传，保持棋盘信号；SSILVB 不受影响（照常滤波）。
@@ -139,24 +143,19 @@ void main() {
 		stepBoost *= 1.0 + _under * 0.6;
 	}
 
-	// 画布坐标 → 视线方向 / 屏幕纹素。`texelToUv` 是全分辨率像素尺寸，画布上直接用会压 UV。
+	// 画布坐标 → 视空间。「texelToUv」是全分辨率像素尺寸，画布上直接用会压 UV。
 	vec2 centerCanvasUv = (vec2(texelPos) + 0.5) / vec2(canvasEnd);
-	vec3 viewDir = ScreenToViewDirRaw(centerCanvasUv);
 #ifdef VXGI_FULLRES
 	ivec2 centerScreenTexel = texelPos;
 #else
 	ivec2 centerScreenTexel = texelPos * 2 + GI_CANVAS_PHASE;
 #endif
 	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(centerScreenTexel);
-	float NdotV = abs(dot(geoNormal, viewDir));
 
-	// 各向异性步长：沿几何切向拉伸，法向收窄；随 pass 指数递增（1,2,4,8…）
-	vec2 offsetScaleBase = oms(abs(geoNormal.xy) * oms(NdotV)) * ldexp(2.0, FILTER_PASS_INDEX);
+	// a-trous 步长：第 0 级 1×、每级 ×2（画布纹素）。基础半径由屏幕像素换算（半分辨率画布 ÷2）。
+	vec2 offsetScaleBase = vec2(NRD_RADIUS_PX * 0.5 * ldexp(1.0, FILTER_PASS_INDEX));
 
 	float viewDist = max(-float(normalDepthData.z), 0.25);
-	float pxPerWorldAtZ1 = canvasHeight * gbufferProjection[1][1];
-	float depthFactor = NRD_RADIUS <= 0.0 ? 1.0
-	                    : clamp(NRD_RADIUS * pxPerWorldAtZ1 / viewDist, 0.5, 1.5);
 
 	// 官方 Blur：`blurRadius *= sqrt( areaFactor )`，areaFactor = hitDistFactor × nonLinearAccumSpeed。
 	//   nonLinearAccumSpeed = 1 / (1 + N²/maxAccum)：**新像素半径大、稳定像素趋于 0**。
@@ -164,9 +163,9 @@ void main() {
 	// hitDistFactor 见下方：使用 colortex26 的**时域平滑**命中距离（EMA），而不是 1spp 即时值。
 	float fade = saturate(frameIndex * rcp(max(SSILVB_MAX_ACCUM_FRAMES, 1.0)));   // N / maxAccum
 	float nonLinearSpeed = rcp(1.0 + fade * max(frameIndex, 1.0));
-	// 下限 0.5：满核（1.0）在稳定像素上等于 16 屏幕像素的大核，半分辨率画布上会形成
-	// "大团斑块"；而按 nonLinearAccumSpeed 收到 0 又会露出时域残噪。取中间值：
-	// 最后一个 pass 约 4 画布纹素（8 屏幕像素），既能压残噪又不产生团块。
+	// 下限 0.5：满核（1.0）时第 3 级半径 = NRD_RADIUS_PX × 4 画布纹素（默认 = 4 画布 /
+	// 8 屏幕像素），稳定像素上会形成"大团斑块"；而按 nonLinearAccumSpeed 收到 0 又会露出
+	// 时域残噪。取中间值：稳定区约 2 画布纹素（4 屏幕像素），既能压残噪又不产生团块。
 	float radiusScale = max(sqrt(nonLinearSpeed), 0.5);
 
 	// 命中距离缩放半径（官方）：命中距离大 ⇒ 该处平坦/信号可靠，可用大核；命中距离小
@@ -178,9 +177,9 @@ void main() {
 	hitDistFactor = sqrt(max(texelFetch(colortex26, texelPos, 0).r, 0.08));
 #endif
 
-	vec2 offsetScale = offsetScaleBase * depthFactor * stepBoost * radiusScale * hitDistFactor;
-	// 每轴至少 1 px：掠射面上 offsetScaleBase 会被压到 <0.5，整列 tap 塌到中心 ⇒ 9-tap 退化成 1D 条带。
-	offsetScale = max(offsetScale, vec2(1.0));
+	vec2 offsetScale = offsetScaleBase * stepBoost * radiusScale * hitDistFactor;
+	// 下限 0.5 画布纹素：再小 8 次 tap 会全部 round 回中心，等于没滤波。
+	offsetScale = max(offsetScale, vec2(0.5));
 
 	// 旋转：同一 2x2 画布块共享角度（官方 rotator 的 intent），否则逐像素完全随机会让
 	// 每个像素的模糊方向不同 ⇒ 半分辨率画布上出现颗粒状/斑块状的低频结构。

@@ -55,9 +55,24 @@ layout (rgba16f) restrict uniform image2D colorimg23;            // 稳定化输
 #define STABILIZE_MAX_FRAMES 63.0
 // 官方 historyFixFrameNum = 3：antilag 触发时历史长度最低回落到这里
 #define HISTORY_FIX_FRAME_NUM 3.0
-// 官方 antilagSettings：luminanceSigmaScale = 2.0 / luminanceSensitivity = 3.0
+// 官方 artilagSettings：luminanceSigmaScale = 2.0 / luminanceSensitivity = 3.0
 #define ANTILAG_LUMA_SIGMA_SCALE 2.0
 #define ANTILAG_LUMA_SENSITIVITY 3.0
+// 稳定化的**历史长度上限**（帧）。官方把它挂到 maxAccumulatedFrameNum（同一 FPS 公式），
+// 但本链在它之前已经有一级时域累积（Accumulate，约 24 帧），这一级的输入是**已累积**信号：
+// 再压 20~60 帧既压不出噪声（残差在时域上已高度相关），只换来 `historyWeight = N/(N+1)`
+// 的滞后（N=28 ⇒ 96.6%，约 1 秒）。实测「转头拖影严重」就是这里。
+// 只保留抑制滤波核抖动所需的几帧；要更长可自行调回。
+#ifndef GI_STABILIZE_FRAMES
+    #define GI_STABILIZE_FRAMES 8.0 // [2.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 63.0] 稳定化历史长度上限（帧）
+#endif
+
+// 官方 `stabilizationStrength`（REBLUR_Settings，默认 1.0）：稳定化历史的权重乘子。
+// 它乘在 accumSpeed 上（不是乘最终结果），因此会同时影响 antilag 与颜色盒：
+//   <1 更跟手（拖影短、残噪多）；>1 更稳；0 = 等价关闭稳定化。
+#ifndef NRD_STABILIZATION_STRENGTH
+    #define NRD_STABILIZATION_STRENGTH 1.0 // [0.0 0.25 0.5 0.75 1.0 1.5 2.0] 稳定化强度
+#endif
 
 //======// Function //============================================================================//
 
@@ -77,6 +92,12 @@ void main() {
     // 本 pass 只在 NRD 模式调度；编译期兜底（保持缓冲干净，也便于静态检查的写入保护配对）
     imageStore(colorimg23, texelPos, vec4(0.0));
 #else
+
+#if GI_DEBUG_NO_TS > 0
+    // A/B 直通：跳过这个第二个时间累加器，最终 GI = EAWF 输出（不参与时域）。
+    imageStore(colorimg23, texelPos, vec4(imageLoad(colorimg3, texelPos).rgb, 1.0));
+    return;
+#endif
 
     float depth = loadDepth0(rt);
     // 天空/远景不参与稳定化（写 0，EAWF 的 guide 会退回自身亮度）
@@ -164,30 +185,30 @@ void main() {
     if (!valid || bad > 0.5 || quality < 0.25) prevAge = 0.0;
     if (any(isnan(prev.rgb)) || any(isinf(prev.rgb))) prevAge = 0.0;
 
-    // 官方：maxStabilizedFrameNum 不得超过 maxAccumulatedFrameNum（同一 FPS 公式重算，
-    // 并与 Accumulate 一样量化到 8 帧一档，避免上限逐帧抖动）
-    float cap = clamp(GI_ACCUM_TIME / max(frameTime, 1e-4), 8.0, SSILVB_MAX_ACCUM_FRAMES);
-    cap = max(floor(cap * 0.125) * 8.0, 8.0);
-    cap = min(cap, STABILIZE_MAX_FRAMES);
+    // 上限不再跟随 GI_ACCUM_TIME：那一级累积已经在 Accumulate 里做过，这里只做稳定化。
+    float cap = min(max(GI_STABILIZE_FRAMES, 2.0), STABILIZE_MAX_FRAMES);
 
     // 官方 framerateScale = clamp(fps / 60, 0.5, 2.0)：低帧率时时间步更大，antilag 更敏感
     float framerateScale = clamp(rcp(60.0 * max(frameTime, 1e-4)), 0.5, 2.0);
     float magic = ANTILAG_LUMA_SENSITIVITY * framerateScale * framerateScale;
 
+    // 官方 stabilizationStrength 直接乘在 accumSpeed 上（等价于"历史有效长度"缩放）
+    float stabAge = max(prevAge * NRD_STABILIZATION_STRENGTH, 0.0);
+
     // 官方 ComputeAntilag（mode 2）：历史亮度偏离「邻域均值 ± σ·luminanceSigmaScale」多少
     float antilag = 1.0;
-    if (prevAge > 0.0) {
+    if (stabAge > 0.0) {
         float sL = max(sigma.r, 1e-5) * ANTILAG_LUMA_SIGMA_SCALE;
         float hL = prev.r;
         float hc = clamp(hL, mu.r - sL, mu.r + sL);
         float dL = abs(hL - hc) * rcp(max(hL, hc) + 1e-5);
         // 官方 accumSpeed = footprintQuality × data1.x
-        float accumSpeed = prevAge * quality;
+        float accumSpeed = stabAge * quality;
         antilag = rcp(1.0 + dL * accumSpeed * rcp(max(magic, 1e-3)));
     }
 
     // 历史夹到当前邻域（官方 Color::Clamp；σ 乘数随历史权重增长 ⇒ 越稳定越收紧）
-    float historyWeight = quality * (prevAge * rcp(1.0 + max(prevAge, 1e-3)));
+    float historyWeight = quality * (stabAge * rcp(1.0 + max(stabAge, 1e-3)));
     historyWeight *= antilag;
     historyWeight = saturate(historyWeight);
 

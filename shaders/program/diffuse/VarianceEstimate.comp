@@ -153,18 +153,14 @@ void main() {
         integratedDiffuse.rgb *= rcp(1.0 + integratedDiffuse.x);
     #endif
 
-    float _momVar = max0(moments.y - moments.x * moments.x);   // 原始方差，下面统一乘 16
-#ifdef VOXEL_GI_NRD_ACTIVE
-    // 官方：方差由 prepass 用空间重用样本的离散度估出（colortex24.r）。
-    // 但若 prepass 因任何原因没写到值（或写 0），**绝不能**让方差为 0：
-    //   sigmaL = -0.5/sqrt(variance) ⇒ 0 方差会让 |sigmaL| 爆炸 ⇒ 邻居全被拒 ⇒ 滤波空转。
-    // 因此取两者的较大值作为下限保护。
-    float _preVar = max(texelFetch(colortex24, texelPos, 0).r, 0.0);
-    // 与 EAWF 侧原有量纲保持一致（SVGF 约定 ×16）；两个来源都乘同一个系数。
-    float variance = 16.0 * max(_preVar, _momVar);
-#else
-    float variance = 16.0 * _momVar;
-#endif
+    // 方差 = 本帧输入的**空间**离散度。
+    // [2026-11-10 口径修正] 去掉两处旧错误：
+    //   1. `× 16` 魔数（SVGF 时代的量纲补丁，现在没有任何消费者拿它当滤波强度）；
+    //   2. `max(colortex24, momVar)`——走到这里的只有非 NRD 路径，colortex24 根本没写，
+    //      那个分支还从未参与编译（NRD 分支在上面就 return 了）。
+    // 剩余问题（已知、仅影响诊断读数）：moments 取自 colortex2（累积后），其空间离散度
+    // 已被时域平均 N 帧 ⇒ 比输入小 N 倍。要真实的输入方差请用 NRD 路径的 colortex24。
+    float variance = max0(moments.y - moments.x * moments.x);
 
     imageStore(colorimg3, texelPos, vec4(integratedDiffuse.rgb, variance));
 }

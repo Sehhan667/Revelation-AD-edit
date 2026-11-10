@@ -529,25 +529,29 @@ void main() {
             finalOut = vec3(saturate(_dbgDelta * 2.0), saturate(1.0 - _dbgDelta * 2.0), 0.0);
         } else if (GI_DEBUG_VIEW == 4) {
             // 4：三段对比整条链路（左→右）：prepass(colortex22) | 累积(colortex2) | 最终 GI(colortex23)
-            // 全是**线性 HDR**、没有曝光/色调映射，典型值 1e-3 量级 ⇒ 必须乘增益才可判读。
-            // 22/23 用 400 倍增益：这两条真的可能是 0（没写入/被清空），小增益看不出区别。
-            const float _DBG_GAIN_HI = 400.0;
-            const float _DBG_GAIN_LO = 8.0;
+            // 三段必须用**同一增益 + 同一色调映射**，否则亮度差会被误读成结构差。
+            // （旧版 22/23 用 400x、中间的累积用 8x ⇒ 中间早已剪切成白、只看得见细密残噪，
+            //   两边在大增益下露出低频 ⇒ 看上去像"滤波制造了大团斑块"。刻度不一致比没视图更糟。）
+            // 增益 64 + Reinhard：0.0025→0.14、0.01→0.39、0.1→0.86，跨两个数量级都可判读。
+            const float _DBG_GAIN = 64.0;
+            vec3 _dbgSeg;
             if (texelPos.x * 3 < int(viewSize.x)) {
 #ifdef VOXEL_GI_NRD_ACTIVE
-                finalOut = texelFetch(colortex22, _dbgT, 0).rgb * _DBG_GAIN_HI;
+                _dbgSeg = texelFetch(colortex22, _dbgT, 0).rgb;
 #else
-                finalOut = _dbgFilt.rgb * _DBG_GAIN_HI;
+                _dbgSeg = _dbgFilt.rgb;
 #endif
             } else if (texelPos.x * 3 < int(viewSize.x) * 2) {
-                finalOut = _dbgHist.rgb * _DBG_GAIN_LO;
+                _dbgSeg = _dbgHist.rgb;
             } else {
 #ifdef VOXEL_GI_NRD_ACTIVE
-                finalOut = texelFetch(colortex23, _dbgT, 0).rgb * _DBG_GAIN_HI;
+                _dbgSeg = texelFetch(colortex23, _dbgT, 0).rgb;
 #else
-                finalOut = _dbgFilt.rgb * _DBG_GAIN_HI;
+                _dbgSeg = _dbgFilt.rgb;
 #endif
             }
+            vec3 _dbgS = _dbgSeg * _DBG_GAIN;
+            finalOut = _dbgS / (1.0 + _dbgS);
         } else if (GI_DEBUG_VIEW == 5) {
             // 5：历史长度直方图（分档上色），用来快速看出"整体历史长度"是否健康
             // 归一化基准必须是**本帧真实累积上限**，不能是 SSILVB_MAX_ACCUM_FRAMES：

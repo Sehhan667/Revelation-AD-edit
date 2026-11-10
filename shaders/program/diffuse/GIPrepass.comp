@@ -69,6 +69,13 @@ layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时�
 // 官方 lobeAngleFraction = 0.15（漫反射 90° 瓣角的 15% ≈ 13.5°）
 #define LOBE_COS 0.9723699
 
+// 官方 `fireflyClampThreshold`（REBLUR_Settings，默认 0 = 关闭）：firefly 抑制。
+// 形态：参与重用的样本亮度不得超过「中心像素亮度 × 本值」，超出就整体等比缩到阈值。
+// 只压**跨表面/单次极端离群**，不改变正常分布；0 = 与官方默认一致，完全不做。
+#ifndef GI_FIREFLY_CLAMP
+    #define GI_FIREFLY_CLAMP 0.0
+#endif
+
 void main() {
     ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
 #ifdef VXGI_FULLRES
@@ -119,9 +126,24 @@ void main() {
     float lSum = 0.0;
     float lSum2 = 0.0;
 
-    // Poisson 盘（黄金角 Vogel）在整个盘内均匀铺开；2x2 画布块共享旋转，不逐帧变化。
+    // Poisson 盘（黄金角 Vogel）在整个盘内均匀铺开；2x2 画布块共享旋转。
+    // [2026-11-10 波前] 旋转角必须**逐帧**变化（黄金角步进）。只按像素哈希固定时，
+    // 32 个稀疏样本带来的采样误差是「时域相关」的：累积多少帧都平均不掉，只会把它
+    // 固化成一块跟着屏幕走的偏差。实测症状正是这样——
+    //   · 静止：偏差钉在原地 ⇒ 不动的斑点；
+    //   · 转头：图案相对世界内容滑动 + 新露出像素拿到另一份偏差 ⇒ 噪声水平的波前 = 拖影。
+    // 逐帧旋转后它变成时域白噪声，由 Accumulate 平均掉（代价：单帧略噪一点）。
+#ifndef GI_ROT_PER_FRAME
+    #define GI_ROT_PER_FRAME 0.0
+#endif
     ivec2 rotCell = texelPos >> 1;
-    float ang0 = hash13(vec3(rotCell, 3.0)) * 6.2831853;
+    float ang0 = hash13(vec3(rotCell, 3.0)) * 6.2831853
+               + GI_ROT_PER_FRAME * float(frameCounter) * 2.39996323;
+
+#if GI_FIREFLY_CLAMP > 0.0
+    // firefly 阈值：以中心像素亮度为参考（同帧、无需第二遍循环）
+    float fireflyLimit = max(texelFetch(colortex3, texelPos, 0).r, 1e-5) * GI_FIREFLY_CLAMP;
+#endif
 
     for (int i = 0; i < PREPASS_SAMPLES; ++i) {
         float rn = sqrt((float(i) + 0.5) * rcp(float(PREPASS_SAMPLES)));   // 0..1
@@ -139,6 +161,10 @@ void main() {
         vec4 tapSample = texelFetch(colortex3, t, 0);
         vec3 tapCol = tapSample.rgb;
         if (any(isnan(tapCol)) || any(isinf(tapCol))) continue;      // 官方 Denanify
+#if GI_FIREFLY_CLAMP > 0.0
+        // 等比压缩（只动 Y 会改色相）：保留色差比例，只削亮度
+        if (tapCol.r > fireflyLimit) tapCol *= fireflyLimit * rcp(max(tapCol.r, 1e-5));
+#endif
 
         // 几何：官方 `GetGeometryWeightParams` ⇒ exp( -|planeDist| / (planeDistanceSensitivity · frustumSize) )
         // planeDist 用**世界距离**（与 EAWF 保持同一口径）。
@@ -174,10 +200,8 @@ void main() {
     float smoothedHit = prevHit > 0.0 ? mix(prevHit, normHit, 0.15) : normHit;
     imageStore(colorimg26, texelPos, vec4(smoothedHit, 0.0, 0.0, 1.0));
 
-    // 加权方差：E[x²] - E[x]²（与 VarianceEstimate 的尺度保持一致：×16）
+    // 加权方差：E[x²] - E[x]²（**原始**方差，不乘任何系数；调试视图 2 直接按 σ 刻度显示）
     float meanL = wSum > 1e-4 ? lSum / wSum : 0.0;
-    // 存**原始**方差（不乘 16）：下游 VarianceEstimate 统一乘 16 保持量纲，
-    // 这样这里的读数可以直接当"σ²"用，调试视图不必再凑刻度。
     float varL  = wSum > 1e-4 ? max(lSum2 / wSum - meanL * meanL, 0.0) : 0.0;
     imageStore(colorimg24, texelPos, vec4(varL, 0.0, 0.0, 1.0));
 }

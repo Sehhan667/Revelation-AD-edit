@@ -27,10 +27,14 @@
     colortex25 在此时刻没有读者（EAWF 的乒乓在后面的 pass 才用到它）。
 
   与官方一致的两条硬约束：
-    1. **只从仍然有效的历史继承**（官方要求邻居 historyLength ≥ 1）。以前的重建路径
+    1. **只从仍然有效的历史继承**（官方要求邻居 historyLength ≥ 1；这里优先只要
+       ≥ historyFixFrameNum 的"已稳定"邻居，找不到才放宽到 ≥ 1）。以前的重建路径
        不检查邻居是否也坏 ⇒ 全屏失效时用噪声去重建噪声，团块会自我维持好几帧。
     2. 继承**历史长度**（上限 historyFixFrameNum = 3）。长度恒为 1 时 alpha ≈ 0.83，
        新像素每帧 83% 用单采样 ⇒ 亮暗抖动；继承后 alpha ≈ 0.25，几帧内收敛。
+
+  "可信度"全部用**连续量**表达，没有任何二值掩码：掩码边界在屏幕上就是一条
+  肉眼可见的直线（实机踩过两次）。
 --------------------------------------------------------------------------------
 */
 
@@ -60,12 +64,16 @@ layout (rgba16f) restrict uniform image2D colorimg25;   // 修复后的历史（
 
 // 官方默认值
 #define HISTORY_FIX_FRAME_NUM 3.0   // historyFixFrameNum：修复后继承的帧数上限
-// 官方 historyFixBasePixelStride = 14（屏幕像素）。画布是半分辨率 ⇒ 7 纹素；
-// 全分辨率模式（VOXEL_GI_FULLRES）下画布 = 屏幕，直接用 14。
+// 官方 historyFixBasePixelStride = 14（屏幕像素）。**我们故意不用官方那个半径**：
+// 官方 history 是 63 帧累积的极平滑场，跨 14px 复制只是"同样平滑"；而我们的输入本身
+// 是 30 纹素 prepass 糊过的半分辨率场，再用 ±28 屏幕像素平均一次 = 在画面里贴一块
+// 明显更模糊、且有硬边界的补丁（实机表现为"转头时隐约的边界 + 新像素上模糊的噪点"）。
+// 修复只需要"别从噪声起步"，不需要大范围重建 ⇒ 用紧凑半径 ±4 画布纹素（±8 屏幕像素），
+// 只取近邻的真实历史；够不着的地方退回本帧 prepass（它与周围天然连续，没有边界）。
 #ifdef VXGI_FULLRES
-#define HISTORY_FIX_STRIDE 14
+#define HISTORY_FIX_STRIDE 4
 #else
-#define HISTORY_FIX_STRIDE 7
+#define HISTORY_FIX_STRIDE 2
 #endif
 // 官方 planeDistanceSensitivity = 0.02（相对视锥短边世界尺寸）
 #define PLANE_DIST_SENS 0.02
@@ -86,6 +94,12 @@ void main() {
 #endif
     if (any(greaterThanEqual(texelPos, canvasEnd))) return;
 
+#if GI_DEBUG_NO_HISTORY_FIX > 0
+    // A/B 直通：不修复、不改长度，只把历史搬到目标缓冲（= "没有 HistoryFix" 的基线）。
+    imageStore(colorimg25, texelPos, texelFetch(colortex2, texelPos, 0));
+    return;
+#endif
+
     vec4 hist = texelFetch(colortex2, texelPos, 0);
 
     float depth = loadDepth0(rt);
@@ -95,34 +109,34 @@ void main() {
         return;
     }
 
-    // ---- 本像素历史是否可用 ----
-    // (1) 上一帧 Accumulate 在该纹素给出的去遮挡标记：1 = 它的历史是重建/无效的。
-    //     与 colortex2 的历史值**同源同纹素**，所以这个判据是自洽的。
-    // (2) 累积帧数 < 1：没有历史。
-    // (3) 重投影出屏：本像素在上一帧不存在（快速转头最典型的情况）。
-    float disoccFlag = texelFetch(colortex14, texelPos, 0).a;
+    // ---- 修复强度（连续权重，不是二值掩码）----
+    // 官方 REBLUR_HistoryFix 的判据只有一条：**该纹素存下来的历史帧数**
+    //   historyLength < historyFixFrameNum ⇒ 空间填补
+    // 它**不做重投影判定**，也没有"去遮挡掩码"这种二值量。这一点很关键：
+    // 任何二值掩码在屏幕上的边界都是"重投影出屏区域"的边界，而那个区域的形状
+    // 按定义就是一条**平行于屏幕边框**的直线 ⇒ 实机看到的硬分界线。
+    // 官方把"历史不可信"表达成连续的帧数（累积器把 historyLength 置回 1，再逐帧长回来），
+    // 所以这里也改成连续权重：帧数越低，修复值占比越高。
     float age = hist.a;
     if (!(age >= 0.0) || age > 1e6) age = 0.0;
+    // 上一帧的去遮挡标记（colortex14.a）= 官方的「historyLength 置回 1」。
+    // 官方在 prepass 里判定去遮挡、顺手把长度清 1，于是 HistoryFix 自然接手；我们没这一步，
+    // 而这类像素自己的 a 可能残留得很大 ⇒ 只看 age 会漏掉它们 ⇒ 拖影。
+    // 标记等价于 age = 1（wFix 随即取满），修复后长度由邻居重新给出（≤ 3）。
+    vec4 aux = texelFetch(colortex14, texelPos, 0);
+    if (aux.a > 0.5) age = 1.0;
+    // age = 1（刚重置、还没被修过）时完全交给修复值：那一帧自己的值是"脏"的，
+    // 它正是实机看到的"极短时间内脏的新像素"。之后 2→3 连续淡出到历史值。
+    float wFix = saturate((HISTORY_FIX_FRAME_NUM - age) * rcp(HISTORY_FIX_FRAME_NUM - 1.0));
+    if (wFix <= 0.0) {
+        // 历史已经很稳：原样搬到目标缓冲（目标缓冲是**另一个** buffer，不写就是两帧前的旧内容）
+        imageStore(colorimg25, texelPos, hist);
+        return;
+    }
 
     vec2 screenUv = (vec2(rt) + 0.5) * viewPixelSize;
     float viewZ = ScreenToViewDepth(depth);
     vec3 viewPos = ScreenToViewPosRaw(screenUv, viewZ);
-    vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
-    vec3 prevWorldPos = worldPos + (cameraPosition - previousCameraPosition) * step(0.56, depth); // 与 Accumulate 同口径（手持物不加相机位移）
-    vec3 prevViewPos = transMAD(gbufferPreviousModelView, prevWorldPos);
-    vec3 prevNDC = projMAD(gbufferPreviousProjection, prevViewPos) * rcp(max(-prevViewPos.z, 1e-3));
-#ifdef TAA_ENABLED
-    prevNDC.xy += taaJitterPrev;
-#endif
-    vec2 prevCoord = prevNDC.xy * 0.5 + 0.5;
-    bool onScreen = all(greaterThanEqual(prevCoord, vec2(0.0))) && all(lessThanEqual(prevCoord, vec2(1.0)));
-
-    bool needFix = !onScreen || age < 1.0 || disoccFlag > 0.5;
-    if (!needFix) {
-        // 历史可用：原样搬到目标缓冲（目标缓冲是**另一个** buffer，不写就是两帧前的旧内容）
-        imageStore(colorimg25, texelPos, hist);
-        return;
-    }
 
     // ---- 从有效邻居重建 ----
     vec3 geoNormal, normal;
@@ -136,50 +150,72 @@ void main() {
     float sumW = 0.0;
     float ageMax = 0.0;
 
-    // 官方 5x5 大步长搜索（历史失效区域往往成片，必须看更远的邻居才找得到有效历史）
-    for (int i = 0; i < 25; ++i) {
-        ivec2 t = texelPos + offset5x5[i] * HISTORY_FIX_STRIDE;
-        if (clamp(t, ivec2(1), canvasEnd - 2) != t) continue;
+    // 两级搜索：先只取"已稳定"的邻居（age ≥ 3），一个都找不到时再放宽到"有任何历史"
+    // （age ≥ 1）。第二级只会落在新内容最外侧那条极窄的波前上，代价可忽略；
+    // 但正是这条波前以前会退到 prepass（1spp 起手，所以脏）而露出一条边。
+    for (int tier = 0; tier < 2; ++tier) {
+        bool stableOnly = (tier == 0);
+        float nAgeMin = stableOnly ? HISTORY_FIX_FRAME_NUM : 1.0;
+        float tierW = stableOnly ? 1.0 : 0.6;               // 次级样本降权（它们自己也在收）
+        float needW = stableOnly ? 1.5 : 0.7;               // 次级样本权重小，阈值相应放低
+        // 用 offset5x5N（不含中心）：中心像素就是"待修的那个"，它的历史正是要丢掉的东西。
+        // 若把中心算进去，第二级（age ≥ 1）必然能采到自己、权重 0.6 就过了 0.4 的支撑线，
+        // 于是 repaired ≈ 它自己 ⇒ 修复变成空操作，最脏的那一圈原样保留（实机那条分界线）。
+        for (int i = 0; i < 24; ++i) {
+            ivec2 ofs = offset5x5N[i];
+            ivec2 t = texelPos + ofs * HISTORY_FIX_STRIDE;
+            if (clamp(t, ivec2(1), canvasEnd - 2) != t) continue;
 
-        vec4 nHist = texelFetch(colortex2, t, 0);
-        float nAge = nHist.a;
-        if (!(nAge >= 1.0)) continue;                       // 邻居自己也没有有效历史 → 不继承
-        vec4 nAux = texelFetch(colortex14, t, 0);
-        if (nAux.a > 0.5) continue;                         // 邻居的历史本身是重建出来的 → 不继承
+            vec4 nHist = texelFetch(colortex2, t, 0);
+            float nAge = nHist.a;
+            if (!(nAge >= nAgeMin)) continue;               // 邻居自己的历史还不够稳 → 不继承
+            vec4 nAux = texelFetch(colortex14, t, 0);
+            if (nAux.a > 0.5) continue;                     // 邻居的历史本身是重建出来的 → 不继承
 
-        // 同帧几何：邻居的当前视深 → 切平面距离（与 EAWF / prepass 同一口径）
+            // 同帧几何：邻居的当前视深 → 切平面距离（与 EAWF / prepass 同一口径）
 #ifdef VXGI_FULLRES
-        ivec2 tScreen = t;
+            ivec2 tScreen = t;
 #else
-        ivec2 tScreen = t * 2 + GI_CANVAS_PHASE;
+            ivec2 tScreen = t * 2 + GI_CANVAS_PHASE;
 #endif
-        float nz = ScreenToViewDepth(loadDepth0(tScreen));
-        vec3 nViewPos = ScreenToViewPosRaw((vec2(tScreen) + 0.5) * viewPixelSize, nz);
-        float planeDist = abs(dot(nViewPos - centerViewPos, planeN));
-        float w = exp(-planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
-        // 法线：用邻居上一帧存下的世界法线（与它的历史同源），避免再取一次 gbuffer
-        w *= smoothstep(NORMAL_COS_MIN, NORMAL_COS_MAX, dot(OctDecodeSnorm(nAux.xy), normal));
-        if (w <= 1e-4) continue;
+            float nz = ScreenToViewDepth(loadDepth0(tScreen));
+            vec3 nViewPos = ScreenToViewPosRaw((vec2(tScreen) + 0.5) * viewPixelSize, nz);
+            float planeDist = abs(dot(nViewPos - centerViewPos, planeN));
+            float w = exp(-planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
+            // 法线：用邻居上一帧存下的世界法线（与它的历史同源），避免再取一次 gbuffer
+            w *= smoothstep(NORMAL_COS_MIN, NORMAL_COS_MAX, dot(OctDecodeSnorm(nAux.xy), normal));
+            // 径向衰减：即使半径很小，也让近邻占主导，避免"整块被平均掉"的平板感
+            float r2 = dot(vec2(ofs), vec2(ofs));
+            w *= exp(-r2 * 0.5) * tierW;
+            if (w <= 1e-3) continue;
 
-        sumRGB += nHist.rgb * w;
-        sumW += w;
-        ageMax = max(ageMax, min(nAge, HISTORY_FIX_FRAME_NUM));
+            sumRGB += nHist.rgb * w;
+            sumW += w;
+            ageMax = max(ageMax, min(nAge, HISTORY_FIX_FRAME_NUM));
+        }
+        if (sumW > needW) break;
     }
 
-    if (sumW > 1e-4) {
-        // 继承历史长度（官方 historyFixFrameNum = 3）。但当本像素**完全没有**上一帧历史
-        //（重投影出屏）时只给 1：那种情况下邻居的值本身也属于屏幕另一侧的表面，
-        // 继承 3 帧会让旧画面的 GI 在屏幕上多停留几帧（拖影），用户明确不要拖影。
-        float ageOut = onScreen ? max(min(ageMax, HISTORY_FIX_FRAME_NUM), 1.0) : 1.0;
-        imageStore(colorimg25, texelPos, vec4(sumRGB * rcp(sumW), ageOut));
+    // 支撑不足时宁可用 prepass：它的值是本帧的、与周围天然连续，
+    // 而"极少数邻居的平均"会在画面里留下一块孤立斑。权重和 ≈ 有效样本数。
+    vec3 repaired;
+    float ageOut;
+    if (sumW > 0.4) {
+        repaired = sumRGB * rcp(sumW);
+        // 继承历史长度（官方 historyFixFrameNum = 3）
+        ageOut = max(min(ageMax, HISTORY_FIX_FRAME_NUM), 1.0);
     } else {
 #ifdef VOXEL_GI_NRD_ACTIVE
-        // 没有任何可用邻居（整片新露出）：用本帧 prepass 的 30px 稠密结果当起点。
+        // 没有稳定邻居（整片新露出）：用本帧 prepass 的 30px 稠密结果当起点，
         // 比 mip 采样原始追踪值可靠得多，也不会把噪声写进历史。
-        imageStore(colorimg25, texelPos, vec4(texelFetch(colortex22, texelPos, 0).rgb, 1.0));
+        repaired = texelFetch(colortex22, texelPos, 0).rgb;
 #else
-        // 非 NRD 保护：colortex22 只由 prepass 写入，这里退回本像素原有历史（长度 1 强制重建）
-        imageStore(colorimg25, texelPos, vec4(hist.rgb, 1.0));
+        // 非 NRD 保护：colortex22 只由 prepass 写入，这里退回本像素原有历史
+        repaired = hist.rgb;
 #endif
+        ageOut = 1.0;
     }
+
+    // 按 wFix 连续混合：帧数越低越信任修复值，避免出现"修复区/非修复区"的硬边界。
+    imageStore(colorimg25, texelPos, vec4(mix(hist.rgb, repaired, wFix), mix(age, ageOut, wFix)));
 }

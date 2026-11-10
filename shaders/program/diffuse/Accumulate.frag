@@ -62,6 +62,11 @@ layout (location = 2) out vec4 fastHistory;
     #define SSILVB_HOLD_UP_SPEED 7.0     // [0.1 0.5 1.0 2.0 3.0 5.0]
 #endif
 
+// 每帧输入的**等效样本数**（GI_EFFECTIVE_SPP，选项在 settings.glsl）：
+// 本包的输入早已不是 1 spp——GIPrepass 用 32 个样本做 30 纹素空间重用，追踪端还有 ReSTIR
+// 复用。照搬官方「时间 / 帧时间」换算会把上限高估 ≈ 该倍数 ⇒ 累积过粘（拖影、火把挪走
+// 后要近 1 秒才跟上）。这里显式折算：cap = 时间 / (帧时间 × 等效样本数)。
+
 #ifdef TAA_ENABLED
     #define SHOULD_APPLY_JITTER
 #endif
@@ -81,14 +86,8 @@ layout (location = 2) out vec4 fastHistory;
 // 视深。静止时两者相等；一移动，同一世界点在两帧的视深整体错位 ⇒ 邻居全被误判为不同表面
 // ⇒ 退回单帧/mip 采样 ⇒ 运动时闪、且预滤波失效（实测"动起来更糟、仍然闪"）。
 // 深度必须取**同帧**口径：从 depthtex 按本帧的棋盘相位取邻居的深度再换算成视深。
-float GICanvasNeighbourViewDepth(in ivec2 canvasTexel) {
-#ifdef VXGI_FULLRES
-    ivec2 rt = canvasTexel;
-#else
-    ivec2 rt = canvasTexel * 2 + GI_CANVAS_PHASE;
-#endif
-    return ScreenToViewDepth(loadDepth0(rt));
-}
+// [2026-11-10] 原来内联的 ±28px 重建（本函数的唯一调用者）已删除，统一交给 deferred1_c。
+
 
 void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, in float accumCap, in float giDepthGrad) {
 	// [无抖动口径] 必须用 `ScreenToViewPosRaw`（不减 `taaJitter`）。
@@ -120,7 +119,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     vec2 currCoord = texelToUv(texelPos);
     // a 默认 0（可靠）；不可靠/重投影失效路径在下方置 1
     // 视深用 `ScreenToViewDepth(depth)`（纯投影逆变换，与 taaJitter 无关）——
-    // 与 TemporalFilter 里无抖动的 `viewPos`、以及 `GICanvasNeighbourViewDepth()` 同口径。
+    // 与 TemporalFilter 里无抖动的 `viewPos` 同口径。
     // 若这里写 `viewPos.z`（带抖动），下一帧的判据就会读到上一帧抖动相位的深度，
     // 造成"静止时累积帧数平滑缓慢起伏"（见 TemporalFilter 顶部注释）。
     encodedNormalDepth = vec4(OctEncodeSnorm(worldNormal), ScreenToViewDepth(screenPos.z), 0.0);
@@ -382,45 +381,19 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 
     // [2026-08-19 NRD] 去遮挡标记：走到这里 = 不可靠（越界/historyReset/深度不匹配）→ a=1
     //
-    // [REBLUR HistoryFix] 官方 `historyFixFrameNum = 3`：历史失效时不用"当前帧的模糊样本"当起点，
-    // 而是从**仍然有效的历史**（几帧前的短历史）里按深度/法线加权重建。好处：
-    //   · 起点是已累积信号 ⇒ 不含本帧冲激（不闪）；
-    //   · 亮度正确 ⇒ 不会像 mip3 那样偏暗；
-    //   · 与周围像素连续 ⇒ 新区域不出现"补丁"。
-    // 步长取官方 historyFixBasePixelStride = 14（像素）：5×5 个 tap、相邻 tap 相隔 14 px，
-    // 而不是紧凑 5×5。画布是半分辨率 ⇒ 画布步长 = 14/2 = 7 纹素，覆盖 ±14 画布纹素（≈ ±28 屏幕像素）。
-    // 官方这么做的原因：历史失效区域往往成片，采样更远的邻居才能找到"仍有效"的历史。
+    // [2026-11-10 去重] 这里原来还有**第二个** HistoryFix：步长 7 画布纹素（±28 屏幕像素）的 5×5，
+    // 读 6 帧短历史（colortex21），并把历史长度写成 `clamp(_fixA / _fixW * 0.5, 1, accumCap)`。
+    // 现在修复统一由 deferred1_c（GIHistoryFix，累积之前）完成，本 pass 只做"拒绝历史 + 用已修复的历史起步"。
+    // 保留两份修复器的后果（实测）：
+    //   · 历史长度被抬到十几~几十帧 ⇒ alpha 极小 ⇒ **静止时那些斑块几十帧不散**（不动的斑点）；
+    //   · 每帧重算 ±28px 的短历史平均 ⇒ 转头时跟不住 ⇒ **拖影**。
+    // 长度封顶 3（= historyFixFrameNum）：这些像素本来就被判为"历史不可信"，必须几帧内重新收敛。
+    // 价值来源仍是 GIHistoryFix 的输出（邻居的长历史，或它自己退到 prepass 的结果）。
     #ifdef VOXEL_GI_NRD_ACTIVE
         {
-            vec3 _fixSum = vec3(0.0);
-            float _fixW = 0.0;
-            float _fixA = 0.0;
-            for (int _fy = -2; _fy <= 2; ++_fy) {
-                for (int _fx = -2; _fx <= 2; ++_fx) {
-                    ivec2 _ft = texelPos + ivec2(_fx, _fy) * 7;   // 官方 historyFixBasePixelStride = 14 px（画布半分辨率 ⇒ 7 纹素）
-                    if (clamp(_ft, ivec2(1), canvasEnd - 2) != _ft) continue;
-                    vec3 _fa = texelFetch(colortex14, _ft, 0).rgb;      // 该邻居的法线+视深
-                    vec3 _fc = texelFetch(colortex21, _ft, 0).rgb;      // 该邻居的短历史（已累积）
-                    // 深度权重：相对视深差 10% 以外不参与（防跨表面）
-                    float _w = saturate(1.0 - abs(GICanvasNeighbourViewDepth(_ft) - viewPos.z) / max(abs(viewPos.z) * 0.1, 1e-3));
-                    // 法线权重：同表面才参与
-                    _w *= linearstep(0.5, 0.9, saturate(dot(OctDecodeSnorm(_fa.xy), worldNormal)));
-                    _fixSum += _fc * _w;
-                    // 官方 HistoryFix 同时重建**历史长度**：邻居累积到多少帧，新像素就继承多少。
-                    // 不重建长度的后果（实测「新像素闪得厉害」）：新像素 a 恒为 1 ⇒ alpha ≈ 0.83
-                    // ⇒ 输出 83% 是本帧单采样 ⇒ 每帧都在跳。继承邻居 a 后 alpha 立刻很小，
-                    // 输出≈重建值（平滑），随后正常累积。
-                    _fixA += texelFetch(GI_HISTORY_TEX, _ft, 0).a * _w;
-                    _fixW += _w;
-                }
-            }
-            if (_fixW > 1e-4) {
-                integratedDiffuse.rgb = _fixSum / _fixW;
-                // 打个折扣（0.5）：邻居的长度不完全代表这个新像素，避免过度自信而不响应变化
-                integratedDiffuse.a = clamp(_fixA / _fixW * 0.5, 1.0, accumCap);
-            } else {
-                integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
-            }
+            vec4 _fixed = texelFetch(GI_HISTORY_TEX, texelPos, 0);
+            integratedDiffuse.rgb = _fixed.rgb;
+            integratedDiffuse.a = clamp(_fixed.a, 1.0, 3.0);
         }
     #else
         integratedDiffuse.rgb = textureLod(colortex3, currCoord, 3.0).rgb;
@@ -500,7 +473,11 @@ void main() {
         //    with a 0.5-second accumulation time changes the limit from 30 => 15 => 30 frames."
         // 官方做法需要跨帧状态（0.2 s 一阶低通）；这里用**离散化**达到同样效果：
         // 上限量化到 8 帧一档 ⇒ 瞬时抖动不改变档位，而档位仍随 fps 自适应。
-        float _targetCap = clamp(GI_ACCUM_TIME / max(frameTime, 1e-4), 8.0, SSILVB_MAX_ACCUM_FRAMES);
+        // [有效样本数折算] 上限按「每帧等效样本数」折算后再量化到 8 帧一档：
+        // 8 帧一档是为了让瞬时 frameTime 抖动不改变档位（见上面的官方 FPS 警告），
+        // 除以 GI_EFFECTIVE_SPP 是为了不让上游的 32 样本空间重用被重复计入。
+        float _targetCap = clamp(GI_ACCUM_TIME / (max(frameTime, 1e-4) * max(GI_EFFECTIVE_SPP, 1.0)),
+                                 8.0, SSILVB_MAX_ACCUM_FRAMES);
         float accumCap = max(floor(_targetCap * 0.125) * 8.0, 8.0);
         #ifdef VOXEL_GI_DARK_ACCUM
             // [暗处判定必须用稳定量] 原来用 `texelFetch(colortex2, texelPos).r`（**正在累积的 GI 亮度**）

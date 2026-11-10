@@ -290,6 +290,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 嫌拖影就往下调（0.5 / 0.35）。
 	#define GI_DISOC_THRESHOLD 0.01 // [0.005 0.01 0.02 0.05 0.1] 历史去遮挡阈值（官方 disocclusionThreshold）
 	#define GI_ACCUM_TIME 1.0 // [0.35 0.5 0.75 1.0 1.5 2.0] 时域累积时间（秒）
+	// 每帧输入的等效样本数（1.0 = 官方 1 spp 口径）。prepass 32 样本空间重用 + ReSTIR 复用
+	// 让每帧噪声远低于单样本；照搬官方「时间/帧时间」会把累积上限高估 ⇒ 过粘（拖影）。
+	// 上限 = GI_ACCUM_TIME / (帧时间 × 本值)，再量化到 8 帧一档。
+	#define GI_EFFECTIVE_SPP 2.0 // [1.0 1.5 2.0 3.0 4.0 6.0] 每帧等效样本数（折算累积上限）
 	// GI 诊断视图（0 = 关闭）：把内部量当颜色画出来，用于定位「闪 / 噪 / 拖影」来自哪一环。
 	//   1 = 历史长度（红）+ 本帧不可靠标记（绿）+ 年轻度（蓝）
 	//   2 = 方差（对数压缩；越白方差越大 = 滤波越强，越黑 = 滤波几乎不生效）
@@ -309,6 +313,12 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define GI_BISECT 0 // [0 1 2 3 4 5 6 7] 二分排查（0=正常）
 	#define GI_DEBUG_NO_DISOC 0 // [0 1] 诊断：取消历史拒绝
 	#define GI_DEBUG_VIEW 0 // [0 1 2 3 4 5 6] GI 诊断视图（0=关）
+	// HistoryFix A/B：1 = 直通（把上一帧历史原样搬到 colortex25，不修复、不改历史长度）。
+	// 用途：判断「拖影 / 静止斑点」到底是不是这个 pass 造成的。正常运行保持 0。
+	#define GI_DEBUG_NO_HISTORY_FIX 0 // [0 1] HistoryFix A/B（1=直通）
+	// TS A/B：1 = 跳过第二个时间累加器（GIStabilize），直接把 EAWF 输出当最终 GI。
+	// 用途：判断「拖影 / 斑点」是累积器造成的还是稳定化造成的。正常运行保持 0。
+	#define GI_DEBUG_NO_TS 0 // [0 1] 稳定化 A/B（1=直通）
 	// 新累积的像素用大半径压噪，随累积帧数把半径收到最小 ⇒ 细节随时间显现。
 	// 值 = 衰减到最小半径所需的帧数（0=关）。
 	// 短历史裁剪的 sigma 倍数（官方 fastHistoryClampingSigmaScale，默认 2.0；
@@ -317,7 +327,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 0 = 关（保持旧行为：a<8 时 mip3 硬切换）。弱光下新暴露区域闪烁、且要很久才稳时先试 24~32。
 	// 去图案化的随机核方向默认是「每像素固定」⇒ 相机一转内容在固定图案下滑动，GI 会被滤得「乱、不平滑」。
 	// 打开本项：旋转角叠加逐帧变化（黄金角步进），由时域累积/TAA 平均掉固定图案。
-	//#define GI_KERNEL_ROT_PER_FRAME
+	// [2026-11-10 默认开启] 固定图案的采样误差是**时域相关**的，累积器平均不掉它：
+	// 静止时它会固化成不动的斑点，转头时随屏幕滑动成拖影。prepass（32 个稀疏样本）同样必须逐帧旋转。
+	#define GI_KERNEL_ROT_PER_FRAME
 	// 布尔宏未定义时不能直接进表达式（会报 undefined variable），这里转成数值供着色器使用。
 	#ifdef GI_KERNEL_ROT_PER_FRAME
 		#define GI_ROT_PER_FRAME 1.0
@@ -333,6 +345,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 空间滤波（EAWF）的输出再经稳定化 pass 累积，**稳定化结果才是最终 GI**
 	// （官方 ReblurSettings::maxStabilizedFrameNum，默认 63 帧）。
 	#define VOXEL_GI_NRD // REBLUR 式降噪开关（需要 VXGI + SVGF 链路）
+	// EAWF 空间滤波半径：单位=**屏幕像素**，指第 0 级（最小步长）；每级 a-trous ×2，四级总覆盖≈15×该值。
+	// 旧口径「米 + 世界距离自适应」在常规视距下恒饱和（实际只有两档），已废弃。
+	#define NRD_RADIUS_PX 1.0 // [0.5 0.75 1.0 1.5 2.0 3.0 4.0 6.0] EAWF 基础滤波半径（屏幕像素，每级翻倍）
 	// 注意：VOXEL_GI_NRD_ACTIVE 在文件后段（GI_MODE / GI_ACTIVE_VXGI 定义之后）才推导。
 	// 预处理器对"尚未定义的标识符"按 0 处理，因此任何 `#if GI_MODE == ...` 都必须写在
 	// 第 630 行 `#define GI_MODE` 之后，否则恒为假——这里曾经因此让整条 REBLUR 链形同虚设。
