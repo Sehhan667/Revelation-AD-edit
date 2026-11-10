@@ -89,6 +89,16 @@ void main() {
     vec3 planeN = mat3(gbufferModelView) * geoNormal;                    // 视空间（切平面判据用）
     vec3 centerViewPos = ScreenToViewPosRaw((vec2(rt) + 0.5) * viewPixelSize, viewZ);
 
+    // 天空早退（官方 TA / PrePass 第一行即 `if (isSky) return`）。
+    // 天空像素没有可降噪的 GI：不早退时几何法线在 depth = 1 处退化，切平面/瓣角判据失效，
+    // 会把邻近地形的 GI 混进天空像素（上采样后表现为边缘渗色/光晕），而且白跑 PREPASS_SAMPLES 次采样。
+    if (depth >= 1.0) {
+        imageStore(colorimg22, texelPos, vec4(0.0));
+        imageStore(colorimg24, texelPos, vec4(0.0, 0.0, 0.0, 1.0));
+        imageStore(colorimg26, texelPos, vec4(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
+
     // 注意：image2D 只能用 imageSize()，不能用 textureSize()（后者是 sampler 的重载）。
     // 这里直接用视口尺寸，语义等价且无重载风险。
 #ifdef VXGI_FULLRES

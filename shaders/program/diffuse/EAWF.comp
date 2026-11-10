@@ -104,6 +104,18 @@ void main() {
 		return;
 	#endif
 
+	// 天空早退（与 GIPrepass 同口径）：prepass 已把天空写成 0，这里若继续滤波，
+	// 会把邻居地形的 GI 重新混进天空像素，上采样后仍是天空渗色。
+#ifdef VXGI_FULLRES
+	ivec2 skyTexel = texelPos;
+#else
+	ivec2 skyTexel = texelPos * 2 + GI_CANVAS_PHASE;
+#endif
+	if (loadDepth0(skyTexel) >= 1.0) {
+		imageStore(EAWF_DST, texelPos, vec4(0.0));
+		return;
+	}
+
 	f16vec4 normalDepthData = f16vec4(texelFetch(colortex14, texelPos, 0));
 	float disoccF = float(normalDepthData.a) * NRD_DISOCCLUSION;
 	float stepBoost = 1.0 + disoccF;
