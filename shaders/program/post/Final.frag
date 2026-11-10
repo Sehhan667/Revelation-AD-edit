@@ -528,20 +528,26 @@ void main() {
             //          稳定不动但画面仍闪 ⇒ 闪来自采样或上游。
             finalOut = vec3(saturate(_dbgDelta * 2.0), saturate(1.0 - _dbgDelta * 2.0), 0.0);
         } else if (GI_DEBUG_VIEW == 4) {
-            // 4：左半屏 = 累积(colortex2)，右半屏 = 最终 GI(colortex23，即 DeferredLight 真正用的那份)
-            // 两者都是**线性 HDR**，没有曝光/色调映射，典型值只有 1e-3 量级：直接显示必然一片黑，
-            // 只能看到极少数最亮的点（观感就是"黑底上撒细小红点"）。统一乘 8 增益才能判读。
-            // 判读：右半屏有正常结构 = 最终 GI 有信号；右半屏纯黑 = GI 输出被清空（查天空早退/写入）。
+            // 4：三段对比整条链路（左→右）：prepass(colortex22) | 累积(colortex2) | 最终 GI(colortex23)
+            // 全是**线性 HDR**、没有曝光/色调映射，典型值 1e-3 量级 ⇒ 必须乘增益才可判读。
+            // 判读：找到第一段变黑的，就是断点所在（天空早退 / 没写入 / 被清空）。
             const float _DBG_GAIN = 8.0;
-            // colortex23 只在 NRD 模式写入；非 NRD 下最终 GI 就是 colortex3（EAWF 输出）。
+            int _dbgX = texelPos.x * 3;
+            if (_dbgX < int(viewSize.x)) {
 #ifdef VOXEL_GI_NRD_ACTIVE
-            vec3 _dbgFinal = texelFetch(colortex23, _dbgT, 0).rgb;
+                finalOut = texelFetch(colortex22, _dbgT, 0).rgb * _DBG_GAIN;
 #else
-            vec3 _dbgFinal = _dbgFilt.rgb;
+                finalOut = _dbgFilt.rgb * _DBG_GAIN;
 #endif
-            finalOut = (texelPos.x < int(viewSize.x * 0.5))
-                     ? _dbgHist.rgb * _DBG_GAIN
-                     : _dbgFinal * _DBG_GAIN;
+            } else if (_dbgX < int(viewSize.x) * 2) {
+                finalOut = _dbgHist.rgb * _DBG_GAIN;
+            } else {
+#ifdef VOXEL_GI_NRD_ACTIVE
+                finalOut = texelFetch(colortex23, _dbgT, 0).rgb * _DBG_GAIN;
+#else
+                finalOut = _dbgFilt.rgb * _DBG_GAIN;
+#endif
+            }
         } else if (GI_DEBUG_VIEW == 5) {
             // 5：历史长度直方图（分档上色），用来快速看出"整体历史长度"是否健康
             // 归一化基准必须是**本帧真实累积上限**，不能是 SSILVB_MAX_ACCUM_FRAMES：
