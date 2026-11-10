@@ -53,12 +53,14 @@ layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时�
 #define REBLUR_HITDIST_A 3.0
 #define REBLUR_HITDIST_B 0.1
 
-// 官方 diffusePrepassBlurRadius = 30（屏幕像素）。画布是半分辨率 ⇒ 15 画布纹素。
-// 采样用 Poisson 盘（官方 REBLUR_POISSON_SAMPLE_NUM = 8）；我们的输入是 1spp、比官方
-// 假设的"well defined signal"更噪，故样本数取 16 —— 覆盖范围一致、稠密度更足，
-// 同时比原来的 9x9 网格（81 tap）便宜得多。
-#define PREPASS_RADIUS_TEXELS 15
-#define PREPASS_SAMPLES 16
+// 官方 diffusePrepassBlurRadius = 30，单位是**降噪分辨率像素**（不是屏幕像素）。
+// 我们做半分辨率去噪 ⇒ 30 画布纹素 = 60 屏幕像素。此前按全分辨率口径取了 15，
+// 只给了官方的一半，是"降噪量总差一口气"的来源之一。
+#define PREPASS_RADIUS_TEXELS 30
+// 官方 REBLUR_POISSON_SAMPLE_NUM = 8，但它的输入是"well defined signal"；我们是半分辨率
+// 1spp、噪声等效高 2 倍。半径翻到 30 后按同密度需要 64 样本，这里取 32 折中：
+// 密度仍是官方的 4 倍，且 32 次 fetch 在半分辨率画布上开销可控。
+#define PREPASS_SAMPLES 32
 
 // 官方 planeDistanceSensitivity = 0.02（相对视锥短边世界尺寸）
 #define PLANE_DIST_SENS 0.02
