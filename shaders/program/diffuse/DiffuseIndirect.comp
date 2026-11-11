@@ -42,7 +42,8 @@ writeonly restrict uniform image2D colorimg3;
     // ReSTIR reservoir 乒乓（image.reservoirA/B，imageLoad/imageStore，RGBA16F 半分辨率）
     layout (rgba16f) restrict uniform image2D reservoirA;
     layout (rgba16f) restrict uniform image2D reservoirB;
-    // reservoirW 存"当前像素的绝对世界坐标"作为一致性基准。
+    // reservoirW 存"当前像素的绝对世界坐标"作为一致性基准（xyz）。
+    // .a = 该像素上一次追踪的原始命中距离（米），供复用帧回填 colortex3.a。
     // 必须用绝对世界坐标（固定基准）而非 view 空间坐标：view 空间跟相机走，
     // 相机平移时同方向像素的 viewPos 几乎不变 → 检测不出平移 → 平移不重置 → 拖影。
     // 绝对世界坐标数值范围大，RGBA16F 在远距离精度不足 → 用 RGBA32F。
@@ -563,6 +564,13 @@ vec4 PingReusePrev(ivec2 p) {
     #include "/lib/lighting/VoxelTracing.glsl"
 #endif
 
+// [2026-11-10 1.5] 非追踪信号（IRC / 探针 / SSILVB）没有真实命中距离。
+// colortex3.a 的语义是**原始命中距离（米）**，prepass 会归一化为
+// normHit = saturate( hitDist / (3 + |z|·0.1) )，EAWF 再用它缩半径、降邻域权重。
+// 因此"没有距离信息"必须写**很远**的中性值（normHit≈1）；写 1.0 米等于把整帧
+// 都当成近距离命中去滤波（半径砍半、权重砍到 0.3）。
+#define GI_HITDIST_NONTRACED 1024.0
+
 float GetClosestDepthN(in ivec2 texel) {
     float depth = 1.0;
 
@@ -754,7 +762,7 @@ void main() {
 				}
 				_irc *= 0.01;   // IRC ×100 存储 → 采样域 ×0.01
 				if (!all(equal(_irc, _irc)) || any(lessThan(_irc, vec3(0.0)))) _irc = vec3(0.0);
-				result = vec4(_irc * IRC_GI_STRENGTH, 1.0);
+				result = vec4(_irc * IRC_GI_STRENGTH, GI_HITDIST_NONTRACED);
 			}
 		#elif defined PROBE_GI_ENABLED
 			// IRC DDGI backend: directional octahedral irradiance and distance visibility.
@@ -773,7 +781,7 @@ void main() {
 			vec3 _dbgCol = (renderTexel.x < (int(viewWidth) >> 1)) ? _cacheCol : _refCol;
 			result = vec4(_dbgCol, 1.0);
 		#else
-			result = vec4(_cacheCol * IRC_GI_STRENGTH, 1.0);
+			result = vec4(_cacheCol * IRC_GI_STRENGTH, GI_HITDIST_NONTRACED);
 		#endif
 		#elif defined GI_ACTIVE_VXGI
 			#ifdef VOXEL_REUSE
@@ -789,7 +797,12 @@ void main() {
 			bool _sparse = (_prev.a >= VOXEL_REUSE_THRESHOLD);
 			if (!_camMoved && _consistent && _sparse && ((frameCounter & (uint(VOXEL_REUSE_INTERVAL) - 1u)) != 0u)) {
 				// 复用：输出 reservoir 累积均值（低方差）；样本计数递增封顶
-				result = vec4(RGBToYCoCg(_prev.rgb), 1.0);
+				// [2026-11-10 1.5] .a 是**原始命中距离（米）**，不能写 1.0：prepass 归一化
+				// normHit = 1/(A + |z|·B) ≈ 0.2~0.3，EAWF 会按 sqrt(normHit) 把半径砍半、
+				// 按 mix(0.1,1,normHit) 把邻域权重砍到 0.3 —— 复用像素（占 7/8 帧）整体降噪量
+				// 只剩设计值的三分之一。命中距离随 reservoirW.a 一起保存（见下方写回处）。
+				float _prevHit = imageLoad(reservoirW, _rp).a;
+				result = vec4(RGBToYCoCg(_prev.rgb), _prevHit > 0.0 ? _prevHit : float(VOXEL_TRACE_DISTANCE));
 				imageStore(colorimg3, texelPos, result);
 				vec4 _cr = vec4(_prev.rgb, min(_prev.a + 1.0, VOXEL_REUSE_MCAP));
 				if ((frameCounter & 1u) == 0u) imageStore(reservoirA, _rp, _cr); else imageStore(reservoirB, _rp, _cr);
@@ -842,7 +855,8 @@ void main() {
 			vec3 worldNormal = FetchSurfaceNormal(renderTexel);
 			float lightmapSky = Unpack2x8UY(loadMaterialPack(renderTexel).x);
 
-			result = CalculateSSILVB(screenCoord, viewPos, worldNormal, lightmapSky);
+			// .a 同理：SSILVB 没有命中距离，写中性远值（此前 vec3 赋值 ⇒ .a=0 ⇒ 全画面按最近命中降权）
+			result = vec4(CalculateSSILVB(screenCoord, viewPos, worldNormal, lightmapSky), GI_HITDIST_NONTRACED);
 		#endif
 		#if defined GI_ACTIVE_VXGI && defined VOXEL_REUSE
 			// ---- ReSTIR：几何一致才与上帧均值合并，否则重置为新样本（避免转动/移动把旧几何混入残影）；随后记录本像素几何 ----
@@ -881,7 +895,8 @@ void main() {
 				vec4 _crW = vec4(_mean, _M);
 				if ((frameCounter & 1u) == 0u) imageStore(reservoirA, texelPos, _crW); else imageStore(reservoirB, texelPos, _crW);
 				// 记录本像素"绝对世界坐标"作为下一帧一致性基准（RGBA32F 保远距离精度）
-				imageStore(reservoirW, texelPos, vec4(_wpos, 0.0));
+				// .a = 本次追踪的原始命中距离（米）；复用帧直接从这读回，避免丢失命中距离信息
+				imageStore(reservoirW, texelPos, vec4(_wpos, (result.a >= 0.0) ? result.a : 0.0));
 			}
 #endif
 			// [2026-11] 官方 Denanify：NaN/inf 一旦进入时域累积，会被 63 帧长历史锁住。

@@ -3,6 +3,7 @@
 工作时遇到以前留下的冗余注释顺手清理掉，不用特意找
 代码要考虑可维护性，不能写出只有ai自己才能看懂的代码
 提交时如无说明，只提交shader本体文件夹，其他文件不进仓库
+校验规则：凡是只能靠肉眼看结论的项（拖影/渗色/斑点/滑条单调等），代码与数值只能证明"实现符合意图"，清单里必须标 `⏳` 并写明实机怎么看，**主人确认后才允许改 `✅`**。不要用"我检查过代码"替代实机确认。
 
 
 
@@ -1880,3 +1881,974 @@ cap = clamp( GI_ACCUM_TIME / (frameTime · GI_EFFECTIVE_SPP), 8, SSILVB_MAX_ACCU
 2. 主导项是 Accumulate 的 cap（30 帧 ≈ τ=0.5 s），TS 8 只加 0.18 s。再想短，调 `GI_ACCUM_TIME`
    到 0.5（cap 15 ⇒ 10% 约 0.7 s），调 TS 基本没用。
    （仿真没算 antilag，真实变化下会更快。）
+
+---
+
+# 备忘：§3 逐条重判 REBLUR Prepass（2026-11-10）
+
+## 版本基线（先纠正混用）
+- `master` 现在是 **v4.18.0**；HANDOFF 里的路径/行号全对应它。清单题头旧写 v4.11.4，
+  那版 shader 在 `Shaders/Include/` + `Shaders/Source/`，路径完全不同。§3 用两版交叉核对，结论一致。
+- 官方仓库自带 `.agents/skills/nrd-integration-review/SKILL.md`（集成审查要点），可当第二权威来源。
+- 官方没有 `Integration.md`；HANDOFF 里提到的那个文件不存在。
+
+## 3.1 半径口径（HANDOFF §8 的遗留疑问已收口）
+- 官方 `diffusePrepassBlurRadius = 30` 的单位是 **NRD rect 像素**：v4.11.4
+  `REBLUR_Common_DiffuseSpatialFilter.hlsli:83` 与 master `REBLUR_Common_SpatialFilter.hlsli:160`
+  都是 `skew *= gRectSizeInv * blurRadius`，采样偏移按降噪缓冲尺寸换算；集成层对 30 不缩放。
+- quarter-res README 原文：`From NRD's point of view this is full-resolution input`。
+  ⇒ 半分辨率画布 30 纹素 = 60 屏幕像素**就是官方口径**，保持 30，别改 15。
+- 官方另乘 `sqrt(hitDistFactor)` 自适应收缩、取 `minBlurRadius = 1` 下限；我们固定 30 ⇒ 记入清单 3.13。
+
+## 继承的 ✅ 大半站不住（逐条证据见清单 §3）
+| 项 | 官方 | 我们 | 判定 |
+|---|---|---|---|
+| 3.4 几何权重 | `ExpApprox(-3t)` | `exp(-t)` | t=1 时 0.077 vs 0.368，系数与形态都不对 |
+| 3.5 法线权重 | 按角度连续指数衰减 | cos 的 smoothstep 硬阈 | 二值化阈值，会造边界 |
+| 3.6 高斯 | `exp(-0.66r²)` | `exp(-2rn²)` | r=1 时 0.517 vs 0.135，边缘样本过度压低 |
+| 3.9 方差 | prepass **不估** | `colortex24` 加权矩 | 自造项；旧引用「官方在 prepass 里估方差」是编造 |
+| 3.10 中心权重 | `sum = 1` 起手，中心权重 1 | `sum = 0`，只作兜底 | 归一正确，语义不同 |
+| 3.11 firefly | ReblurSettings **没有** `fireflyClampThreshold`（suppressor 在 TA） | 自造 `GI_FIREFLY_CLAMP` | 旧注释引错字段；默认 0 且此前 GUI 没接线 |
+| 3.12 hitDist EMA | 无 | 0.15 EMA | 时间常数 ≈ 6.7 帧，旧判定「滞后 ≤3 帧」不成立 |
+
+## 本轮代码改动（默认观感不变）
+- `GIPrepass.comp`：方差补 `1/(1-S)` 无偏校正（S = Σw²/(Σw)²）。旧估计平场偏差 -4.1%、
+  几何/法线判据拒掉半数样本时 -24%；蒙特卡洛校正后 0.9995 / 0.9991（真值 1）。
+  `colortex24` 只被调试视图 2 读 ⇒ 只改读数，不改画面。
+- `GI_FIREFLY_CLAMP`：此前只有 GIPrepass.comp 里的 `#ifndef` 兜底，settings/properties/lang 全无 ⇒ 半成品接线。
+  补齐四处（settings.glsl、properties 的 screen.VXGI 与 sliders、双语 lang），默认 0.0 ⇒ 逐位不变。
+  它是自造项，参考量取中心像素，暗处会连带压暗，只在亮场 A/B。
+- 全量自检：语义 / 静态 / 预处理（345 入口无新增命中）全绿；properties 非 ASCII 0、lang 无 BOM、
+  GIPrepass 预处理 8/8 配平。
+
+## 下一步
+- 权重类偏差（3.4/3.5/3.6/3.10/3.13）做成**默认关的 A/B 开关**，实机确认后才动默认值。
+  别凭源码直接改数值：高斯 -2 → -0.66 会明显变糊，几何/法线权重变严会少渗色但可能留噪。
+- §4 以后现存的 ✅ 同样是继承来的，推进到该节必须按 §3 同规则重判。动游戏前先问。
+
+---
+
+# 备忘：诊断视图语义错配 + 实机 A~G 回填（2026-11-10）
+
+## 视图本身的三个坑（都让实测结论失真）
+1. **视图 4 把 YCoCg 直接当 RGB 显示**（colortex22/2/23 的 g/b 是可能为负的色差）⇒ 串色/发黑，
+   主人反馈「画面太诡异看不太清」。修：`YCoCgToRGB` 后再乘同一增益 64 + Reinhard。
+2. **视图 3 用 `abs(滤波输出-累积值)/累积值`**：空间滤波本来就改掉大半亮度，暗处分母趋 0
+   ⇒ 静止恒饱和全红，E 火点测试无法判读。修：改成相对 3x3 邻域均值的离群量
+   （`excess = max(center-mean, 0) / max(mean, 1e-3)`，红=火点、绿=正常）。
+3. **视图 5 三通道语义在三份文档里写了三种**：实际是 R=A/cap、G=几何可信度、B=不可靠
+   ⇒ 黄=老且可信、**绿=新但可信（正常）**；旧清单写「绿满/红年轻」正好相反。
+   主人看到「新像素绿、旧像素黄」以为奇怪，其实是期望行为。已同步 Final.frag / settings / 双语 lang / 清单 / HANDOFF。
+   教训：**改调试视图必须四处文档一起改，否则诊断量本身就是错的测量仪器**。
+
+## 实机回填（主人，一轮跑完）
+- ✅ B（视图 6 基本全白；极短红色 = 兜底标记，属预期）、C（天空 σ 纯黑、交界 1px）、
+  D（奇数分辨率无条带）、F（按修正语义黄→绿→黄）。⇒ 清单 1.6 / 2.4 / 2.5 改 ✅。
+- ⏳ A（视图 4 修好后重看）、G 未测；E 被视图 3 缺陷阻塞（已修，待重测）⇒ 4.11 仍 ⏳。
+- ❌ 1.3：新像素明显更噪、有些拖影。**不是重投影符号反**（无整屏拖影）。
+  与 B 的极短红色兜底标记互证：Accumulate 的不可靠路径直接取 GIHistoryFix 输出、长度封顶 3
+  ⇒ 新像素只有 1~3 帧历史、主要靠 prepass 稠密输入；修复值从 ±8 屏幕像素邻居复制 ⇒ 短拖影。
+  隔离量：修好的视图 4 三段对比，一次平移 3 秒看「哪一段变脏」，判读表在清单顶部。
+- 本轮**没有改任何降噪默认值**，只修诊断量；三套检查全绿。
+
+## 下一步
+重载一次跑完 A / E / G，顺带用视图 4 定死 1.3 的位置；再谈 HistoryFix 的 A/B 开关。动游戏前先问。
+
+---
+
+# 备忘：拖尾定位到时域链（2026-11-10 23:20 实机）
+
+## 三段对比结论（视图 4 修好后）
+- 主人回报「中段和右边都有拖尾」，左段（prepass）干净。
+- ⇒ 输入信号与重投影方向都没问题；**1.3 的「符号反」「新像素起步脏」两个旧判断都撤回**。
+- 中段（Accumulate）：沿墙平移时深度/法线不变 ⇒ 去遮挡判据全通过（B 全白互证，
+  `maxGeometryWeight≈1` ⇒ 历史长度不重置）；`alpha = 1/(1+kN)` 在 N≈30 只给本帧 3% 权重；
+  fast-history clamp 的门控地板 `+0.02` 还会吞掉暗处真实变化 ⇒ 旧内容保留几十帧。
+- 右段（GIStabilize）：`quality = sqrt(mean(colortex21.a))≈1` ⇒ `historyWeight≈0.89`；
+  antilag 只在历史亮度偏离邻域 μ±σ 时降权，拖影内容与邻域相似 ⇒ 不触发 ⇒ 再叠一层拖尾。
+- **B 的「移动时全白」要重新解读**：静止全白正确；移动时全白 = 平面墙上判据无从识别新像素，
+  它是拖尾的来源，不是「判据健康」的证明。
+- 不是 bug，是「降噪换响应」的取舍被推过头（两级累积 + 两处 clamp 地板）。属观感取舍 ⇒
+  按 `docs/CODE_STYLE.md` §8.5 先给旋钮与代价，由主人定，**不擅自改默认值**。
+
+## 本轮代码（默认值全部等价现状）
+- 补齐 4 个半成品接线：`GI_DEBUG_NO_HISTORY_FIX` / `GI_DEBUG_NO_TS`（settings 已有定义）、
+  `GI_STABILIZE_FRAMES` / `NRD_STABILIZATION_STRENGTH`（原只写在 GIStabilize.comp 的 `#ifndef` 里）。
+  settings.glsl 定义 + properties 的 screen.VXGI 与 sliders + 双语 lang 四处齐全。
+- 现在 GUI 能直接拉：`GI_ACCUM_TIME`、`GI_STABILIZE_FRAMES`、`NRD_STABILIZATION_STRENGTH`，
+  以及两个 A/B 直通开关。建议一次只拉前两个（1.0→0.5、8→4），看拖尾变短与噪点上升的权衡。
+- 第二轮实机：诊断视图修复生效 ✅、E 火点 ✅ ⇒ 清单 `4.11` 改 ✅；A/G 仍未报。三套检查全绿。
+
+---
+
+# 备忘：调历史长度治不了拖影 → 运动自适应（2026-11-10 23:27）
+
+## 为什么上一轮两个滑条无效（离线可证，不是没重载）
+- 选项文件 `shaderpacks/Revelation-AD-edit.txt` 里 `GI_ACCUM_TIME=0.5`、`GI_STABILIZE_FRAMES=4.0` 已写入；
+  `config/iris.properties` 的 `enableShaders=true`；`logs/latest.log` 无 `error C####` ⇒ **滑条确实生效**。
+- `accumCap = clamp(GI_ACCUM_TIME / (frameTime × GI_EFFECTIVE_SPP), 8, SSILVB_MAX_ACCUM_FRAMES)`，
+  `GI_EFFECTIVE_SPP=2` ⇒ 20 / 30 / 45 / 60 fps 下 0.5 s 的 cap = 8 / 8 / 11.3 / 15；1.0 s = 10 / 15 / 22.5 / 30。
+  **低帧率下 0.5 直接撞下限 8**，几乎没变。
+- 用户开着 `VOXEL_GI_DARK_ACCUM=true` ⇒ 暗处 `accumCap ×4`（60 fps 下 0.5 s 仍有 60 帧历史）。
+  这是拖影的最大单一来源，上一轮完全漏算。
+- `GI_STABILIZE_FRAMES` 8→4：`historyWeight = N/(1+N)` 从 0.889 → 0.800，**只降 10%**，人眼不可辨。
+- 教训：**先算旋钮的实际量级再让用户拉**。改「历史长度」是 10% 级微调，治不了 60 帧的拖影。
+
+## 本轮修复（默认启用，静止逐位不变）
+- 新选项 `GI_MOTION_RESPONSE`（默认 1.0，值 [0.0 0.5 1.0]），四处接线齐全 + 两个 comp 的 `#ifndef` 兜底。
+- `Accumulate.frag`：`_motionPx = length((prevCoord - screenPos.xy) * viewSize)`，
+  `boost = smoothstep(2, 12, _motionPx) * GI_MOTION_RESPONSE`；
+  `alpha = mix(alpha, max(alpha, 0.35), boost)` ⇒ 拖影时间常数从 cap 帧压到约 2 帧。
+- `GIStabilize.comp`：同一位移 `historyWeight *= 1 - boost` ⇒ 右段不再叠一层拖影。
+- 静止时 prevCoord == screenPos.xy（只剩 TAA 亚像素抖动 < 1 px）⇒ boost = 0 ⇒ **逐位不变**；
+  暗处 cap×4 也被这一步覆盖。代价：移动时噪点上升，一键回退 `GI_MOTION_RESPONSE=0`。
+- 三套检查全绿；待实机：重载后平移 3 秒，报拖影与噪点。
+
+---
+
+# 备忘：判定标准要单一（2026-11-10 23:40，主人裁定）
+- **1.3 只判「运动矢量 / 重投影本身」**，拖影、新像素噪点属于下游多环节问题，不许混在一项里。
+  之前把「拖影仍在」写成 1.3 ❌ 是错的：它把 4.x / 5.x / 7.x / 2.4 的现象算到结构项头上。
+- 主人确认矢量没问题 ⇒ 清单 **1.3 改 ✅**（证据：公式解析 N + 实机无整屏波前 / 整体错位、
+  B 视图 6 全白 V）。拖影单独立 **9.6 运动拖影（跨阶段）**，状态 ❌，等 `GI_MOTION_RESPONSE` 实机。
+- 通用规矩已写进清单题头规则第 5 条：结构项只判结构，观感现象另立项。
+  以后判定标准里出现「且 / 同时不得…」这类把两个环节绑在一起的条件，一律拆开。
+
+
+---
+
+# 备忘：§4~§12 逐项重判（2026-11-11）
+
+官方基线 `master = v4.18.0`，与 v4.11.4 交叉；新拉了 `REBLUR_HistoryFix.cs.hlsl` 和 v4.11.4 的
+HistoryFix / Blur / PostBlur / TS `.hlsli`。结论：**§4~§8 继承的 ✅ 大半站不住**。
+
+## 关键更正（旧认知作废）
+- **官方 TA 没有颜色盒**：`MixHistoryAndCurrent` 是纯 lerp（REBLUR_Common.hlsli:193）；
+  fast-history clamp 在 **HistoryFix** pass（HistoryFix.cs:278/487）。我们把 fast clamp 放在 Accumulate
+  ⇒ 清单 4.4 ❌ / 4.7 ⚠️。旧 4.4 写「官方 m1±σk 一致 ✅」与 4.7 自相矛盾。
+- **官方 HistoryFix 在 TA 之后**（HistoryFix.cs:99 注释）；我们在 deferred1_c（Accumulate 之前）
+  ⇒ 新增 5.6 ❌ 拓扑偏离。HANDOFF §4 事实 6 原写「在 TA 之前，位置正确」是错的，已更正。
+- **5.1 文档写反**：官方与实现都是 `frameNum < 3` 才修，清单旧写「age ≥ 3」。
+- **5.2 stride**：官方 `historyFixBasePixelStride = 14`（NRDSettings.h:295）且动态缩放；
+  我们固定 4 画布纹素（第一版按 14 实测出硬边界，MEMO 1682-1692）⇒ ⚠️ 刻意偏离。
+- **6.3/6.4/6.5** 与 §3.4/3.5 同源错判：官方 `ExpApprox(-3t)` / 连续角度权重 / hitDist 差指数权重，
+  我们是 `exp(-t)` / cos 硬阈 / 绝对 hitDist 线性。官方**没有 `postBlurRadius` 字段**（NRDSettings.h 全文无），
+  旧 6.8 的「postBlurRadius=4」无出处。
+- **7.1 footprint** 是上一帧 occlusion 双线性（TS.cs:98-104），我们用当帧 colortex21.a max ⇒ ⚠️。
+- **7.6 stabilizationStrength** 官方是 `min(historyWeight, strength)`（TS.cs:171、v4114 TS:270），
+  **不是**乘在 accumSpeed 上。MEMO 1845 的认知是误读，已更正；端点等价、中间值不同。
+- **9.2 / 9.4 / 10.3** 旧状态撤回：官方 TS 的 σ 本就取滤波后信号；半径口径全链不统一（prepass 用 rect 像素、
+  EAWF 用屏幕像素）；10.3 的离线仿真未含 antilag 与运动自适应，只能证模型自洽。
+
+## 真正站得住的 ✅
+4.5（convergence s=1 / b=0.2 / p=0.8 逐项一致）、4.10、4.11、5.3、5.5、6.7、7.4、7.7、
+8.1~8.4、10.5。其余为 ⚠️ / ❌ / ⏳；新增 5.6 记录拓扑偏离。
+
+## 工程
+- 清单 §4~§12 用**一次性脚本整体写回**（上次多次 Edit 被外部格式化覆盖，只留最后一次），表格列数已校验。
+- §11 批次重排为 B0 / B0b / B1 / B2 / B3 / B4 / B5；§12 说明同步更正。
+- 本轮**未动 shader**，只改文档；三套检查全绿。
+
+---
+
+# 备忘：B0/B0b/B2 落地——官方权重与稳定化口径 A/B 开关（2026-11-11，待实测）
+
+三套检查全绿（默认 0 与开关 =1 两种取值都跑过：语义 / 静态 / 预处理 345 入口无新增命中；
+properties 非 ASCII 0、lang 无 BOM）。**默认观感逐位不变**：两个开关默认 0，走原有代码路径。
+
+## 关键更正：官方权重形态（本轮最大发现）
+
+`NRD_USE_EXPONENTIAL_WEIGHTS` 在 v4.11.4 与 master **默认都是 0**（Common.hlsli:59），
+REBLUR 也不覆盖它 ⇒ 官方几何/法线权重的实际形态是
+`ComputeNonExponentialWeight = SmoothStep(1, 0, |x·px+py|)` 三次窗（t≥1 全拒、t=0.5 时 0.5），
+**不是** `ExpApprox(-3t)`——那是需要显式开启的指数变体，只在 hitDist 权重处被无条件使用
+（`w *= minHitDistWeight + ComputeExponentialWeight(...)`，SpatialFilter:266）。
+清单旧判定的「官方 t=1 ⇒ 0.077」是指数变体的值；默认配置下应为 0。
+教训：**抄公式前先确认它挂在哪个开关下、默认开没开**，宏名 + 默认值要一起抄。
+
+另一处：官方 Math/ImportanceSampling 命名空间不在 NRD 仓库里，在 CMake FetchContent 的
+`NVIDIA-RTX/MathLib`（v11）里；`GetSpecularLobeTanHalfAngle(roughness, pov) = roughness·sqrt(pov/(1-pov))`。
+瓣角参数链：pov = 0.75·lerp(saturate(lobeAngleFraction), 1, NLAS)，angleMax = max(atan(tanHalf), 1.5/255)，
+param = 1/angleMax 再除 fractionScale（prepass=2，blur=1）。prepass 固定 NLAS = 1/11 ⇒ param = 1.175。
+
+## 两个新开关（四处接线齐全）
+
+- `GI_NRD_WEIGHTS`（B0+B0b 共用）：GIPrepass 3.4/3.5/3.6/3.10/3.13 + EAWF 主循环与 post-blur 3×3
+  的 6.3/6.4/6.5 + EAWF 高斯（同源 GetGaussianWeight）。开启后：三次窗几何/法线、-0.66 高斯、
+  中心权重 1、半径 = max(sqrt(hitDistFactor)·30, 1)、hitDist 权重 = minHitDistWeight + ExpApprox。
+  EAWF 的法线 param 随像素 NLAS 收紧（新像素全拒角 60°、稳定 22°）。
+- `GI_NRD_TS`（B2）：GIStabilize 7.1/7.2/7.3/7.6 + Accumulate 的 7.1 写端。
+  - 7.1：Accumulate 把 colortex21.a 从「4-tap max」改为「足迹双线性均值」，TS 单点直读
+    （同官方「TA 算好存 data2、TS 只读」拓扑）；`quality<0.25` 硬重置只在开关关闭时保留。
+    视图 6 的读数含义随之从 max 变均值。
+  - 7.2：magic 补 (2·fpsScale)² 的 4 倍。
+  - 7.3：只夹亮度、tol = σ·(1+hw·6·fps)、无自造地板；最终混合改为官方 ChangeLuma 语义
+    （本帧颜色整体缩放到稳定化亮度，色差来自本帧、比例不变）——旧实现是整 vec3 mix，
+    这一处结构差异比清单 7.3 原来记的还大。
+  - 7.6：hw = quality·(1-ANLAS(N))·antilag（ANLAS 用 4.5 的 1/(1+e·N)、maxAccum 取本级 cap），
+    strength 夹最终混合权重（min(hw, strength)）、不再进 accumSpeed。
+  - 运动自适应（GI_MOTION_RESPONSE）与 RCRS（7.4）在两个分支里都保留。
+
+## 官方 TS 的结构认知（比清单 7.3 记载更深一层）
+
+官方 TS **只时域稳定亮度**：`diffLumaStabilized = lerp(本帧亮度, 夹后历史亮度, min(hw, strength))`，
+输出 = `ChangeLuma(本帧滤波结果, stabilized)`（xyz 整体乘 newLuma/oldLuma）。色差完全来自本帧、
+不被时域稳定。官方 hw 也不是 N/(1+N)，而是 quality·(1-ANLAS)·antilag；antilag 在 hw 之前
+先把 data1.x 拉回 historyFixFrameNum（REBLUR_USE_ANTILAG_NOT_INVOKING_HISTORY_FIX=1 默认开）。
+
+## 待实测（一次重载跑完）
+
+1. 9.6：`GI_MOTION_RESPONSE` 平移 3 秒，报拖影/噪点（先收口这条）。
+2. H：开 `GI_NRD_WEIGHTS`，看台阶渗色与糊度（判读表在清单顶部）。
+3. I：开 `GI_NRD_TS`，暗处静看 10 秒（蠕动）+ 平移 3 秒（拖影）。
+4. A/G 仍欠着（视图 4 修后未重看 / 离群钳制未测）。
+
+---
+
+# 备忘：TS 历史缓冲同帧读写竞态（2026-11-11，主人报「静止全是模糊的密集噪点 / 移动全是伪影」，且**不是本轮改动造成、一直如此**）
+
+## 排查结论（离线可证，不需要实机猜）
+
+主人澄清现象是老问题后，把 GI 链 pass 顺序与缓冲绑定逐个核对：
+deferred1_a 追踪 → 1_b prepass → 1_c HistoryFix → 4 Accumulate(片元) → 5 Variance
+→ 6~9 EAWF×4 → 10 GIHistoryStore → 11 GIStabilize → DeferredLight 读 colortex23。
+
+- 选项文件时间戳 07:07 里**没有** `GI_NRD_WEIGHTS` / `GI_NRD_TS` ⇒ B0/B2 两个默认关开关没生效，
+  排除本轮改动。日志无 `error C####`、无 properties 预处理失败。
+- `GI_MOTION_RESPONSE` 静止也不触发：`taaJitterPrev = prevFrameX/viewWidth`（R2 序列，|frameX|≤1），
+  加在 NDC 上再转 UV ⇒ 位移 ≤0.5 px/轴，合成 ≤0.71 px < smoothstep 起点 2 px。排除。
+- `historyReset = abs(smooth(worldTimeCounter,0.2,0.2)-worldTimeCounter)>1.0`：
+  worldTimeCounter 每帧约 +0.017，低通稳态滞后约 0.08 ⇒ 正常情况下恒 false。排除。
+
+**真因**：`GIStabilize.comp`（deferred11，纯 compute、无 .fsh、不 flip）在**同一 dispatch** 里
+`texelFetch(colortex23, sampleTexel, 0)` 当历史、又 `imageStore(colorimg23, texelPos, ...)`
+写本帧输出。compute 的 image 与 sampler 都绑 main ⇒ 读写竞态（EAWF 当年就是因为
+「读 colortex2 邻居 + 写 colorimg2」改成 2↔25↔3 乒乓的，MEMO 1757）。
+静止时重投影 p0 == 自身 ⇒ 4 个双线性 tap 里必有一个是自己；移动时邻居可能已被别的
+invocation 写过 ⇒ 历史值不是上一帧稳定化结果，而是本帧/两帧前的混合 ⇒ 第二级累积
+等于失效甚至自激 ⇒ 静止密集噪点 + 移动伪影。**清单 §7 完全没有这一项**。
+
+## 修复（零新增缓冲、零下游改动、默认观感严格等价）
+
+- `GIHistoryStore.comp`（deferred10，原本 `GI_BISECT=0` 时首行 return 空转）现在先把
+  **上一帧**的 colortex23 逐像素快照到 colortex25（EAWF 乒乓在 deferred6~9 已跑完、
+  Accumulate 在 deferred4 早已读完，此刻 colortex25 空闲）。
+- `GIStabilize.comp` 历史改读 colortex25 快照，输出仍写 colortex23；DeferredLight / Final.frag 不变。
+- 两个 pass 派发条件同为 `REBLUR_ON`（GI_MODE==2），10 在 11 前，中间无片元 pass ⇒ 无 flip，
+  **读到的内容与修复前严格等价**，只是把 UB 变成确定的上一帧值。
+- 下一帧 deferred1_c（HistoryFix）会重写 colortex25 ⇒ 闭环成立，不会串台。
+- 快照写入包在 `#ifdef VOXEL_GI_NRD_ACTIVE` 内（语义检查 R3：colortex23 只在 NRD 模式写入）。
+
+三套检查全绿。清单新增 §7.0 与待实机 J 行；Uniform.glsl 的 colortex25 注释补用途。
+
+## 待实机（一次重载，只报一件事）
+
+J：站定 10 秒看墙面、再平移 3 秒，报「静止密集噪点是否消失 / 移动伪影是否明显减少」。
+若仍满屏噪点 ⇒ 竞态不是主因，下一嫌疑是 **4.4（TA 里自造的 fast clamp，官方在 HistoryFix）**
+与 **5.6（HistoryFix 拓扑位置）**，用视图 4 一次定位左/中/右段，不再做反复 A/B 归因。
+
+---
+
+# 备忘：二次对齐——「静止糊噪点 / 稍微一动狂闪」的量级根因（2026-11-11）
+
+主人反馈：竞态修完仍不行，「全是模糊过的噪点，稍微一动更是狂闪」，要求按官方从头到尾对齐。
+
+## 先排除的
+- 两个默认关开关（选项文件无键）、`GIStabilize` 竞态（已修）、`GI_MOTION_RESPONSE` 静止不触发
+  （TAA 抖动 ≤0.71 px < 2 px 起点）、`historyReset` 恒 false（低通滞后 ~0.08 < 1.0）。
+
+## 真正的四处量级偏差（按影响排序）
+
+1. **空间滤波有效覆盖只有官方的 1/4**（最致命）
+   官方 `maxBlurRadius = 30`（NRDSettings.h:314，NRD rect 像素 = 半分辨率画布纹素），
+   Blur 单级 8 tap，稳定像素实际半径约 9 画布纹素。
+   我们 4 级 a-trous：`offsetScaleBase = NRD_RADIUS_PX·0.5·2^level`，名义总覆盖
+   = (1+2+4+8)·0.5·NRD_RADIUS_PX；再乘 `radiusScale`(0.5~1) 与 `hitDistFactor`(0.3~0.5)。
+   旧默认 1.0 ⇒ 实际有效覆盖 **~2.5 画布纹素**（≈5 屏幕像素）⇒ 空间滤波形同虚设，
+   残噪全留 ⇒ 「糊过的噪点」（prepass 的 30 纹素已经糊过一遍，但 EAWF 没接着压）。
+   改 **3.0** ⇒ 有效 ~7.5，与官方同量级。
+
+2. **累积上限被腰斩**：`GI_EFFECTIVE_SPP = 2.0` 让 0.5 s / 60 fps 的 cap 从官方 30 掉到 15
+   （alpha 1/16 vs 1/31，稳态噪声 0.176σ vs 0.127σ）。VOXEL_REUSE 已 `#undef`，
+   与官方 1 spp 同构 ⇒ 改 **1.0**，cap 恢复 30。
+
+3. **TA 里的 fast clamp（官方没有）**：每帧把长历史拉向 6 帧短历史的 5×5 μ±2σ。
+   短历史 σ 是长历史的 2~3 倍，门控地板 0.02 在暗处又完全放开 ⇒ 静止时历史被反复
+   拉向噪声。`GI_FAST_CLAMP_SIGMA` 2.0 → **0.0**（官方 TA 无颜色盒；>0 保留做 A/B）。
+
+4. **运动自适应（官方没有）**：`GI_MOTION_RESPONSE=1.0` 在位移 >2 px 时把 alpha 抬到 0.35、
+   TS 历史权重压到 0 ⇒ 移动时每帧只剩单样本 ⇒ **狂闪**。默认改 **0.0**；
+   拖影交给官方常数，需要跟手时手动开 0.5。
+
+## 顺带对齐的口径
+- EAWF 的 `hitDistFactor` 从 `sqrt(saturate(normHit))` 改为官方
+  `sqrt(saturate(hitDist_m / frustumSize))`（GetHitDistFactor）。旧写法量纲错位：
+  远距离 normHit 恒饱和到 1 ⇒ 半径永远按最大算。米值从 normHit 反解：
+  `hitDist_m = normHit·(A + |viewZ|·B)`，A=3 / B=0.1。
+- `frustumSize` 定义挪到 hitDistFactor 之前，避免重复声明。
+
+## 选项文件
+`shaderpacks/Revelation-AD-edit.txt` 里 `GI_STABILIZE_FRAMES=4.0`（第三轮治拖影调的）
+覆盖了代码默认 ⇒ 改回 **8.0**，备份 `Revelation-AD-edit.txt.bak`。
+`GI_ACCUM_TIME=0.5` 保留（= 官方 REBLUR_DEFAULT_ACCUMULATION_TIME）。
+
+## 预期与取舍
+累积 30 帧 + 有效覆盖 7.5 + 无颜色盒 + 无运动自适应 ⇒ 静止稳态噪声理论上降到原来的 ~1/7。
+代价：更糊（官方就是糊的）、拖影变长（官方 3.1 s 阶跃衰减的量级）。
+若嫌糊，`NRD_RADIUS_PX` 回调 2.0；若嫌拖，`GI_ACCUM_TIME` 调 0.35。
+三套检查全绿（345 入口无新增命中）。
+
+---
+
+# 备忘：拖影的两个机制补齐 —— TS 逐 tap 几何 + HistoryFix fast clamp（2026-11-11）
+
+主人反馈（上一版之后）：静止噪点改善、不闪了，但仍能看到斑点；移动仍有拖影，**且拖影会被拉到
+不同深度的表面上**。最后这句是决定性线索。
+
+## 1. 跨深度拖影 = TS 采样历史没有逐 tap 几何判据（清单 7.1）
+
+官方 TS 的 `smbFootprintQuality` 用的是 TA 写下的 **逐 tap 二值 occlusion 位**，每一位的判据就是
+「该历史纹素与本像素重投影点是否同一表面」。我们此前只读 `colortex21.a`——那是**每个像素自己**
+重投影的质量（`maxGeometryWeight`），**不是 TS 这 4 个历史 tap 的质量**。语义错位导致：
+移动时重投影足迹跨到另一个深度，那几块历史（每个自己的质量都正常）被无条件混进来
+⇒ 拖影贴着错误深度表面出现。
+
+修法：在 `GIStabilize` 内按同一判据重算逐 tap 几何权重
+`tapGeo = saturate(1 - |prevViewPos.z - aux.z| / disocTol) × linearstep(0.5,0.8,dot(Ns,N))`，
+`disocTol = frustumSize·saturate(0.01/max(0.05,NoV))`（官方 `GetDisocclusionThreshold` 等价式）。
+4-tap 的颜色、历史长度、quality 全部按 `bilinearWeight·tapGeo` 加权。
+静止时同一表面 ⇒ tapGeo=1，行为与之前一致；只在真正跨深度时才拒。
+
+## 2. 同表面拖影 = 官方 fast clamp 在 HistoryFix，我们没搬（清单 5.7）
+
+上一版把 TA 里的自造 5×5 clamp 默认关掉（对齐官方「TA 无颜色盒」），但官方那套 clamp 是在
+**HistoryFix** 里：σ 取 fast history 5×5（半径 2）× `fastHistoryClampingSigmaScale=2.0`，
+亮度夹到 μ±σ，再按历史长度软化 `lerp(clamped, orig, 1/(1+N·2))`，最后 `ChangeLuma`。
+关掉 TA 的、又没补 HistoryFix 的 ⇒ 「长历史被短历史拉回」的机制整个消失 ⇒ 拖影变长。
+已在 `GIHistoryFix` 的 `wFix<=0`（历史已稳定）分支按官方写法补上，常数 `FAST_CLAMP_SIGMA=2.0`。
+
+静止时短/长历史的 μ 差远小于 2σ_fast ⇒ 不触发（不会重新引入噪点）；移动时滞后长历史被拉回。
+
+## 3. 「静止仍有斑点」的性质判断
+
+这不是时域噪声（那种会随累积下降），更像**体素 1m 网格量化造成的空间相关偏差**（清单 1.2 已记
+「网格相关性是偏差不是方差」）。量级：10 m 处 1 体素在 1080p 的屏幕投影约 80 px，**比 prepass 的
+60 屏幕像素半径还大** ⇒ 30 纹素核压不掉它。官方输入是路径追踪的连续 radiance，没有这个量化，
+所以官方常数按它的输入谱标定，搬过来仍有残块——与 HistoryFix stride 14 那次同类的「输入谱不同」。
+可选手段只有加大 prepass 半径（更糊），暂不动，等主人判断斑点是否可接受。
+
+## 4. 待实机
+- 移动时：跨深度拖影是否消失（7.1）、同表面拖影是否变短（5.7）。
+- 静止时：斑点是否仍在（若在，属上面第 3 条，需决定「要不要为它更糊」）。
+- 若仍有同表面拖影：`GI_ACCUM_TIME` 0.5 → 0.35（代价：静止噪点略升）。
+
+---
+
+# 备忘：离线全量对齐（2026-11-11，主人无法实机）
+
+## 关于"官方论文"
+REBLUR **没有独立论文**。权威来源只有三处（HANDOFF §3 早已记录）：
+`README.md`（集成约定）、各 `*.cs.hlsl` / `*.hlsli` 的头注释、`Include/NRDSettings.h`（默认值）。
+SVGF 有 2017 论文，但 REBLUR 不是它的实现（σ/颜色盒的位置完全不同）。本轮只按源码对齐，不引用文献。
+
+## 本轮对齐的 5 处（都是"官方有、我们漏"或"数值错"）
+
+1. **TA 负值历史 clamp**（清单新增 4.12）
+   官方 `ClampNegativeToZero`：YCoCg 模式转回 RGB → `max(0)` → 转回（REBLUR_Common.hlsli:221-233）。
+   我们只在入口挡 NaN/Inf，从没挡负值。负 Y 会让 `hL/hc`、`_ffLuma`、RCRS 的亮度判据拿到
+   错误分母（黑块、滤波异常）。已加在 `Accumulate` 的 NaN 兜底之后；正值历史往返恒等。
+
+2. **fast history 混合率**（4.8 由 ⚠️ 改 ✅）
+   官方 `min(data1.x, maxFastAccumulatedFrameNum=6)` + `1/(1+N)`（TA:988-994）；
+   我们固定 1/6。N=1 时官方 0.5、我们 0.167 ⇒ 新露出区域要多等 4 帧才跟上。
+   已改为 `1/(1+min(prevAge,6))`。
+
+3. **HistoryFix 邻居权重缺两项**（5.3）
+   官方 `w *= 1 + data1.x`（长历史邻居更可信）与 `w *= ComputeExponentialWeight(hitDist_s, …)`
+   （只从命中距离接近的邻居继承，HistoryFix.cs:176/187）。我们两项都没有。
+   已补，并把支撑门槛从固定 1.5/0.7 改成官方 `sumd = 1 + min(age,3)`（5.4）。
+
+4. **TS footprint 缺 sizeQuality**（7.1）
+   官方在 TA 里给 footprintQuality 乘一项视角补偿
+   `((NoVprev+eps)/(NoV+eps))² → lerp(0.1,1,saturate())`，**只罚拉伸、不罚收缩**（TA:322-329）。
+   斜视墙面/地面时足迹被拉长，历史权重会偏大 ⇒ 拖影。已补在 TS 的 quality 计算之后。
+
+5. （上一轮已做，本轮复核）TS 逐 tap 几何判据、HistoryFix fast clamp。
+
+## 离线数值自检（Node，非实机）
+- HistoryFix：age=1 需 2 个近邻、age=2 需 3 个才过门槛（不会永不触发）；
+  跨 hitDist 的邻居权重被压到 0.20~0.33（有效拒绝）；同平面近邻 1.47~1.75。
+- fast 混合率：N=1 → 0.500（旧 0.167）、N=6 → 0.143。
+- sizeQuality：对称视角 1.000、拉伸 0.378、严重拉伸 0.145。
+
+## 仍然保留的偏离（有意，不是漏）
+| 项 | 官方 | 我们 | 原因 |
+|---|---|---|---|
+| CatRom12 历史采样（4.3） | 12 tap | 4-tap 双线性 | 半分辨率 + 已有大核，CatRom 收益小、开销大；将来可单独 A/B |
+| HistoryFix stride（5.2） | 14 px 且动态缩放 | 4 画布纹素固定 | 14 会贴出硬边界（MEMO 1682-1692 实测） |
+| HistoryFix 长度继承（5.4） | 连续混合 | 邻居最大值封顶 3 | 差异小，暂不动 |
+| Blur 结构（6.1/6.8） | 单级 8 tap + 独立 PostBlur | 4 级 a-trous，第 4 级兼 PostBlur | 覆盖已按 6.2 对齐到官方量级；结构改动风险高 |
+| TS 帧数（7.5） | 63 | 8 | 官方 63 会让阶跃衰减拖到 3.1 s |
+| Prepass 样本数（3.2） | 8 | 32 | 我们的输入谱更差，多采样本换噪声 |
+
+三套检查全绿（345 入口无新增命中）。**本轮全部是结构/公式级改动，观感仍需实机确认。**
+
+---
+
+# 备忘：EAWF 4 级 a-trous 的**前两级是空转**（2026-11-11，本轮最重要的量级缺陷）
+
+## 发现过程
+主人要求再仔细查一遍。从「prepass 半径 30 画布纹素（60 屏幕像素）之后画面不该有密集噪点」反推，
+把每一级的**实际采样落点**算出来（Node 模拟 8 个 Vogel tap + round 到整数纹素）：
+
+| 级 | 旧实际 offsetScale（画布纹素） | 8 个 tap 落点 |
+|---|---|---|
+| 0 | **0.50** | **8/8 全部 round 回中心** |
+| 1 | **0.68** | 多数回中心 |
+| 2 | 1.35 | 部分有效 |
+| 3 | post-blur 固定 1 纹素 | 有效 |
+
+⇒ **4 级 a-trous 的前两级等于把中心值原样写回，真正在滤波的只有第 3 级和 post-blur。**
+这就是「prepass 已经糊过一遍、EAWF 再糊一遍却仍是密集噪点」的直接原因：第二级滤波基本不存在。
+
+## 根因
+旧写法 `offsetScaleBase × radiusScale × hitDistFactor`：
+- `offsetScaleBase = NRD_RADIUS_PX·0.5·2^级`
+- `radiusScale = max(sqrt(NLAS), 0.5)` ⇒ 稳定像素 0.5
+- `hitDistFactor` 又是 0.3~0.5
+三个小于 1 的因子连乘，把小步长压到 0.5 以下；而 `round()` 会把 0.5 以下全部吸到 0。
+
+## 修法（官方公式 + 每级下限）
+```glsl
+float blurRadius = max(saturate(sqrt(hitDistFactor * nonLinearSpeed)) * (NRD_RADIUS_PX * 10.0), 1.0);
+vec2 offsetScale = vec2(max(blurRadius * (1.0/15.0) * ldexp(1.0, FILTER_PASS_INDEX), 1.0));
+```
+- `blurRadius` 就是官方 `saturate(sqrt(areaFactor))·maxBlurRadius`，`NRD_RADIUS_PX` 语义改为
+  「×10 = 画布纹素」，3.0 即官方 30。
+- 下限 `minBlurRadius = 1` 画布纹素，保证每级至少 6/8 个 tap 落在半径 1 上。
+- 同时移除了自造的 `stepBoost`（去遮挡放大 + 低帧数放大）：官方没有，且 NLAS 已经承担
+  「新像素用大核」，叠加会过度放大。`NRD_DISOCCLUSION` 因此废弃（已从 GUI 与 profile 移除）。
+
+## 数值验证（Node）
+| 场景 | blurRadius | 每级步长 | 落点 |
+|---|---|---|---|
+| 稳定像素（hitDistFactor .45、NLAS .125） | 7.1 | 1.00 / 1.00 / 1.90 / 3.79 | 每级 6/8 有效 |
+| 新像素（NLAS .992） | 20.0 | 1.34 / 2.67 / 5.35 / 10.69 | 全部有效 |
+
+有效总覆盖从 **~2.5 → ~7.7** 画布纹素（稳定），新像素从 ~5 → 20。
+
+## 顺带清理
+- `EAWF` 的 `centerN`（未使用，注释还写着「用于瓣角判据」但实际上一直用几何法线）已删。
+- `NRD_DISOCCLUSION` 从 `screen.VXGI`、`sliders`、`profile.Default` 移除，settings 里保留定义并标注废弃
+  （兼容旧配置文件）。
+- lang 的 `NRD_RADIUS_PX` 文案改成新语义（×10 画布纹素）。
+
+三套检查全绿（345 入口无新增命中）。**待实机：这一项最可能带来「终于干净了」的可见变化。**
+
+---
+
+# 备忘：全链路逐段复核——四个「看起来对、实际没生效」的缺陷（2026-11-11，第四轮）
+
+主人要求「从头到尾从输入到输出全部检查一遍」。本轮不看公式细节，专门查**执行没执行、口径一不一致**。
+四处都是同一类问题：代码写得很像官方，但实际跑起来不是那个意思。
+
+## ① `SVGF_QUALITY` 从未定义 ⇒ 半分辨率 GI 一直是**最近邻**放大（影响最大）
+
+`shaders.properties` 的 `screen.VXGI` / `screen.SSILVB` 里登记了 `SVGF_QUALITY`，
+`lang` 里也有它的中英文案，`SpatialUpscale.glsl` 里有两档实现 ——
+但 `settings.glsl` **从来没有 `#define SVGF_QUALITY`**。Iris 只认 settings.glsl 里的宏，
+所以：
+- GUI 上那个「SVGF 质量」滑块是死的，拖了没反应；
+- 配置文件里的 `SVGF_QUALITY=1` 不生效（主人这份配置里就有，一直没起作用）；
+- `SpatialUpscale.glsl` 的 `#ifndef SVGF_QUALITY → #define 0` 兜底 ⇒ **0 = 仅取中心值**。
+
+半分辨率画布 = 屏幕一半，最近邻放大 ⇒ 每个画布纹素铺成 **2×2 屏幕像素的硬方块**。
+这是「静止时满是斑斑点点的密集噪点」里最容易被误判成噪声的一部分：它不是随机噪点，
+是规则网格，而且**累积多少帧都不会消失**（它在上采样这一级，时域累积之后）。
+已补 `#define SVGF_QUALITY 1 // [0 1]`（4 邻域深度感知上采样）。
+
+## ② EAWF 第 4 级的 a-trous 从来没有执行过
+
+`FILTER_PASS_INDEX == 3` 的分支里只跑一段 post-blur 的 3×3 就 `return`，
+主循环（a-trous 大环）根本没进去。也就是说 4 级滤波里 **只有 1×/2×/4× 三级在工作**，
+最大步长 `blurRadius·8/15` 一次都没跑过。Node 实测总覆盖：
+
+| 场景 | 修复前 | 修复后 |
+|---|---|---|
+| 稳定像素（blurRadius≈4.4） | 4.2 画布纹素 | 6.5 |
+| 新/移动像素（blurRadius≈20） | 10.3 | **21.0** |
+
+新像素少一半覆盖，正是「移动时更脏」的直接来源。现在 4 级全跑真 a-trous；
+官方 POST_BLUR 作为 `POST_BLUR_RING_WEIGHT = 0.25` 的 3×3 小环并进第 4 级
+（同一 dispatch 读不到自己刚写的结果，只能用两环加权合并近似；小环权重必须小，
+否则等于把大核半径丢掉）。顺带把两处手抄的权重合成 `SpatialTapWeight()` 单一实现。
+
+## ③ `Accumulate` 的深度容差量纲错了一倍
+
+`giDepthGrad` 是 **每画布纹素** 的视深变化（本 pass 就在画布分辨率下光栅化，
+dFdx/dFdy 步长 = 1 画布纹素 = 2 屏幕像素），但旧写法：
+- `_tapOffPx = 2.0 * length(sampleTexel - texelPos)` 把它当屏幕像素用 ⇒ ×2；
+- `6.0 * giDepthGrad` 的本意是「6 个屏幕像素」，实际是 6 个**画布纹素** ⇒ ×2。
+
+两处叠起来容差**大了整整一倍**。后果：深度差 10%~20% 的另一层表面也被判成「同一表面」
+并混进历史 —— 正是主人上一轮报的「拖影会被拉到其他深度不同的表面上」。
+另外 `GI_CANVAS_PHASE` 早已固定为 (0,0)（官方 README 要求四分之一分辨率用固定
+pixelPos/2，不要逐帧轮转），棋盘相位偏移这一条前提**已经不存在**，固定补偿项从
+6 纹素降到 1 纹素（双线性落点最多偏 1 纹素）。
+
+## ④ 稳定化的逐 tap 几何判据跨帧混用两套坐标系
+
+`GIStabilize`（deferred11）里 `colortex14` 存的是**本帧**内容（Accumulate 在 deferred4
+已经写过它并 flip），但旧代码拿它的 `aux.z` 去比 `prevViewPos.z`（本像素世界点在
+**上一帧**视空间的深度）。两侧不同坐标系，相机一平移/转动就产生系统性偏差：
+判据时松时紧 —— 松则跨深度历史被混入（拖影贴错表面），紧则同一表面被判异面（闪）。
+改为比 `viewPos.z`（本帧），两侧同帧同坐标系。代价：检测不到「历史过期」，
+那由 Accumulate 的 `maxGeometryWeight` 与 `colortex14.a` 负责。
+
+## 顺带修的配置问题
+
+`GI_KERNEL_ROT_PER_FRAME` 在主人配置里是 `false`。这个选项关掉时随机核方向「每像素固定」，
+而**固定图案的采样误差是时域相关的**：累积器平均不掉它，只会把它固化 ⇐ 静止时的不动斑点。
+`lang` 原文案写反了（说「每像素固定，静止时最干净」），已改正为「必须开」，
+并把配置改回 `true`（备份 `Revelation-AD-edit.txt.bak2`）。
+
+## 验证
+
+三套检查全绿（345 入口无新增命中），`GI_NRD_WEIGHTS` / `GI_NRD_TS` 两种取值都跑过。
+properties 纯 ASCII、lang 无 BOM。
+
+---
+
+# 备忘：半分辨率契约审计——每个 pass 的输入/输出是否符合官方 REBLUR（2026-11-11，第五轮）
+
+官方 README「IQ VS PERFORMANCE: TRACING AND DENOISING RESOLUTION」对 `{0.5; 0.5}` 只有两句硬要求：
+
+1. "From *NRD*'s point of view this is **full-resolution input**, so checkerboarding is disabled."
+   ⇒ 喂给降噪器的 signal / normal / viewZ / hitDist **全部用降噪分辨率**，`pixelPos = SV_Position/2`，
+   不做棋盘轮转（所以 `GI_CANVAS_PHASE` 固定 0 是对的）。
+2. "bind **downsampled guides** to *NRD* but **retain the original full-resolution guides for the
+   application-side resolve**."
+   ⇒ 上采样那一步必须用**全分辨率** guide。
+
+## 逐 pass 契约表（本轮核对结果）
+
+| pass (dispatch) | 输入：缓冲 / 尺寸 / 通道语义 | 输出 | 判定 |
+|---|---|---|---|
+| 1_a 追踪 | gbuffer 全分辨率，按 `rt = 2·canvasPos` 点采样 | colortex3（**全分辨率共享暂存**，只写左上 1/4）rgb=YCoCg、a=**原始米值** | ⚠️ a 用米值（官方在前端就归一化）；prepass 归一化后下游全读归一化值 ⇒ 内部自洽，不通到外部 |
+| 1_b prepass | colortex3(rgb,a) + **同帧** depthtex0 / 表面法线 | colortex22（0.5）rgb=YCoCg、a=归一化 [0,1] | ✅ 本轮把「平均米值再用中心分母归一化」改成「逐 tap 归一化后平均」 |
+| 1_c HistoryFix | colortex2(上帧) / colortex14(上帧) / colortex22(本帧) / depthtex0(本帧) | colortex25（0.5）rgb + `.a=frameNum` | ⚠️ `.a` 被 frameNum 占用（官方 `.a` 是 hitDist、frameNum 在独立 data1）；hitDist 由 colortex26 承担 ⇒ 自洽 |
+| 4 Accumulate | colortex25(历史) + colortex22(本帧输入) + colortex14(上帧 guide) + colortex21(上帧 fast) | colortex2 / 14 / 21（均 0.5） | ⚠️ 同上（frameNum 打包进 alpha，官方是独立 data1） |
+| 5 VarianceEstimate | colortex2 | colortex3（rgb 透传、`.a=0`） | ⚠️ 官方无此 pass（SVGF 遗留），非 NRD 路径依赖它 ⇒ 保留 |
+| 6~9 EAWF | pass0 源=colortex2；其后 25/3 乒乓 | colortex3（画布象限） | ✅ 输入=TA 输出，符合官方 Blur |
+| 10 HistoryStore | colortex23（上帧） | colortex25 | ✅ 官方没有（为消除 TS 同帧读写竞态新增），自洽 |
+| 11 GIStabilize | colortex3 + colortex14(本帧) + colortex25(上帧快照) | colortex23（0.5）rgb + `.a=age` | ✅ 最终结果在降噪分辨率 |
+| 上采样（DeferredLight） | colortex23(0.5) + **全分辨率** guide | 全分辨率 | ✅ 本轮修好（此前用半分辨率 guide） |
+
+## 本轮实际改的三处
+
+1. **上采样改用全分辨率 guide**（官方第 2 条）。旧实现用 `colortex14`（半分辨率）的深度/法线做权重，
+   权重只在画布格点上取值，全分辨率像素之间的差异完全体现不出来 ⇒ 退化成 2×2 软混合，
+   GI 边缘跟着画布格点走。现在改为 `depthtex0` + 法线包，与中心像素自己的全分辨率视深/法线比较。
+   这一条对上采样边缘（台阶/柱子/树叶）的清晰度是直接收益。
+
+2. **prepass 的命中距离改逐 tap 归一化**（官方 front-end 口径）。官方 alpha 是归一化值，
+   `ExtractHitDist(s) * _REBLUR_GetHitDistanceNormalization(zs, ...)` 每个 tap 用**自己的**视深。
+   我们此前平均米值、再用中心分母归一化：平坦面恒等，深度不连续处被最远 tap 主导
+   ⇒ normHit 顶到 1 ⇒ hitDistFactor=1 ⇒ 半径永远取满 ⇒ 台阶/接触区过糊。
+
+3. **`colortex3` 的读取口径**：`Accumulate` 的非 NRD 回退原来 `textureLod(colortex3,
+   texelToUv(texelPos), 3.0)` —— `texelToUv` 是全分辨率像素尺寸，而 texelPos 是画布坐标，
+   于是取的是「整张全分辨率缓冲的第 3 级 mip」，而 GI 只写在左上 1/4 ⇒ 内容完全错位。
+   改为画布坐标 4-tap `texelFetch`，并删掉只为它申请的 `colortex3MipmapEnabled`
+   （省一条全分辨率 mip 链）。另外 `DeferredLight` 的 SSILVB 分支 `texelPos >> 1` 改为
+   `GICanvasCoord()`（奇数分辨率会越界 1 列/行）。
+
+## 顺带确认：colortex3 为什么必须是全分辨率
+
+它不是 GI 独占缓冲，而是**帧内共享暂存**：
+`deferred1_a/5/6~9`（GI，画布象限）→ `DeferredLight` 读 → …… → `TemporalAA`（`RENDERTARGETS: 1,4,3`）
+**全分辨率重写**成运动矢量 → `composite10_a` 的 MotionBlur 读 `.xy`。
+所以：① 不能把它改成 0.5；② GI 只写左上 1/4 是安全的，TAA 会整帧覆盖；③ 任何"读 colortex3"
+的地方都必须明确自己在读象限还是全图 —— 本轮修的两处正是这类混淆。
+
+## 仍然偏离官方、但内部自洽的地方（不改的理由）
+
+| 项 | 官方 | 我们 | 为什么可以不改 |
+|---|---|---|---|
+| 命中距离存放 | `.a`（贯穿全链） | `colortex26`（时域平滑后的标量） | 我们的 `.a` 要存 frameNum（官方有独立 data1 缓冲）；colortex26 反而更稳 |
+| data1（帧数）| 独立纹理 | 打包进 `.a` | 没有外部消费者，通道够用 |
+| 缓冲尺寸 | `resourceSize = rectSize` | 全分辨率共享缓冲的左上 1/4 | 见上：共享暂存不能改尺寸；索引全是画布相对的，数学等价 |
+| CatRom12 历史采样 | 12 tap | 4-tap 双线性 | 半分辨率 + 已有大核，收益小 |
+| denoisingRange | 500 m 裁剪 | 无 | 我们的 GI 只追踪 16 m，全在范围内 |
+
+三套检查全绿。
+
+## 追加（同日，第六轮自查）：把上一轮自己引入的两处 分支出错 修掉
+
+主人看不到画面，所以这一轮专门"审自己刚改的代码"。抓到两处：新写的上采样与 TS 逐 tap 几何都用了
+`samplePos * 2` 把画布坐标换算成屏幕坐标 —— 但 `VOXEL_GI_FULLRES` 模式下**画布纹素就是屏幕纹素**，
+不能再乘 2。主人当前是半分辨率（`//#define VOXEL_GI_FULLRES`），所以实机不会立刻炸，
+但这是个定时炸弹（一开全分辨率就整片错位）。两处都补了 `#ifdef VXGI_FULLRES` 分支。
+
+另外把 TS 的逐 tap 判据从 `|ΔviewZ|` 换成**切平面距离**（`0.02 × frustumSize`）：
+`|ΔviewZ|` 在掠射面上一个纹素的差值与深度断层同一量级，判据必然过拒（历史权重掉到 0 ⇒ 闪）；
+平面距离对"同一平面上任意远的邻居"恒为 0、与视角无关。现在 prepass / EAWF / HistoryFix / TS
+四处用的是**同一个**几何判据口径。
+
+### 端到端数值复核（Node，非实机）
+
+| 场景 | hitDistFactor | NLAS | blurRadius | 四级步长 | 8 tap 落点(心/1/远) | 总覆盖 |
+|---|---|---|---|---|---|---|
+| z=2 m 稳定（N=30） | 1.000 | 0.125 | 10.6 | 1.00/1.41/2.82/5.65 | 2/6/0 · 2/3/3 · 0/1/7 · 0/1/7 | 10.9 |
+| z=10 m 稳定 | 0.280 | 0.125 | 5.6 | 1.00/1.00/1.49/2.99 | 2/6/0 · 2/6/0 · 2/3/3 · 0/1/7 | 6.5 |
+| z=30 m 稳定 | 0.140 | 0.125 | 4.0 | 1.00/1.00/1.06/2.11 | 每级 ≤2 个落中心 | 5.2 |
+| z=10 m 新像素（N=1） | 0.280 | 0.992 | 15.8 | 1.05/2.11/4.22/8.43 | 0/2/6 · 0/1/7 · 0/0/8 | 15.8 |
+
+每一级都至少有 6/8 个 tap 落在中心之外（上一轮之前第 4 级是 0/8、前两级是 8/8 全落中心）。
+累积：cap = 30 帧（= 官方 0.5 s），alpha 从 0.811（N=1）降到 0.032（N=30），稳态残噪 ≈ 单样本的 12.8%。
+
+另做了一次括号/花括号配平自检（9 个改动文件全 OK），以及四个 EAWF pass 的派发条件一致性核对。
+
+
+---
+
+# 备忘：官方管线顺序的**确证**（2026-11-11，读 C++ 派发代码）
+
+此前 5.6 的判定只是从 shader 头注释推的，本轮直接从
+`Source/Reblur.cpp`（diffuse 分支，145~186 行）读到派发序列：
+
+```
+PREPASS
+TEMPORAL_ACCUMULATION
+HISTORY_FIX
+BLUR
+POST_BLUR
+TEMPORAL_STABILIZATION
+```
+
+**结论一**：HistoryFix 在累积**之后**，我们是**之前** ⇒ 5.6 的 ❌ 成立。
+
+**结论二（比原先记的更重要）**：官方 HistoryFix 的输出 `gOut_Diff` 只喂给 Blur，
+**不回写历史**；下一帧历史用的是 TA 自己的输出 `gOut_Diff`（未被修复的那份）。
+而我们把 HistoryFix 的输出写进 colortex25，Accumulate 直接把它当历史输入读取
+⇒ **"从邻居借来的值"会进入长历史并被永久固化**。
+
+每次修复只持续 age<3 的约 2 帧，但只要那 2 帧里有邻居的旧 GI，它就会留在本像素的历史里
+继续被累积（alpha 逐帧变小、越来越难冲掉）。这是拖影的一条独立来源，
+也是"修复值本身会自我复制"那类问题的另一个表现形式。
+
+**为什么不现在改**：把 HistoryFix 移到 Accumulate 之后，需要
+① 它读 colortex2（本帧 TA 输出）而不是读历史；② 输出到一个 EAWF 会读、但不参与历史回流的缓冲；
+③ EAWF pass0 的源随之改变，乒乓链 `2→25→3→25→3` 要重排；④ TS 的历史快照缓冲不能与它冲突
+（colortex25 目前被三者共用：EAWF 乒乓 / HistoryFix 输出 / TS 快照）。这是一次真正的拓扑改造，
+必须实机 A/B 才能确认收益，否则可能把刚修好的稳定性再打乱。**留作 B1，等实机。**
+
+---
+
+# 备忘：**更正**——REBLUR 有论文，而且论文标题里的机制我们一直漏着（2026-11-11）
+
+## 先更正事实错误
+
+本文件前面（约 2250 行）写过「REBLUR **没有独立论文**，权威来源只有 README/头注释/NRDSettings.h」。
+**这是错的**，已核实：
+
+> Zhdan, D. "ReBLUR: A Hierarchical Recurrent Denoiser." In: Marrs, A., Shirley, P., Wald, I. (eds)
+> *Ray Tracing Gems II*. Apress, Berkeley, CA, 2021. DOI 10.1007/978-1-4842-7185-8_49（Open Access）
+
+摘要原文："By aggressively reusing information both spatially and temporally, the denoiser produces
+noise-free images from only a few samples per pixel."
+
+教训：这条错误断言直接导致我漏掉了标题里写着的核心机制（见下）。**引用文献前必须查，不能凭印象断言"没有"。**
+
+## 漏掉的机制：Recurrent —— 主历史就是上一帧的空间滤波输出
+
+证据不是推测，是 NRD 头文件里的资源生命周期标签：
+
+| pass | `gOut_Diff` 的标记 |
+|---|---|
+| `REBLUR_TemporalAccumulation` | `NRD_RESOURCE_TRANSIENT` |
+| `REBLUR_Blur` | `NRD_RESOURCE_TRANSIENT` |
+| `REBLUR_HistoryFix` | `NRD_RESOURCE_OUT` |
+| **`REBLUR_PostBlur`** | **`NRD_RESOURCE_PERMANENT`** ← 唯一 |
+
+而 TA 的跨帧输入 `gHistory_Diff` 正是 `NRD_RESOURCE_PERMANENT`
+（`REBLUR_TemporalAccumulation.resources.hlsli:34`）。
+⇒ **下一帧 TA 的历史 = 本帧 PostBlur 的输出**，`H_{n+1} = Filter(lerp(H_n, 输入, alpha))`。
+同一个核被逐帧反复迭代，等效滤噪力度随历史长度增长 —— 这就是官方能用 8 tap 小核做干净的原因，
+也是它被叫作 *recurrent* 而不是 *recursive* 的原因。
+
+## 我们做反了
+
+`GIHistoryStore` 原来默认 `_wb = 0.0`，注释还写着「官方口径：主历史不掺空间滤波结果」——
+方向正好相反。后果：整个回流机制不存在，等于把 REBLUR 降级成普通 SVGF，
+噪声只能靠**单次**空间滤波压。**这就是「该修的都修了、画面仍有密集噪点」的根因。**
+
+有意思的是 `lang/zh_CN.lang` 里 `VOXEL_GI_NRD` 的说明一直写的是
+「长历史存滤波后的结果（安静、干净）」——**文案是对的，代码是错的**。
+下一轮再有"代码和文案矛盾"的地方，应该先怀疑代码。
+
+## 本轮改动
+
+1. `GIHistoryStore.comp`：`_wb` 默认 **1.0**（全量回流），`GI_BISECT bit1` 保留为回退开关（置位 = 旧行为）。
+   整个回写包进 `#ifdef VOXEL_GI_NRD_ACTIVE`（关降噪时 colortex3 不是 EAWF 输出，
+   拿它回写会把累积冲掉——这是个潜在的数据破坏路径）。
+2. `EAWF.comp`：`nonLinearSpeed` 的分母从 `SSILVB_MAX_ACCUM_FRAMES`(128) 改为**真实累积上限**
+   （`clamp(GI_ACCUM_TIME/(帧时间·SPP), 8, 128)`，与 Accumulate 同一公式）。
+   旧写法在 N=30 时把 NLAS 算成 1/9 而不是 1/31 ⇒ 半径大 2 倍。**回流一旦打开，这个 2 倍会被逐帧放大成"整体糊掉"**。
+
+## 复核（Node）
+
+改完之后半径与官方**逐项吻合**：
+
+| 场景 | 我们的 blurRadius | 官方（同公式） |
+|---|---|---|
+| z=10 m 稳定（N=30） | 2.85 | 2.85 |
+| z=10 m 新像素（N=1） | 15.62 | 15.62 |
+
+稳定像素四级步长 1.00/1.00/1.00/1.52（每级 ≥6/8 tap 有效），新像素 1.04/2.08/4.16/8.33。
+
+## 回退方法
+
+嫌糊/出现异常时，把 GUI 的「二分排查」(GI_BISECT) 设为 **2**，即可回到"历史只存原始累积"的旧行为，其余不变。
+
+---
+
+# 备忘：实机两次 A/B 的对照结论（2026-11-11，第九轮，**重要**）
+
+## 客观事实（从 `versions/1.21.11-Fabric 0.18.4/logs/latest.log` 读到）
+
+- 09:56:30 `Using shaderpack: Revelation-AD-edit`，`enableShaders=true`，**全程无 `error C####`**；
+  只有 sodium 的 link warning（历次会话都有）。⇒ 代码是活的，不存在"没加载/编译失败"。
+- 真正的游戏目录是 **`.minecraft/versions/1.21.11-Fabric 0.18.4/`**（HMCL 版本隔离），
+  它有自己的 `config/iris.properties`、`shaderpacks/`、`logs/`。`.minecraft/` 下那份是旧的
+  （`latest.log` 停在 8/27），排查时别再看错。三处 `shaderpacks/` 指向同一份文件，我改的就是它。
+- `profile.Default` 里的 `!VOXEL_GI_NRD` **没有生效**：用户的实际选项（`VOXEL_GI_SUN_STRENGTH=3.0`、
+  `VOXEL_TRACE_DISTANCE=16`、`GI_FAST_CLAMP_SIGMA=0`）与 profile 的值全部不一致，
+  而与 settings.glsl 默认值一致 ⇒ 已排除"REBLUR 链被 profile 关掉"这个可能。
+- Iris 只把**非默认值**写进选项文件。所以要把一个"默认开"的布尔选项关掉，必须显式写一行
+  `NAME=false`，光删掉那行等于恢复默认（本轮踩过一次）。
+
+## 两次实机对照
+
+| | 配置 | 反馈 |
+|---|---|---|
+| A（07:56） | 逐帧旋转**关**、回流**关**、第 4 级空转、最近邻上采样 | 静止噪点改善、**不闪**、仍有斑点、移动有拖影 |
+| B（09:56） | 逐帧旋转**开**、回流**开**、第 4 级真跑、双线性上采样 | 斑点略降、**静止也在动**、**动起来更闪**、**拖影一大条** |
+
+A→B 只多了四项改动。其中两项是客观修复（第 4 级、上采样），效果就是"斑点略降"；
+另两项是我基于官方源码做的**判断性**改动（旋转、回流），而新增的三个坏症状恰好对应它们。
+
+## 结论：回流与逐帧旋转在本链里**不能同时开**
+
+- 本包的空间核每帧换旋转角（`GI_KERNEL_ROT_PER_FRAME`）。回流把"每帧不同算子的输出"直接写回历史
+  ⇒ 滤波算子的不动点逐帧移动 ⇒ **没有稳态** ⇒ 静止时画面持续漂移、拖影层数叠加。
+- 官方能同时用两者，是因为它的 rotator 是预计算的时域分层序列、核结构与我们的 4 级 a-trous 不同，
+  而且它的 HistoryFix / Blur / PostBlur 拓扑与我们也不同（5.6 仍未对齐）。
+- **所以：`GI_RECURRENT_HISTORY` 默认改为 0**（开关保留），并把逐帧旋转在用户配置里显式关掉。
+  要试回流，必须同时关旋转。
+
+## 另一个确定的拖影来源：暗处 ×4 累积
+
+`VOXEL_GI_DARK_ACCUM` 把暗处的累积上限从 30 帧抬到 **120 帧（0.5 s → 2 s）**。
+官方 REBLUR 全场 cap 一致，没有这个机制。用户配置里它是 `true` ⇒ 暗场景的光照恢复时间翻四倍，
+正是"拖影一大条"的量级。**已关**（`VOXEL_GI_DARK_ACCUM=false`）。
+
+## 本轮净变化（相对状态 A）
+
+保留：第 4 级真 a-trous、双线性上采样、切平面距离判据、逐 tap 命中距离归一化、全分辨率 guide 上采样。
+撤销：逐帧旋转（显式 false）、主历史回流（默认 0）。
+新增关闭：暗处 ×4（false）。
+
+---
+
+# 备忘：按官方把剩下的拓扑做完（2026-11-11，第十轮）
+
+主人反馈「拖影没改善、依旧跨表面拖影」，并明确要求「把没做的都做完，遇事优先参考官方」。
+本轮做完的是**最要紧的三项**，都是结构性的。
+
+## ① 5.6 拓扑重排：HistoryFix 移到 TA 之后，且修复值不再入历史
+
+官方 `Source/Reblur.cpp:145-186` 的顺序已确证为
+`PREPASS → TA → HISTORY_FIX → BLUR → POST_BLUR → TS`，且 HistoryFix 的输出
+`gOut_Diff` 是 `NRD_RESOURCE_OUT`（当帧临时，只喂 Blur）。
+
+我们原来做的是反的：HistoryFix 在 **prepass 之后、累积之前**，输出写 colortex25，
+而 Accumulate 把 colortex25 当**历史**读 ⇒ 「从邻居借来的旧 GI」被永久固化进本像素历史。
+这正是「跨表面拖影」的结构性来源：修复用的法线判据是 `smoothstep(0.4, 0.9, dot)`
+（66° 锥），在墙角/台阶处必然把另一层表面拉进来，然后它就再也洗不掉。
+
+**落地**：`deferred5` 槽位在 NRD 路径下改跑 HistoryFix（原 VarianceEstimate 在该路径只做
+colortex2→colortex3 的复制，没有消费者，复用不丢功能；GI_MODE 1 仍走 VarianceEstimate）。
+`deferred1_c` 退役。HistoryFix 本身按官方算法**重写**：
+
+```
+if (frameNum >= historyFixFrameNum) → 跳过重建
+else  sumd = 1+frameNum; diff = 自己 × sumd
+      for 5×5 邻域（去中心、去 4 角 = 20 tap，tap 间距 = stride）:
+          w = 平面距离窗 × 法线瓣角窗 × (1+邻居帧数) × 命中距离指数
+          diff += w × 邻居的**本帧 TA 输出**
+      diff /= sumd
+无条件：亮度夹到 fast history 的 μ±2σ，再 lerp(clamped, orig, 1/(1+frameNum·2))，ChangeLuma
+```
+
+stride 也按官方：`round(7 × lerp(0.25+0.75·sqrt(hitDistFactor), 1, NLAS))`（我们原来固定 2）。
+
+## ② 5.8 Recurrent 回流改回默认开启（拓扑对了才有意义）
+
+`GIHistoryStore` 帧末把 `colortex2.rgb` 覆盖成 `colortex25`（EAWF pass3 = 官方 PostBlur 位置），
+保留 `.a` 帧数。上一轮"回流+逐帧旋转"同时开出现静止漂移，当时 HistoryFix 仍在历史链里可能是主因；
+现在修复值不入历史，用户侧逐帧旋转也已关闭。
+
+## ③ 去遮挡兜底改用**本帧输入**（官方 TA 的 disocclusion 分支）
+
+原来历史失效时取 `colortex2` 的旧值、帧数压到 1~3 ⇒ 去遮挡像素继续复用旧的**滤波值**，
+移动时沿物体边缘拖一条。官方是 `diff = 本帧输入, frameNum = 1`，已改。
+
+## 缓冲重排（这是本轮唯一的"发明"，因为不能新增 pass 槽位）
+
+colortex25 现在是 EAWF 的最终输出（官方 PostBlur），不能再兼作 TS 快照；
+快照改到 **colortex24**（原 GIPrepass 调试方差，已让出，`colortex24Clear=false`）。
+
+最终数据流：
+
+```
+1_a  → 3(trace)          1_b → 22(rgb+normHit), 26(平滑 normHit)
+4    r:2(prev),22,14(prev),21(prev)   w:2(TA out, .a=帧数),14,21
+5    r:2(now),14(now),26,depth        w:25(重建结果，当帧临时)
+6-9  25→3→25→3→25（4 遍，最终在 25）
+10   r:25,23(prev)        w:24(TS 快照), 2.rgb:=25（回流）
+11   r:25,24,14           w:23
+DL   r:23
+```
+
+## 仍未做的（明确列出）
+
+| 项 | 为什么没做 |
+|---|---|
+| 4.3 CatRom12 历史采样 | 纯质量项，不影响拖影；4-tap 双线性已够 |
+| 6.1/6.8 单级 Blur + 独立 PostBlur | 需要**新增一个 dispatch 槽位**，Iris 的 pass 名集合没法安全确认；现在仍用"第 4 级 + 0.25 权重小环"近似 |
+| 6.6 官方 `g_Special8` 采样图案 | 与 8.1 的黄金角 Vogel 等价性高，属观感微调 |
+| 7.5 TS 63 帧 | 官方虽有 63，但注释写明「>= maxAccumulatedFrameNum 会被夹到 30」；我们先保持 8（更短的拖影尾巴） |
+
+---
+
+# 备忘：把「剩下的都做完」——官方 Blur/PostBlur 两级 + CatRom + TS 单级累积（2026-11-11，第十一轮）
+
+主人：「剩下的全部都做。仔细做完」。上一轮列的 4 项 + 2 项新发现，本轮全部落地，
+**没有保留 A/B 开关**（官方实现即唯一路径，旧代码删除）。
+
+## 一、官方 Blur / PostBlur 的真实结构（推翻我之前两处记录）
+
+`REBLUR_Blur.cs.hlsl` 与 `REBLUR_PostBlur.cs.hlsl` 的**主函数完全一样**——它们都
+`#include "REBLUR_Common_SpatialFilter.hlsli"`，差别只有三个编译期宏：
+
+| 参数 | BLUR | POST_BLUR | 出处 |
+|---|---|---|---|
+| `REBLUR_*_RADIUS_SCALE` | 1.0 | **2.0** | REBLUR_Config.hlsli:86-93 |
+| `REBLUR_*_FRACTION_SCALE` | 1.0 | **0.5** | 同上 |
+| rotator | `gRotator` | `gRotatorPost` | 同上 |
+
+**关键更正 ①**：PostBlur **不是 3×3**（我之前把它实现成「权重 0.25 的 3×3 小环并进第 4 级」），
+而是**半径翻倍的同款 8-tap**：两者 `areaFactor` 相同，所以 PostBlur 半径 = Blur × 2。
+
+**关键更正 ②**：官方的总覆盖 = Blur(1×) + PostBlur(2×) = 3×，不是"单级 8 tap"。
+按 `NRD_RADIUS_PX=3.0`（maxBlurRadius 30）算，Node 实测：
+- 稳定像素（z=10 m）：Blur 2.85 + PostBlur 5.70 = **8.6 画布纹素**
+- 新像素：15.62 + 30.0 = **45.6 画布纹素**
+（旧 4 级 a-trous 分别约 4.5 / 21 —— 本轮的覆盖是它的 1.9~2.2 倍）
+
+`fractionScale` 的语义（这才是 6.8 真正的差异点）：
+- `normalParam = (1/angleMax) / fractionScale` ⇒ PostBlur 的角度上限只有 Blur 的一半（更严）
+- `minHitDistWeight = 0.1 · fractionScale · NLAS` ⇒ PostBlur 减半
+- `roughnessWeightParams` 略（diffuse 不适用）
+
+## 二、`g_Special8` 与各向异性 skew（6.6）
+
+```cpp
+g_Special8 = { (-1,0,1), (0,1,1), (1,0,1), (0,-1,1),
+               (-0.25√2, 0.25√2, 0.5), (0.25√2, 0.25√2, 0.5),
+               (0.25√2, -0.25√2, 0.5), (-0.25√2, -0.25√2, 0.5) }
+```
+xy = 单位盘内方向×半径分数，**z = 高斯半径分数**（`GetGaussianWeight(offset.z)` ⇒ 轴点 exp(-0.66)=0.517、
+对角点 exp(-0.165)=0.848）。`NRD_USE_QUADRATIC_DISTRIBUTION = 0` ⇒ 采样点就是 `offset.xy`，不再乘 z。
+
+屏幕空间偏移（SpatialFilter:158-166）：
+```
+skew = lerp(1 - abs(Nv.xy), 1.0, NoV);  skew /= max(skew.x, skew.y);
+skew *= gRectSizeInv * blurRadius;
+uv = pixelUv + RotateVector(ScaleRotator(rotator, skew), offset.xy);
+```
+正对镜头各向同性；掠射时沿表面倾斜方向拉长（保细节）。
+
+顺带确认：`ApplyGeometryWeightLast(w, z, NoX, params)` 里 `NoX·a + b = dot(Nv, Xvs-Xv)/(sens·frustumSize)`
+—— 与我们用的「切平面距离 / (0.02·frustumSize)」**数学等价**，所以四处统一用平面距离是对的。
+
+## 三、CatRom12 到底用在哪（4.3 的更正）
+
+之前记「CatRom12 用于历史采样」。核实后更准确：
+
+| 数据 | 滤波 | 出处 |
+|---|---|---|
+| **颜色历史**（TA `gHistory_Diff`） | `BicubicFilterNoCornersWithFallbackToBilinear`（CatRom 12 tap） | TA:934-937 |
+| **稳定化亮度历史**（TS `gHistory_DiffLumaStabilized`） | 同上 | TS:147-152 |
+| 帧数 `data1.x` / `footprintQuality` | **双线性**（`ApplyBilinearCustomWeights` / `ApplyBilinearFilter`） | TA:311/326 |
+
+门控：`smbAllowCatRom = dot(smbOcclusion0+1+2+3, 1.0) > 11.5`（16 个 occlusion 位里 > 11.5 个有效）。
+我们等价为 `足迹有效率 > 11.5/16`。
+
+**为什么这项在 Recurrent 下更重要**：主历史被逐帧重采样，双线性的模糊会**累加**
+（H_{n+1} = CatRom(H_n) 与 Bilinear(H_n) 在 30 帧后的锐度差是累积的）。CatRom 的负瓣正好抵消。
+
+实现细节：负权重 tap 也乘 `tapGeo`（否则跨表面的负权重会把另一层颜色「减」进来，边缘过冲）；
+`abs(crW) < 1e-3` 时退回双线性（邻域几乎全被拒时避免除爆）。
+
+## 四、TS 里最要紧的一处结构性偏差（7.5 的真正含义）
+
+`Source/Reblur.cpp:303`：
+```cpp
+float stabilizationStrength = settings.maxStabilizedFrameNum / (1.0f + settings.maxStabilizedFrameNum);
+```
+⇒ `gStabilizationStrength` **不是** `maxStabilizedFrameNum` 本身，而是 `N/(1+N)`；
+默认 63 ⇒ **0.984**。它只夹最终混合权重 `min(hw, strength)`。
+
+**而 TS 根本不做帧数累积**：`data1.x` 由 TA 算好（`gIn_InternalData`），TS 只
+`data1.x = lerp(min(data1.x, historyFixFrameNum), data1.x, antilag)` 后写回。
+
+我们此前 `taAge = prevAge + 1` —— 那是在 TA 之外**又叠了一级时域累积**。这是「拖影一大条」
+的结构性来源之一（两级 alpha 串联，等效历史长度 = 乘积）。本轮已删，改为直读 `colortex2.a`。
+
+`GI_STABILIZE_FRAMES` 的语义随之从「本级帧数上限」改为「maxStabilizedFrameNum」，默认 8 → **63**。
+
+## 五、HistoryFix 的两处（5.3 / 5.4）
+
+- 官方的**几何**权重走 `ComputeWeight`（默认三次窗），但**法线**与**命中距离**显式走
+  `ComputeExponentialWeight`（`ExpApprox(-3·|u|)` = `rcp(9u²+3u+1)`）。我们此前法线用三次窗 ⇒ 已改。
+- `w *= 1 + UnpackData1(邻居).x` —— **不夹上限**（我们此前 `min(nAge, 3)`）⇒ 已改。
+- HistoryFix **不改帧数**（没有 `gOut_InternalData` 写入）⇒ 输出 `.a` 改为透传 TA 的帧数（此前写死 1.0）。
+- `stride` 公式复核无误：`stride = (frameNum < 3) ? 1 : 0` → `/2` → `×2/2` → `×14` → `×lerp(0.25+0.75√hitDistFactor, 1, NLAS)` → `round` ⇒ base 7。✅
+
+## 六、删掉的开关
+
+`GI_NRD_WEIGHTS` / `GI_NRD_TS`：官方分支已成为唯一路径，两个开关的 20+ 处 `#if` 分支全部删除，
+GUI（`screen.VXGI` / `sliders`）与双语 `lang` 条目一并移除。
+`settings.glsl` 保留定义（值写 1）只为兼容旧配置文件。
+
+`deferred8.csh` / `deferred9.csh` / `deferred1_c.csh` 三个退役入口文件已删除；
+`properties` 里对应的 `enabled = false` 行改成一行说明。
+
+## 七、验证
+
+- 三套检查全绿（342 入口，无新增命中）；properties 纯 ASCII、lang 无 BOM。
+- 缓冲读写自动提取核对：1_a→3 / 1_b→22,26 / 4→2,14,21 / 5→25 / 6(25→3) / 7(3→25) / 10→24 + 2.rgb / 11→23。
+- Node 数值：每遍 8 个 tap **全部落在不同位置**（无 round 回中心的空转），
+  半径分配与官方同式同值。
+
+## 八、仍然与官方不同、且是刻意保留的
+
+| 项 | 官方 | 我们 | 理由 |
+|---|---|---|---|
+| prepass 样本数 | 8（g_Special8） | 32（黄金角） | 我们的输入是 1spp，多用样本换噪声；图案加密版等价 |
+| 逐帧旋转 | `NRD_FRAME`（恒开） | GUI 可控，当前关 | 实测「回流 + 逐帧旋转」同时开会静止漂移，留给主人决定 |
+| 缓冲尺寸 | `resourceSize = rectSize` | 全分辨率共享缓冲的左上 1/4 | colortex3 是帧内共享暂存（TAA 会全分辨率重写），不能改尺寸 |
+| 命中距离存放 | `.a` 贯穿全链 | 独立 colortex26（时域平滑） | 我们的 `.a` 要存帧数 |
+| 反萤火虫 | TA 内 fireflySuppressor | 未实现（GUI 有可选中值） | 2.4 面积覆盖率已压掉大部分孤立亮点 |

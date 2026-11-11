@@ -933,12 +933,12 @@ void main() {
             #ifdef SVGF_ENABLED
                 #if defined PROBE_GI_ENABLED || defined GI_ACTIVE_IRC
                     // 探针/IRC GI：平滑低频缓存，免降噪——SVGF 链不跑（此时 VOXEL_GI 关），直接读裸信号
-                    vec3 radiance = texelFetch(colortex3, texelPos >> 1, 0).rgb;
+                    vec3 radiance = texelFetch(colortex3, GICanvasCoord(texelPos), 0).rgb;
                 #else
                     vec3 radiance = UpscaleDiffuseIndirect(texelPos, viewPos.z);
                 #endif
             #else
-                vec3 radiance = texelFetch(colortex3, texelPos >> 1, 0).rgb;
+                vec3 radiance = texelFetch(colortex3, GICanvasCoord(texelPos), 0).rgb;
             #endif
             sceneOut += YCoCgToRGB(radiance);
         #endif

@@ -10,7 +10,9 @@ ivec2 GICanvasCoord(in ivec2 texelPos) {
 #ifdef VXGI_FULLRES
     return texelPos;
 #else
-    return texelPos >> 1;
+    // [2026-11-10 2.5] 奇数分辨率：画布宽 = trunc(viewWidth/2)，而 (viewWidth-1)>>1 会等于画布宽
+    // ⇒ 最右/最下那一列 texelFetch 越界（读到未定义内容 = 黑边/串色）。统一在这里夹住。
+    return min(texelPos >> 1, ivec2(halfViewSize) - 1);
 #endif
 }
 // [FIX 2026-08-06] 用简单 #if defined 控制（原复合条件 `#if defined SVGF_ENABLED &&
@@ -39,7 +41,18 @@ ivec2 GICanvasCoord(in ivec2 texelPos) {
 
 // srcTex：GI 画布（降噪开=colortex3 的滤波结果；降噪关=colortex2 的时域累积结果）。
 // 两者坐标口径一致（都按 GI 画布 texel 索引），故只换纹理即可共用同一套上采样。
-// viewDepth：中心像素的线性视深（= viewPos.z，负值），与 colortex14.z 同口径。
+// viewDepth：中心像素的线性视深（= viewPos.z，负值）。
+//
+// [2026-11-11 官方口径] NRD README（IQ VS PERFORMANCE: TRACING AND DENOISING RESOLUTION）对
+// 半/四分之一分辨率的要求是两句：
+//   1) "From NRD's point of view this is full-resolution input, so checkerboarding is disabled"
+//      —— 喂给降噪器的输入/guide 全部是**降噪分辨率**（我们是半分辨率 colortex14）✓；
+//   2) "bind downsampled guides to NRD but **retain the original full-resolution guides for the
+//      application-side resolve**"
+//      —— 应用侧上采样必须用**全分辨率** guide。
+// 旧实现两条都用了半分辨率 colortex14（深度 z + 八面体法线）：权重只在画布格点上取值，
+// 全分辨率像素之间的差异完全体现不出来 ⇒ 退化成 2×2 的软混合，GI 边缘跟着画布格点走。
+// 现在权重改用全分辨率 depthtex0 + 法线包，与中心像素自己的全分辨率视深/法线比较。
 vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in float viewDepth) {
     ivec2 halfPos = GICanvasCoord(texelPos);
 #ifdef VXGI_FULLRES
@@ -59,23 +72,29 @@ vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in float vi
 
     // 十字采样偏移（4 邻域，保持基本的方向覆盖）
     const ivec2 offsets[4] = ivec2[](ivec2(1,0), ivec2(-1,0), ivec2(0,1), ivec2(0,-1));
-    // 法线基准取画布中心 texel：colortex14 存的是几何法线，不能再拿全分辨率像素的贴图法线来比
-    vec3 centerN = OctDecodeSnorm(texelFetch(colortex14, halfPos, 0).xy);
+    // 全分辨率 guide：中心像素的几何法线（世界空间，与 tap 同源）
+    vec3 centerN = FetchGeometryNormal(clamp(texelPos, ivec2(0), ivec2(viewSize) - 1));
     float invDepth = rcp(max(-viewDepth, 0.001));
 
     for (int i = 0; i < 4; ++i) {
         ivec2 samplePos = clamp(halfPos + offsets[i], ivec2(1), texelEnd);
-
-        // 辅助纹理：rg = 八面体编码（几何）法线，b = 线性视深（负值）
-        vec3 aux = texelFetch(colortex14, samplePos, 0).rgb;
         vec3 color = texelFetch(srcTex, samplePos, 0).rgb;
 
-        // 相对深度权重：两侧都是线性视深（负值），差值再按 |视深| 归一。
-        // 旧写法 `abs(aux.z - 正的视距)` 约等于 2×视距，再乘绝对阈值 ⇒ 权重恒 ≈1、深度感知形同虚设。
-        float depthWeight = exp2(-abs(aux.z - viewDepth) * invDepth * GI_UPSAMPLE_DEPTH_STEEP);
+        // 该画布纹素对应的**屏幕**采样位置。guide 必须按这个位置取全分辨率值。
+        // 半分辨率：画布纹素 (x,y) 的信号取自屏幕 (2x, 2y)（画布相位固定 0，见 lib/utility/Offset.glsl）；
+        // 全分辨率模式（VXGI_FULLRES）下画布纹素**就是**屏幕纹素，不能再 ×2。
+#ifdef VXGI_FULLRES
+        ivec2 tapScreen = clamp(samplePos, ivec2(0), ivec2(viewSize) - 1);
+#else
+        ivec2 tapScreen = clamp(samplePos * 2, ivec2(0), ivec2(viewSize) - 1);
+#endif
+        float tapZ = ScreenToViewDepth(loadDepth0(tapScreen));
+        vec3 tapN = FetchGeometryNormal(tapScreen);
 
+        // 相对深度权重：两侧都是线性视深（负值），差值再按 |视深| 归一。
+        float depthWeight = exp2(-abs(tapZ - viewDepth) * invDepth * GI_UPSAMPLE_DEPTH_STEEP);
         // 法线权重（两侧同为几何法线，保证边缘不跨物体）
-        float ndot = saturate(dot(OctDecodeSnorm(aux.xy), centerN));
+        float ndot = saturate(dot(tapN, centerN));
         float weight = ndot * depthWeight;
 
         sum += color * weight;

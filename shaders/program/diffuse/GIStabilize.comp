@@ -10,7 +10,9 @@
       uint32_t maxStabilizedFrameNum = REBLUR_MAX_HISTORY_FRAME_NUM;   // = 63
 
   官方 `REBLUR_TemporalStabilization.hlsli` 的实际结构（本文件逐条对齐）：
-    · surface motion 重投影采样长历史（这里 4-tap 双线性）；
+    · surface motion 重投影采样长历史：**颜色用 CatRom 12 tap**（门控与官方同：足迹有效率 > 11.5/16，
+      不满足时退回双线性），**帧数与 footprintQuality 用双线性**（官方 data1/smbOcclusion 都走 ApplyBilinear）；
+    · TS **不累加帧数**：data1.x 由 TA 算好（本帧 colortex2.a），本 pass 只按 antilag 拉回后写回；
     · `smbFootprintQuality` = sqrt(上一帧 occlusion 的双线性加权) —— 新暴露像素的历史被降权；
     · `ComputeAntilag`（REBLUR_ANTILAG_MODE 2）：
           hc  = clamp(history, m1 - σ·luminanceSigmaScale, m1 + σ·luminanceSigmaScale)
@@ -19,11 +21,17 @@
     · 历史权重 = footprintQuality · accumSpeed/(1 + accumSpeed) · antilag
     · 颜色盒 = m1 ± σ·(1 + 3·framerateScale·historyWeight)（`GetTemporalAccumulationParams.y`）
     · RCRS：把本帧滤波结果的亮度夹到邻域亮度范围（抑制空间离群亮斑）
-    · 历史长度：每帧 +1（上限 maxStabilizedFrameNum），再按 antilag 拉回 historyFixFrameNum
+    · 历史长度：`lerp(min(data1.x, historyFixFrameNum), data1.x, antilag)`（**不 +1**，累积只在 TA 做）
 
   注意：RCRS 在官方属于本 pass，**不属于** Blur；EAWF 因此不再做 firefly 钳制。
-  输入：colortex3（EAWF 滤波后结果）、colortex21（短历史的几何可信度，作 footprint 质量）
+  输入：colortex25（EAWF 空间滤波的最终输出 = 官方 PostBlur 位置）、
+        colortex24（**上一帧稳定化结果的快照**，由 deferred10 在本帧写出，见下）
   输出：colortex23（rgb = 稳定化辐射，a = 已累积帧数）
+
+  [2026-11-11 竞态修复] 历史源不能是 colortex23 自己：本 pass 是 compute、不 flip，
+  采样 colortex23 与写 colorimg23 会落在同一个 main 上，是同 dispatch 读写竞态
+  （EAWF 当年因此改 ping-pong）。静止时重投影落在自身、移动时邻居可能已被别的 invocation 写过
+  ⇒ 历史值是本帧的、不是上一帧的。现在读 deferred10 写好的 colortex24 快照，写仍落到 colortex23。
 --------------------------------------------------------------------------------
 */
 
@@ -43,11 +51,12 @@ const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 //======// Uniform //=============================================================================//
 
-layout (rgba16f) restrict readonly uniform image2D colorimg3;    // EAWF 滤波后结果（只读）
+layout (rgba16f) restrict readonly uniform image2D colorimg25;   // EAWF（空间滤波）最终输出，只读
 layout (rgba16f) restrict uniform image2D colorimg23;            // 稳定化输出
 
 #include "/lib/universal/Uniform.glsl"
 #include "/lib/universal/Transform.glsl"
+#include "/lib/universal/Fetch.glsl"
 
 //======// Constants //===========================================================================//
 
@@ -55,6 +64,39 @@ layout (rgba16f) restrict uniform image2D colorimg23;            // 稳定化输
 #define STABILIZE_MAX_FRAMES 63.0
 // 官方 historyFixFrameNum = 3：antilag 触发时历史长度最低回落到这里
 #define HISTORY_FIX_FRAME_NUM 3.0
+// 官方 planeDistanceSensitivity = 0.02（与 prepass / EAWF / HistoryFix 同一口径）
+#define PLANE_DIST_SENS_TS 0.02
+
+// Catmull-Rom 核（官方 BicubicFilterNoCorners 用的就是它）：
+//   |t| < 1 : 1.5|t|³ - 2.5|t|² + 1
+//   |t| < 2 : -0.5|t|³ + 2.5|t|² - 4|t| + 2
+// t = 0 → 1，t = 1 与 t = 2 → 0，t = 1.5 → -0.0625（双三次的负瓣，用于锐化）
+float CatmullRomWeight(in float t) {
+	t = abs(t);
+	if (t < 1.0) return (1.5 * t - 2.5) * t * t + 1.0;
+	if (t < 2.0) return ((-0.5 * t + 2.5) * t - 4.0) * t + 2.0;
+	return 0.0;
+}
+
+// 单个历史 tap：颜色/帧数 + 几何可信度（0..1）
+void HistTap(in ivec2 sampleTexel, in vec3 centerViewPos, in vec3 geoNormalV,
+             in vec3 worldNormal, in float frustumSize,
+             out vec4 hist, out float tapGeo) {
+	hist = texelFetch(colortex24, sampleTexel, 0);
+	vec3 auxS = texelFetch(colortex14, sampleTexel, 0).xyz;
+	// 该 tap 的**本帧**视空间位置：画布纹素 → 屏幕纹素。
+	// 半分辨率：×2 + 棋盘相位（本链相位固定 0）；全分辨率模式画布纹素就是屏幕纹素。
+#ifdef VXGI_FULLRES
+	ivec2 tapScreen = sampleTexel;
+#else
+	ivec2 tapScreen = sampleTexel * 2 + GI_CANVAS_PHASE;
+#endif
+	vec3 tapViewPos = ScreenToViewPosRaw((vec2(tapScreen) + 0.5) * viewPixelSize, auxS.z);
+	float planeDist = abs(dot(tapViewPos - centerViewPos, geoNormalV));
+	tapGeo = saturate(1.0 - planeDist * rcp(max(PLANE_DIST_SENS_TS * frustumSize, 1e-3)));
+	tapGeo *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(auxS.xy), worldNormal)));
+}
+
 // 官方 artilagSettings：luminanceSigmaScale = 2.0 / luminanceSensitivity = 3.0
 #define ANTILAG_LUMA_SIGMA_SCALE 2.0
 #define ANTILAG_LUMA_SENSITIVITY 3.0
@@ -73,6 +115,18 @@ layout (rgba16f) restrict uniform image2D colorimg23;            // 稳定化输
 #ifndef NRD_STABILIZATION_STRENGTH
     #define NRD_STABILIZATION_STRENGTH 1.0 // [0.0 0.25 0.5 0.75 1.0 1.5 2.0] 稳定化强度
 #endif
+#ifndef GI_MOTION_RESPONSE
+    #define GI_MOTION_RESPONSE 0.0
+#endif
+
+// [2026-11-11 B2] 官方稳定化口径 A/B（默认 0 = 现状，逐位不变；1 = 7.1/7.2/7.3/7.6 对齐官方 master）：
+//   · 7.1 footprintQuality 改读本像素自己的足迹有效率（Accumulate 写双线性均值），不再 4-tap 聚合邻居 max；
+//   · 7.2 antilag 的 magic = sensitivity·(2·fpsScale)²（旧实现少乘 4）；
+//   · 7.3 颜色盒只夹亮度、tol = σ·(1+hw·6·fpsScale)（去掉自造地板）；最终混合只动亮度
+//     （官方 ChangeLuma：本帧颜色整体缩放到稳定化亮度，色差比例不变）；
+//   · 7.6 stabilizationStrength 夹在最终历史权重上（min(hw, strength)），不再缩放 accumSpeed；
+//     hw = quality·(1-ANLAS(N))·antilag（ANLAS = 4.5 的 1/(1+e·N)，不是 N/(1+N)）。
+// 代价预期：暗处蠕动可能回归（旧地板当年是为治它加的）、antilag 更灵敏（magic ×4）。
 
 //======// Function //============================================================================//
 
@@ -95,7 +149,7 @@ void main() {
 
 #if GI_DEBUG_NO_TS > 0
     // A/B 直通：跳过这个第二个时间累加器，最终 GI = EAWF 输出（不参与时域）。
-    imageStore(colorimg23, texelPos, vec4(imageLoad(colorimg3, texelPos).rgb, 1.0));
+    imageStore(colorimg23, texelPos, vec4(imageLoad(colorimg25, texelPos).rgb, 1.0));
     return;
 #endif
 
@@ -106,7 +160,7 @@ void main() {
         return;
     }
 
-    vec3 filtered = imageLoad(colorimg3, texelPos).rgb;
+    vec3 filtered = imageLoad(colorimg25, texelPos).rgb;
     if (any(isnan(filtered)) || any(isinf(filtered))) filtered = vec3(0.0);
 
     // 邻域矩 + 亮度范围：官方 TS 在 shared memory 里对**本帧滤波结果**取 BORDER 邻域，
@@ -117,7 +171,7 @@ void main() {
     float lumaMax = filtered.r;
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
-            vec3 c = imageLoad(colorimg3, clamp(texelPos + ivec2(x, y), ivec2(0), canvasEnd - 1)).rgb;
+            vec3 c = imageLoad(colorimg25, clamp(texelPos + ivec2(x, y), ivec2(0), canvasEnd - 1)).rgb;
             if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
             m1 += c;
             m2 += c * c;
@@ -155,9 +209,33 @@ void main() {
     vec2 f = prevTexelF - vec2(p0);
     valid = valid && all(greaterThanEqual(p0, ivec2(0))) && all(lessThanEqual(p0 + 1, canvasEnd - 1));
 
-    // 4-tap 双线性采样长历史；同时按官方 `smbFootprintQuality` 统计每个 tap 的几何可信度。
-    // colortex21.a = Accumulate 写下的 `maxGeometryWeight`（逐 tap 几何验证后的连续质量），
-    // 正是官方 occlusion 位掩码双线性质量的等价物：新暴露/重投影失效的 tap 会接近 0。
+    // 逐 tap 几何判据（官方 occlusion 位的等价物）：每个历史纹素都要单独验证「和本像素同一表面」。
+    // [2026-11-11 7.1 官方对齐] 官方 TS 用的是 TA 存下的**逐 tap 二值 occlusion 位**
+    // （每位的判据就是"该历史纹素与本像素重投影点是否同一表面"）。我们此前只读
+    // colortex21.a —— 那是**每个像素自己**重投影的质量，不是这 4 个历史 tap 的质量，
+    // 于是移动时跨深度的旧历史被直接混进来：实机表现正是「拖影被拉到不同深度的表面上」。
+    // 现在在这里按同一判据重算逐 tap 几何权重（官方 GetDisocclusionThreshold 的等价式）。
+    vec3 worldNormal = FetchSurfaceNormal(rt);
+    vec3 Vv = normalize(-viewPos);
+    float NoV = abs(dot(mat3(gbufferModelView) * worldNormal, Vv));
+    float frustumSize = 2.0 * max(abs(viewPos.z), 1e-3) * rcp(max(gbufferProjection[1][1], 1e-3));
+    // [2026-11-11 判据统一] 逐 tap 的"同一表面"判据改用**切平面距离**，与 prepass / EAWF /
+    // HistoryFix 完全同一口径（官方 planeDistanceSensitivity = 0.02 × frustumSize）。
+    // 为什么不用 |ΔviewZ|：掠射面上一个纹素的视深差 ≈ 与深度断层同一个量级，
+    // 纯深度差判据在掠射面必然过拒（历史权重掉到 0 ⇒ 闪），正对镜头时又过松。
+    // 平面距离对"同一平面上任意远的邻居"恒为 0，与视角无关。
+    // [2026-11-11 修复] 这里原来写 `const float PLANE_DIST_SENS_TS = 0.02;`，但同名宏已在
+    // 文件头 `#define PLANE_DIST_SENS_TS 0.02`（第 68 行）⇒ 预处理后变成
+    // `const float 0.02 = 0.02;`，Iris 的 ANTLR 解析器报
+    // "no viable alternative at input 'const float 0.02'"（deferred11 编译失败）。
+    // 宏本身已够用（上面的 HistTap 就在用），不再重复声明同名常量。
+    vec3 geoNormalV = mat3(gbufferModelView) * FetchGeometryNormal(rt);
+
+    // 历史采样。官方在同一个 pass 里对两类数据用**两种**滤波，本实现照此分工：
+    //   · 颜色（rgb）→ BicubicFilterNoCorners（CatRom 12 tap），门控不满足时退回双线性；
+    //   · 帧数（.a）与 footprintQuality → 双线性（官方 data1 与 smbOcclusion 都走 ApplyBilinear*）。
+    // 颜色值得上 CatRom 的理由：主历史回流（Recurrent）让同一份历史被逐帧反复重采样，
+    // 双线性的模糊会随帧数**累加**；CatRom 的负瓣正好抵消这部分累积模糊。
     vec4 prev = vec4(0.0);
     float qualitySum = 0.0;
     float qualityWeight = 0.0;
@@ -168,62 +246,145 @@ void main() {
             oms(f.x) * f.y,
             f.x      * f.y
         };
+
+        // ---- 4-tap 双线性：提供帧数、质量，同时是 CatRom 的兜底 ----
+        vec3 bilinColor = vec3(0.0);
+        float bilinColorW = 0.0;
+        float ageSum = 0.0;
+        float ageW = 0.0;
         for (uint i = 0u; i < 4u; ++i) {
-            ivec2 sampleTexel = p0 + offset2x2[i];
-            prev += texelFetch(colortex23, sampleTexel, 0) * bilinearWeight[i];
-            // saturate(-1) = 0：Accumulate 的兜底路径用 -1 标记"历史无效"
-            qualitySum += saturate(texelFetch(colortex21, sampleTexel, 0).a) * bilinearWeight[i];
+            vec4 histS; float tapGeo;
+            HistTap(p0 + offset2x2[i], viewPos, geoNormalV, worldNormal, frustumSize, histS, tapGeo);
+            float wS = bilinearWeight[i] * tapGeo;
+            bilinColor += histS.rgb * wS;
+            bilinColorW += wS;
+            ageSum += histS.a * wS;
+            ageW += wS;
+            qualitySum += wS;
             qualityWeight += bilinearWeight[i];
         }
+        float footprintRatio = qualityWeight > 1e-4 ? saturate(qualitySum * rcp(qualityWeight)) : 0.0;
+
+        // 官方 TA 的 CatRom 门控（TA:295）：16 个 occlusion 位里 > 11.5 个有效才启用
+        // （`dot(smbOcclusion0+1+2+3, 1.0) > 11.5`）。我们的 4 个 tap 各代表足迹的 4 个位，
+        // 用同一个比例作为阈值。
+        bool allowCatRom = footprintRatio > (11.5 / 16.0);
+
+        vec3 histColor = bilinColor;
+        float histColorW = bilinColorW;
+        if (allowCatRom) {
+            // 官方 BicubicFilterNoCorners：4×4 邻域、去掉 4 个角 = 12 tap。
+            float wx[4] = float[4](CatmullRomWeight(1.0 + f.x), CatmullRomWeight(f.x),
+                                   CatmullRomWeight(1.0 - f.x), CatmullRomWeight(2.0 - f.x));
+            float wy[4] = float[4](CatmullRomWeight(1.0 + f.y), CatmullRomWeight(f.y),
+                                   CatmullRomWeight(1.0 - f.y), CatmullRomWeight(2.0 - f.y));
+            vec3 crColor = vec3(0.0);
+            float crW = 0.0;
+            for (int j = 0; j < 4; ++j) {
+                for (int i = 0; i < 4; ++i) {
+                    if ((i == 0 || i == 3) && (j == 0 || j == 3)) continue;   // NoCorners
+                    float w = wx[i] * wy[j];
+                    if (w == 0.0) continue;
+                    ivec2 t = clamp(p0 + ivec2(i - 1, j - 1), ivec2(1), canvasEnd - 2);
+                    vec4 histS; float tapGeo;
+                    HistTap(t, viewPos, geoNormalV, worldNormal, frustumSize, histS, tapGeo);
+                    // 负瓣也乘 tapGeo：跨表面的负权重会被同一条几何判据压到 0，
+                    // 否则它会把另一层表面的颜色「减」进来，在边缘形成过冲。
+                    float wg = w * tapGeo;
+                    crColor += histS.rgb * wg;
+                    crW += wg;
+                }
+            }
+            // 权重和接近 0（邻域几乎全被几何判据拒）时退回双线性，避免除爆。
+            if (abs(crW) > 1e-3) {
+                histColor = crColor;
+                histColorW = crW;
+            }
+        }
+
+        prev.rgb = histColorW > 1e-4 ? histColor * rcp(histColorW) : vec3(0.0);
+        prev.a   = ageW > 1e-4 ? ageSum * rcp(ageW) : 0.0;
     }
+    // footprintQuality 与官方一致：只由双线性的几何有效率决定，不受 CatRom 负瓣影响。
     float quality = qualityWeight > 1e-4 ? sqrt(saturate(qualitySum * rcp(qualityWeight))) : 0.0;
 
-    float bad = texelFetch(colortex14, texelPos, 0).a;
-    float prevAge = prev.a;
-    // 首次使用/NaN/越界/主历史失效 → 重置
-    if (!(prevAge >= 0.0) || prevAge > STABILIZE_MAX_FRAMES) prevAge = 0.0;
-    if (!valid || bad > 0.5 || quality < 0.25) prevAge = 0.0;
-    if (any(isnan(prev.rgb)) || any(isinf(prev.rgb))) prevAge = 0.0;
+    // [2026-11-11 官方 sizeQuality] 官方 TA 在 footprintQuality 上再乘一项视角补偿（TA:322-329）：
+    //   NoVprev/NoV 的平方，再 lerp(0.1, 1, saturate()) —— **只罚拉伸、不罚收缩**。
+    // 斜着看墙/地面（视角变化把历史足迹拉长）时，历史权重会偏大 ⇒ 拖影；这一项把它压下去。
+    {
+        vec3 _NprevView = mat3(gbufferPreviousModelView) * worldNormal;
+        float NoVprev = abs(dot(_NprevView, normalize(-prevViewPos)));
+        float _sq = (NoVprev + 1e-3) * rcp(NoV + 1e-3);
+        _sq *= _sq;
+        quality *= mix(0.1, 1.0, saturate(_sq));
+    }
 
-    // 上限不再跟随 GI_ACCUM_TIME：那一级累积已经在 Accumulate 里做过，这里只做稳定化。
-    float cap = min(max(GI_STABILIZE_FRAMES, 2.0), STABILIZE_MAX_FRAMES);
+    float bad = texelFetch(colortex14, texelPos, 0).a;
+    // [2026-11-11 官方结构] 官方 TS **不自己累加帧数**：`data1.x` 由 TA 算好（本帧 colortex2.a），
+    // TS 只拿它算权重、并在 antilag 触发时拉回 historyFixFrameNum 后写回 data1。
+    // 我们此前在这里做 `taAge + 1` —— 那是**第二级时域累积**（官方只有 TA 一级），
+    // 拖影因此多叠了一层，是"拖影一大条"的结构性来源之一。现在直接读 TA 的帧数。
+    float taAge = texelFetch(colortex2, texelPos, 0).a;
+    // 首次使用/NaN/越界/主历史失效 → 重置
+    if (!(taAge >= 0.0) || taAge > STABILIZE_MAX_FRAMES) taAge = 0.0;
+    // [7.1 官方] 没有 `quality < 0.25` 的硬重置：部分遮挡由 hw（足迹质量直接乘进权重）
+    // 自然降权，不整段丢弃历史。!valid / 去遮挡标记的重置保留（后者等价官方 TA 的 data1.x 置 1）。
+    if (!valid || bad > 0.5) taAge = 0.0;
+    if (any(isnan(prev.rgb)) || any(isinf(prev.rgb))) taAge = 0.0;
+
+    // 官方 `gMaxAccumulatedFrameNum`：TS 的权重公式用的是 **TA 的累积上限**（与 Accumulate/EAWF
+    // 同一个公式），不是本级自造的帧数上限。
+    float accumCap = clamp(GI_ACCUM_TIME / (max(frameTime, 1e-4) * max(GI_EFFECTIVE_SPP, 1.0)),
+                           8.0, SSILVB_MAX_ACCUM_FRAMES);
 
     // 官方 framerateScale = clamp(fps / 60, 0.5, 2.0)：低帧率时时间步更大，antilag 更敏感
     float framerateScale = clamp(rcp(60.0 * max(frameTime, 1e-4)), 0.5, 2.0);
-    float magic = ANTILAG_LUMA_SENSITIVITY * framerateScale * framerateScale;
+    // [7.2] 官方 magic = luminanceSensitivity·(2·fpsScale)²（ComputeAntilag，REBLUR_Common:241）。
+    float magic = ANTILAG_LUMA_SENSITIVITY * (2.0 * framerateScale) * (2.0 * framerateScale);
 
-    // 官方 stabilizationStrength 直接乘在 accumSpeed 上（等价于"历史有效长度"缩放）
-    float stabAge = max(prevAge * NRD_STABILIZATION_STRENGTH, 0.0);
-
-    // 官方 ComputeAntilag（mode 2）：历史亮度偏离「邻域均值 ± σ·luminanceSigmaScale」多少
+    // [7.6] 官方 stabilizationStrength 只夹最终混合权重（min(hw, strength)），不进 accumSpeed。
+    float accumSpeed = quality * taAge;
     float antilag = 1.0;
-    if (stabAge > 0.0) {
+    if (accumSpeed > 0.0) {
         float sL = max(sigma.r, 1e-5) * ANTILAG_LUMA_SIGMA_SCALE;
-        float hL = prev.r;
+        float hL = max(prev.r, 0.0);                                   // 官方先夹负值
         float hc = clamp(hL, mu.r - sL, mu.r + sL);
         float dL = abs(hL - hc) * rcp(max(hL, hc) + 1e-5);
-        // 官方 accumSpeed = footprintQuality × data1.x
-        float accumSpeed = stabAge * quality;
         antilag = rcp(1.0 + dL * accumSpeed * rcp(max(magic, 1e-3)));
     }
 
-    // 历史夹到当前邻域（官方 Color::Clamp；σ 乘数随历史权重增长 ⇒ 越稳定越收紧）
-    float historyWeight = quality * (stabAge * rcp(1.0 + max(stabAge, 1e-3)));
-    historyWeight *= antilag;
-    historyWeight = saturate(historyWeight);
+    // 官方顺序：antilag 先把有效长度拉回 historyFixFrameNum，再用它算历史权重。
+    float _ageEff = mix(min(taAge, HISTORY_FIX_FRAME_NUM), taAge, antilag);
+    // [7.6] 官方 hw = quality·(1 - GetAdvancedNonLinearAccumSpeed(N))·antilag。
+    // ANLAS = 1/(1+e·N)，e = s·lerp(b,1,saturate(N/(1+p·maxAccum)))，s=1/b=0.2/p=0.8（4.5 的常数，
+    // 官方 maxAccum 用 TA 的 30，这里用本级的 cap——我们的第二级历史封顶在 cap，语义对应）。
+    float _fN = saturate(_ageEff * rcp(max(0.8 * accumCap, 1.0)));
+    float _k = mix(0.2, 1.0, _fN);
+    float _nlas = rcp(1.0 + _k * max(_ageEff, 0.0));
+    float historyWeight = saturate(quality * (1.0 - _nlas) * antilag);
 
-    // 相对地板 mu*0.1：弱光下 sigma/μ 比值很高，纯 sigma 容差会让长历史每帧都被拉向
-    // 本帧噪声（实测：暗处静止也在持续蠕动，且越暗越明显）。给一个 10% 的亮度相对容差，
-    // 噪声幅度内的偏差就不再触发 clamp，只有真实变化（火把/开灯）才会拉动历史。
-    vec3 tol = sigma * (1.0 + 3.0 * framerateScale * historyWeight) + mu * 0.1 + vec3(0.01);
-    vec3 hist = clamp(prev.rgb, mu - tol, mu + tol);
+    // [运动自适应] 第二级历史同样只在移动时让路：位移 > 2 px 后按位移把历史权重压到 0，
+    // 避免右段（最终 GI）再叠一层拖影。静止时 boost = 0 ⇒ 逐位不变。
+    float _motionPx = length((prevCoord - screenUv) * viewSize);
+    historyWeight *= 1.0 - smoothstep(2.0, 12.0, _motionPx) * GI_MOTION_RESPONSE;
 
-    float age = (prevAge <= 0.0) ? 1.0 : min(prevAge + 1.0, cap);
-    vec3 stab = (prevAge <= 0.0) ? filtered : mix(filtered, hist, historyWeight);
+    // [7.3] 官方只处理亮度：tol = σ·(1 + hw·3·2·fpsScale)（无自造地板），历史亮度夹到 μ±tol，
+    // 再 lerp(本帧亮度, 夹后历史亮度, min(hw, strength))；输出 = 本帧颜色整体缩放到该亮度
+    //（YCoCg 的官方 ChangeLuma：xyz *= newLuma/max(oldLuma, eps)，色差比例不变、来自本帧）。
+    // 旧实现的 μ·0.1 + 0.01 地板是为治暗处蠕动加的（MEMO），官方没有 ⇒ A/B 时重点观察暗处。
+    float _tolL = sigma.r * (1.0 + historyWeight * 3.0 * 2.0 * framerateScale);
+    float _histL = clamp(max(prev.r, 0.0), mu.r - _tolL, mu.r + _tolL);
+    // 官方 gStabilizationStrength = maxStabilizedFrameNum / (1 + maxStabilizedFrameNum)
+    //（Source/Reblur.cpp:303，不是 maxStabilizedFrameNum 本身！63 ⇒ 0.984）。
+    // 它只夹最终混合权重（min(hw, strength)），不进 accumSpeed。
+    float _stabStrength = (GI_STABILIZE_FRAMES * rcp(1.0 + GI_STABILIZE_FRAMES)) * NRD_STABILIZATION_STRENGTH;
+    float _hwMix = min(historyWeight, _stabStrength);
+    float _lumaStab = mix(filtered.r, _histL, _hwMix);
+    // taAge = 0 时 hw = 0 ⇒ _lumaStab = filtered.r ⇒ 缩放恒 1，与旧路径同值。
+    vec3 stab = filtered * (_lumaStab * rcp(max(filtered.r, 1e-6)));
 
-    // 官方：data1.x += 1 之后按 antilag 拉回（变化大 ⇒ 历史长度回落到 historyFixFrameNum）
-    float ageOut = age;
-    if (prevAge > 0.0) ageOut = mix(min(age, HISTORY_FIX_FRAME_NUM), age, antilag);
+    // 官方：data1.x = lerp( min(data1.x, historyFixFrameNum), data1.x, antilag )，**不 +1**。
+    float ageOut = mix(min(taAge, HISTORY_FIX_FRAME_NUM), taAge, antilag);
 
     imageStore(colorimg23, texelPos, vec4(stab, ageOut));
 

@@ -852,11 +852,25 @@ option.GI_EFFECTIVE_SPP.comment=上游每帧实际贡献的等效样本数（1=�
 option.GI_DISOC_THRESHOLD=历史去遮挡阈值
 option.GI_DISOC_THRESHOLD.comment=官方 disocclusionThreshold（0.01）：两个样本的相对深度差超过「阈值 × 斜率放宽」就判为不同表面（历史被拒）。调小=更严（拖影更少、但斜面更难累积）
 option.GI_DEBUG_VIEW=GI 诊断视图
-option.GI_DEBUG_VIEW.comment=把 GI 内部量当颜色画出来（1=历史长度+不可靠标记，2=方差，3=滤波改动量，4=左累积右滤波，5=历史长度分档）。用它定位闪到底来自历史、滤波还是采样
+option.GI_DEBUG_VIEW.comment=把 GI 内部量当颜色画出来，用于定位闪来自历史、滤波还是采样。1=历史长度(红)+不可靠(绿)+年轻度(蓝)；2=方差σ灰阶；3=孤立亮点(红=有火点/绿=正常)；4=三段对比(左预滤波/中累积/右最终)；5=三通道(红=历史长度/绿=几何可信度/蓝=不可靠)：黄=老且可信、绿=新但可信(正常)、蓝青=走兜底；6=几何可信度灰阶(红=没用上历史)。语义以着色器实现为准
 option.GI_FAST_CLAMP_SIGMA=短历史裁剪 sigma 倍数
 option.GI_FAST_CLAMP_SIGMA.comment=官方 fastHistoryClampingSigmaScale（默认 2.0）：长历史被夹到短历史的 mean±kσ。越大越宽松（拖影多、细节保得多）；脏信号可试 1.5
+option.GI_FIREFLY_CLAMP=预滤波离群钳制
+option.GI_FIREFLY_CLAMP.comment=自造项（官方无此设置，官方的 firefly 抑制在时域累积里）。0=关闭（默认）；调大后把参与预滤波空间重用的样本亮度压到中心像素亮度×本值。参考量是中心像素，暗处会连带压暗，建议只在亮场做 A/B
+option.GI_DEBUG_NO_HISTORY_FIX=历史修复 A/B
+option.GI_DEBUG_NO_HISTORY_FIX.comment=1=直通（deferred1_c 不修复历史，只原样搬运），用于判断拖影/斑点是否来自 HistoryFix。正常保持 0
+option.GI_DEBUG_NO_TS=稳定化 A/B
+option.GI_DEBUG_NO_TS.comment=1=跳过后一级时间累积（GIStabilize），最终 GI 直接取空间滤波输出。用于判断拖影是否由稳定化叠加造成。正常保持 0
+option.GI_STABILIZE_FRAMES=稳定化历史上限（帧）
+option.GI_STABILIZE_FRAMES.comment=官方 63，本包默认 8（拖影更短）。调小→运动拖影变短、静止平滑略降；调大→更稳但拖影更长
+option.NRD_STABILIZATION_STRENGTH=稳定化强度
+option.NRD_STABILIZATION_STRENGTH.comment=官方 stabilizationStrength，乘在累积速度上（同时影响 antilag 与颜色盒）。0=等价关闭稳定化；调小更跟手，调大更稳
+option.GI_MOTION_RESPONSE=运动自适应历史
+option.GI_MOTION_RESPONSE.comment=重投影位移超过 2 屏幕像素时，按位移抬高本帧权重、压低稳定化历史权重 ⇒ 移动拖影从几十帧压到约 2 帧。静止时逐位不变（含 TAA 亚像素抖动）。默认 1.0；0=关（回到纯时域累积），0.5=半强度。代价：移动时噪点略升
+option.GI_RECURRENT_HISTORY=主历史回流（Recurrent）
+option.GI_RECURRENT_HISTORY.comment=官方 REBLUR 的核心机制：主历史 = 上一帧**空间滤波后**的结果，同一个核被逐帧反复迭代 ⇒ 等效滤噪力度随历史长度增长（Ray Tracing Gems II ch.49；NRD 里只有 PostBlur 的输出标为跨帧持久，而时域累积读的正是它）。1=官方口径（默认）：更干净、也更糊；0=退回 SVGF 式（历史只存原始累积）：更锐但残噪多。**嫌整体发糊时先关这个**
 option.GI_KERNEL_ROT_PER_FRAME=滤波核逐帧旋转
-option.GI_KERNEL_ROT_PER_FRAME.comment=默认的随机核方向是「每像素固定」（静止时最干净），但它钉在屏幕上：相机一转，世界内容在这套图案下滑动 ⇒ GI 显得乱、不光滑。打开后每帧换一个旋转角，由时域累积与 TAA 平均掉（代价：单帧略多噪声）
+option.GI_KERNEL_ROT_PER_FRAME.comment=随机核方向是否每帧换一个角度。关（默认）：图案钉在屏幕上——静止时误差被固化成不动的斑块，但画面稳定、不漂移。开：单帧误差变成时域白噪声，理论上有累积可以平均掉，**但实测与"主历史回流"叠加时会让静止画面持续漂移、拖影变长**；两个都开请谨慎
 option.PTGI_MEDIAN_RADIUS=中值半径
 option.PTGI_MEDIAN_RADIUS.comment=1=3×3，2=5×5。越大去噪越强、细节越糊（去孤点亮噪/firefly）
 option.PTGI_EDGE_STRENGTH=边缘保持强度
@@ -865,8 +879,8 @@ option.PTGI_BLEND_STRENGTH=中值混合强度
 option.PTGI_BLEND_STRENGTH.comment=中值结果与原始混合比例(1=纯中值，0=原始)。调小保留细节但噪声变多
 option.VOXEL_MOON_STRENGTH=月光反弹强度
 option.VOXEL_MOON_STRENGTH.comment=夜晚月光在体素 GI 里的方向化反弹强度（原版 moonlightMult 太小导致夜晚无间接光）。朝月面亮、背月暗，配合 AO 出阴影。0=关闭月光反弹；值越大月光 GI 越明显
-option.NRD_RADIUS_PX=滤波半径（屏幕像素）
-option.NRD_RADIUS_PX.comment=EAWF 空间滤波的基础半径，单位=屏幕像素（指第 0 级最小步长）；四级 a-trous 每级翻倍，总覆盖≈15×该值。默认 1.0 ≈ 总覆盖 15 屏幕像素。调大更干净但更糊，调小保细节但残噪多：整体发糊→0.75；残噪明显→1.5~2.0。旧版「米」口径在常规视距下恒饱和，已废弃
+option.NRD_RADIUS_PX=滤波半径（×10 画布纹素）
+option.NRD_RADIUS_PX.comment=EAWF 空间滤波的最大半径，值×10 = 画布纹素（3.0 = 官方 maxBlurRadius 30）。每级步长按 1:2:4:8 分摊、每级下限 1 画布纹素。调大更干净但更糊，调小保细节但残噪多：发糊→1.5；残噪→4.0
 option.NRD_RELIABILITY=可靠性收敛速率
 option.NRD_RELIABILITY.comment=指数可靠性历史因子（1-exp(-N*速率)，N=累积帧数）。可靠性越高边缘保持越强；帧数少（刚出现/刚重投影）时放宽滤波快速收敛。0=关闭（用回原 SVGF 线性历史因子）；0.1~0.3 慢收敛、前期模糊重；0.5=均衡（推荐）；1~2 快收敛、前期即强保边（可能略欠降噪，可配降滤波世界半径）。静态/远景嫌糊→调大；转动/平移噪点拖尾重→调小
 option.NRD_DISOCCLUSION=去遮挡修复

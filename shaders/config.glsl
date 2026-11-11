@@ -103,7 +103,7 @@
 	const bool 	colortex21Clear			= false;
 	const bool 	colortex22Clear			= true;
 	const bool 	colortex23Clear			= false;   // 时域缓冲，必须保留
-	const bool 	colortex24Clear			= true;   // 每帧重写
+	const bool 	colortex24Clear			= false;   // 2026-11-11 起：TS 历史快照，必须跨帧保留
 	const bool 	colortex25Clear			= false;  // EAWF 每遍全量覆盖，不需要清
 	const bool 	colortex26Clear			= false;  // 时域缓冲，必须保留
 

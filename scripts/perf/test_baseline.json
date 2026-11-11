@@ -1,0 +1,19 @@
+{
+  "name": "baseline_forest_noon",
+  "frame": 1189,
+  "total_us": 12680.4,
+  "passes": [
+    { "name": "Shadow", "us": 2210.3 },
+    { "name": "DeferredLight", "us": 2300.5 },
+    { "name": "Translucent", "us": 980.2 },
+    { "name": "Composite", "us": 890.1 },
+    { "name": "Bloom", "us": 460.7 },
+    { "name": "DOF", "us": 610.0 },
+    { "name": "MotionBlur", "us": 300.4 },
+    { "name": "TAA", "us": 240.1 },
+    { "name": "Final", "us": 150.3 },
+    { "name": "VolumeFog", "us": 1450.6 },
+    { "name": "SkyView", "us": 320.8 },
+    { "name": "TLUT", "us": 380.2 }
+  ]
+}

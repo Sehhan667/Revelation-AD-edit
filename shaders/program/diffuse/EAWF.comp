@@ -12,10 +12,43 @@
 
 
 
-	Pass: ReBLUR spatial filter（官方 REBLUR_Blur）
+	Pass: REBLUR spatial filter —— 官方 Blur(第 0 遍) + PostBlur(第 1 遍)
 	Reference:
-	    https://github.com/NVIDIA-RTX/NRD  (Shaders/Include/REBLUR_Common_DiffuseSpatialFilter.hlsli)
-	    https://research.nvidia.com/sites/default/files/pubs/2017-07_Spatiotemporal-Variance-Guided-Filtering://svgf_preprint.pdf
+	    https://github.com/NVIDIA-RTX/NRD
+	        Shaders/REBLUR_Blur.cs.hlsl
+	        Shaders/REBLUR_PostBlur.cs.hlsl
+	        Shaders/REBLUR_Common_SpatialFilter.hlsli
+	        Shaders/REBLUR_Config.hlsli   (radiusScale / fractionScale 常数)
+	        Shaders/Common.hlsli          (g_Special8 / 权重函数)
+	    Zhdan, D. "ReBLUR: A Hierarchical Recurrent Denoiser",
+	        Ray Tracing Gems II, ch.49, 2021
+
+--------------------------------------------------------------------------------
+
+	官方管线里 Blur 与 PostBlur 是**两个独立 dispatch**，但共用同一份
+	`REBLUR_Common_SpatialFilter.hlsli`，差别只在三个宏：
+
+	    参数              BLUR        POST_BLUR
+	    radiusScale       1.0         2.0        ← 半径翻倍（不是"固定 3×3"）
+	    fractionScale     1.0         0.5        ← 法线判据收紧、minHitDistWeight 减半
+	    rotator           gRotator    gRotatorPost
+
+	两者 areaFactor 相同 ⇒ **PostBlur 半径 = Blur × 2**。所以官方的总覆盖
+	= Blur(1×) + PostBlur(2×) = 3×，与旧实现的 4 级 a-trous（1:2:4:8 分摊、和 15）
+	在**总覆盖上等价**，但只需 16 个 tap（旧实现 32 个）。
+
+	本链对应（两个 dispatch，slot 已按官方重排）：
+	    deferred6 = Blur     ：colortex25（HistoryFix 输出）→ colortex3
+	    deferred7 = PostBlur ：colortex3 → colortex25（最终结果，TS 与 HistoryStore 都读它）
+	    deferred8/9 已释放（旧 4 级 a-trous 的两个槽位，文件已删除）
+
+	旧实现的偏差（本轮全部改掉）：
+	  · 半径分摊成 4 级 a-trous：结构不同，且 PostBlur 被当成「3×3、权重 0.25 的小环」
+	    —— 官方的 PostBlur 是**半径 2 倍的同款 8-tap**，不是 3×3；
+	  · 采样图案用黄金角 Vogel：官方是 `g_Special8`（4 轴点 + 4 对角点）；
+	  · 采样是各向同性圆盘：官方按 `skew = lerp(1-|Nv.xy|, 1, NoV)` 做**各向异性**；
+	  · 高斯用 exp(-2r²)：官方 `GetGaussianWeight(r) = exp(-0.66r²)` 且 r 取 `g_Special8.z`
+	    （轴点 1.0、对角点 0.5）。
 
 --------------------------------------------------------------------------------
 
@@ -36,28 +69,42 @@ const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 //======// Image //===============================================================================//
 
-// a-trous ping-pong：compute pass 不会自动 flip（Iris 只在有片元的程序后 flip），
-// 同一张 image 上 imageLoad 邻居再 imageStore = 同一 dispatch 内的读写竞态。
-// 四个 pass 在 colortex3 与 colortex25 之间交替读写：
-//   pass0: 2 -> 25 / pass1: 25 -> 3 / pass2: 3 -> 25 / pass3: 25 -> 3（最终结果回到 colortex3）。
+// compute pass 不会自动 flip（Iris 只在有片元的程序后 flip），同一张 image 上
+// imageLoad 邻居再 imageStore 就是同一 dispatch 内的读写竞态 ⇒ 两遍必须走乒乓。
 //
-// pass0 的源必须是 **colortex2（Accumulate 的累积结果）**，不能是 colortex3：
-// 官方 REBLUR 的顺序是 PrePass -> Accumulate -> Blur，空间滤波作用于**已累积**信号。
-// colortex3 只是 deferred1_a 的 1spp 原始追踪输出；直接拿它当滤波源，prepass 的
-// 30 纹素稠密化与时域累积就全部被绕过（表现为满屏"被抹过但仍在跳"的噪点）。
-layout (rgba16f) restrict readonly uniform image2D colorimg2;   // Accumulate 累积结果（仅 pass0 读）
+// [2026-11-11 官方拓扑] PREPASS → TA → HISTORY_FIX → BLUR → POST_BLUR → TS：
+//   第 0 遍（deferred6）= Blur     ：colortex25（HistoryFix 输出）→ colortex3
+//   第 1 遍（deferred7）= PostBlur ：colortex3 → colortex25
+// 两遍之后最终结果落在 **colortex25**（TS 与 GIHistoryStore 都读它）。
 layout (rgba16f) restrict uniform image2D colorimg3;
+layout (rgba16f) restrict readonly uniform image2D colorimg2;   // SVGF 路径的第 0 遍源（TA 输出）
 layout (rgba16f) restrict uniform image2D colorimg25;
 
+// 两遍的源/目标按**降噪模式**分派，保证「最终结果落在该模式的下游读者缓冲里」：
+//   NRD 路径：TS（deferred11）与 GIHistoryStore（deferred10）都读 colortex25 ⇒ 最后一遍必须落 25
+//   SVGF 路径：DeferredLight 的 SSILVB 分支读 colortex3 ⇒ 最后一遍必须落 3
 #if FILTER_PASS_INDEX == 0
-    #define EAWF_SRC colorimg2
-    #define EAWF_DST colorimg25
-#elif (FILTER_PASS_INDEX % 2) == 0
-    #define EAWF_SRC colorimg3
-    #define EAWF_DST colorimg25
+	#ifdef VOXEL_GI_NRD_ACTIVE
+		#define EAWF_SRC colorimg25     // HistoryFix 输出
+		#define EAWF_DST colorimg3
+	#else
+		#define EAWF_SRC colorimg2      // TA 累积结果（SVGF 路径没有 HistoryFix）
+		#define EAWF_DST colorimg25
+	#endif
+	// 官方 REBLUR_BLUR_RADIUS_SCALE / REBLUR_BLUR_FRACTION_SCALE
+	#define SPATIAL_RADIUS_SCALE 1.0
+	#define SPATIAL_FRACTION_SCALE 1.0
 #else
-    #define EAWF_SRC colorimg25
-    #define EAWF_DST colorimg3
+	#ifdef VOXEL_GI_NRD_ACTIVE
+		#define EAWF_SRC colorimg3
+		#define EAWF_DST colorimg25
+	#else
+		#define EAWF_SRC colorimg25
+		#define EAWF_DST colorimg3
+	#endif
+	// 官方 REBLUR_POST_BLUR_RADIUS_SCALE / REBLUR_POST_BLUR_FRACTION_SCALE
+	#define SPATIAL_RADIUS_SCALE 2.0
+	#define SPATIAL_FRACTION_SCALE 0.5
 #endif
 
 //======// Uniform //=============================================================================//
@@ -71,27 +118,36 @@ layout (rgba16f) restrict uniform image2D colorimg25;
 #include "/lib/universal/Transform.glsl"
 
 #ifndef GI_ROT_PER_FRAME
-    #define GI_ROT_PER_FRAME 0.0
+	#define GI_ROT_PER_FRAME 0.0
 #endif
 
-//======// NRD 风格滤波参数 //==================================================================//
-// 滤波半径：单位是**屏幕像素**，指第 0 级（最小步长）的半径，每级 a-trous 翻倍。
-// 四个 pass 的总覆盖 ≈ (1+2+4+8) × 该值 = 15 × 该值（屏幕像素）。
-//
-// [2026-11-10 口径修正] 旧写法是
-//     clamp( NRD_RADIUS(米) · pxPerWorldAtZ1 / viewDist, 0.5, 1.5 )
-// 在 1080p 下 `pxPerWorldAtZ1` 约 800，任何 1 米以外的表面都会把乘积顶到 1.5 ⇒
-// 滑条实际上只有"两档"，而且单位是**画布纹素**（1.5 画布 = 3 屏幕像素）。
-// 更糟的是同级的各向异性因子 `oms(|n.xy| · oms(NdotV))` 在正对镜头（n≈(0,0,-1)）时
-// 恒为 0 ⇒ 半径被 `max(..,1)` 钉死在 1 画布纹素，四遍滤波退化成同一个 3×3，滑条彻底失效。
-// 现在改成「屏幕像素 + 每级翻倍 + 各向同性 Vogel 盘」：值即倍率，范围可量化。
-// 选项在 settings.glsl（NRD_RADIUS_PX，随 settings 一起进来）。
+// 官方 hitDist 归一化参数（ReblurHitDistanceParameters）：f = A + |viewZ|·B（diffuse，roughness=1）。
+// 与 GIPrepass 同口径；这里用来把 colortex26 的 normHit 解码回米值。
+#define REBLUR_HITDIST_A 3.0
+#define REBLUR_HITDIST_B 0.1
 
-// 去遮挡修复（colortex14.a = 1 = 不可靠）：不可靠像素放大空间步长，从周围可靠邻居补填。
-// 0 = 关闭；1.0 = 均衡；越大越强。
-#ifndef NRD_DISOCCLUSION
-    #define NRD_DISOCCLUSION 0.5 // [0.0 0.5 1.0 2.0 4.0] 去遮挡修复强度
-#endif
+// 官方空间滤波参数（Common.hlsli / REBLUR_Config.hlsli / NRDSettings.h 默认值）
+#define PLANE_DIST_SENS 0.02       // planeDistanceSensitivity
+#define LOBE_ANGLE_FRACTION 0.15   // lobeAngleFraction
+#define MIN_HITDIST_WEIGHT 0.1     // minHitDistanceWeight
+#define NORMAL_ENCODING_ERROR 0.0059  // NRD_NORMAL_ENCODING_ERROR（≈1.5/255）
+
+// 官方 g_Special8（Common.hlsli:207）：4 个轴点（半径 1.0）+ 4 个对角点（半径 0.25·√2 = 0.5）。
+// xy = 单位盘内的方向×半径分数，z = 高斯半径分数（GetGaussianWeight 的输入）。
+// 注释原文引用了 https://www.desmos.com/calculator/abaqyvswem
+const vec2 SPATIAL_DIR[8] = vec2[8](
+	vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(0.0, -1.0),
+	vec2(-0.35355339, 0.35355339), vec2(0.35355339, 0.35355339),
+	vec2(0.35355339, -0.35355339), vec2(-0.35355339, -0.35355339)
+);
+const float SPATIAL_GAUSS_R[8] = float[8](1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5);
+
+// 官方 ComputeNonExponentialWeight = Math::SmoothStep(1, 0, |u|) ⇒ t = saturate(1-u)，再 3t²-2t³。
+// t >= 1 全拒（u >= 1 时权重 0），t = 0.5 时 0.5。
+float NonExponentialWeight(in float u) {
+	float t = saturate(1.0 - abs(u));
+	return t * t * (3.0 - 2.0 * t);
+}
 
 //======// Main //================================================================================//
 void main() {
@@ -103,6 +159,10 @@ void main() {
 #else
 	ivec2 canvasEnd = ivec2(halfViewSize);
 #endif
+
+	// dispatch 按 ceil(画布/8) 组发出，最后一组会溢出画布边界（奇数分辨率必溢出）：
+	// 不早退会 imageStore 越界、并按越界的天空判定写脏数据。
+	if (any(greaterThanEqual(texelPos, canvasEnd))) return;
 
 	// 关降噪（仅光追路径）：透传，保持棋盘信号；SSILVB 不受影响（照常滤波）。
 	#ifdef GI_ACTIVE_VXGI
@@ -130,18 +190,12 @@ void main() {
 	}
 
 	f16vec4 normalDepthData = f16vec4(texelFetch(colortex14, texelPos, 0));
-	float disoccF = float(normalDepthData.a) * NRD_DISOCCLUSION;
-	float stepBoost = 1.0 + disoccF;
 
 	f16vec4 centerSample = f16vec4(imageLoad(EAWF_SRC, texelPos));
 	if (any(isnan(centerSample.rgb)) || any(isinf(centerSample.rgb))) centerSample.rgb = f16vec3(0.0);
 
-	// 时域累积帧数少（刚出现/刚重投影）→ 该处噪声高，放大步长让空间滤波更快收敛。
+	// 时域累积帧数（colortex2.a），驱动 nonLinearAccumSpeed。
 	float frameIndex = texelFetch(colortex2, texelPos, 0).a;
-	{
-		float _under = clamp(10.0 - frameIndex, 0.0, 10.0) * 0.1; // 0..1，少于 ~10 帧
-		stepBoost *= 1.0 + _under * 0.6;
-	}
 
 	// 画布坐标 → 视空间。「texelToUv」是全分辨率像素尺寸，画布上直接用会压 UV。
 	vec2 centerCanvasUv = (vec2(texelPos) + 0.5) / vec2(canvasEnd);
@@ -150,159 +204,156 @@ void main() {
 #else
 	ivec2 centerScreenTexel = texelPos * 2 + GI_CANVAS_PHASE;
 #endif
+
+	// 两套法线：colortex14.xy 是**世界空间**表面法线（含法线贴图）；
+	// geoNormal 是本帧**视空间**几何法线（用于切平面距离，避免凹凸贴图造成整片拒绝）。
+	vec3 centerNDirW = OctDecodeSnorm(normalDepthData.xy);
+	vec3 Nv = mat3(gbufferModelView) * centerNDirW;
 	vec3 geoNormal = mat3(gbufferModelView) * FetchGeometryNormal(centerScreenTexel);
 
-	// a-trous 步长：第 0 级 1×、每级 ×2（画布纹素）。基础半径由屏幕像素换算（半分辨率画布 ÷2）。
-	vec2 offsetScaleBase = vec2(NRD_RADIUS_PX * 0.5 * ldexp(1.0, FILTER_PASS_INDEX));
-
 	float viewDist = max(-float(normalDepthData.z), 0.25);
+	float frustumSize = 2.0 * viewDist * rcp(max(gbufferProjection[1][1], 1e-3));
 
-	// 官方 Blur：`blurRadius *= sqrt( areaFactor )`，areaFactor = hitDistFactor × nonLinearAccumSpeed。
-	//   nonLinearAccumSpeed = 1 / (1 + N²/maxAccum)：**新像素半径大、稳定像素趋于 0**。
-	//   稳定像素已被时域抹平，再叠大核只会把每像素不同方向的滤波图案重新采样 ⇒ 静止"扭动斑块"。
-	// hitDistFactor 见下方：使用 colortex26 的**时域平滑**命中距离（EMA），而不是 1spp 即时值。
-	float fade = saturate(frameIndex * rcp(max(SSILVB_MAX_ACCUM_FRAMES, 1.0)));   // N / maxAccum
+	// 官方：nonLinearAccumSpeed = GetAdvancedNonLinearAccumSpeed(data1.x)，即
+	//   1 / (1 + N²/maxAccum)，按 N/maxAccum 线性过渡。
+	// maxAccum 必须是**累积上限本身**（与 Accumulate 同一个 cap 公式）：
+	// 旧写法用 SSILVB_MAX_ACCUM_FRAMES(=128) 当分母，N=30 时把 NLAS 算成 1/9 而不是 1/31
+	// ⇒ 半径大 2 倍；一旦主历史回流，这个错误会被逐帧放大成"整体发糊"。
+	float _accumCap = clamp(GI_ACCUM_TIME / (max(frameTime, 1e-4) * max(GI_EFFECTIVE_SPP, 1.0)),
+	                        8.0, SSILVB_MAX_ACCUM_FRAMES);
+	float fade = saturate(frameIndex * rcp(max(_accumCap, 1.0)));
 	float nonLinearSpeed = rcp(1.0 + fade * max(frameIndex, 1.0));
-	// 下限 0.5：满核（1.0）时第 3 级半径 = NRD_RADIUS_PX × 4 画布纹素（默认 = 4 画布 /
-	// 8 屏幕像素），稳定像素上会形成"大团斑块"；而按 nonLinearAccumSpeed 收到 0 又会露出
-	// 时域残噪。取中间值：稳定区约 2 画布纹素（4 屏幕像素），既能压残噪又不产生团块。
-	float radiusScale = max(sqrt(nonLinearSpeed), 0.5);
 
-	// 命中距离缩放半径（官方）：命中距离大 ⇒ 该处平坦/信号可靠，可用大核；命中距离小
-	//（接触区/自遮挡）⇒ 收小保细节。用 colortex26 的时域平滑值，避免逐帧抖动带跑采样图案；
-	// 下限 0.08 防止半径塌成 0（此时完全退化成无滤波）。
-	// 必须包在 NRD 宏里：colortex26 只由 GIPrepass（NRD 路径）写入，SVGF 路径下是未初始化内容。
+	// 官方 GetHitDistFactor：saturate(hitDist_m / frustumSize)。
+	// colortex26 存 normHit = saturate(hitDist_m / (A + |z|·B))，先解码回米再按官方比值算。
 	float hitDistFactor = 1.0;
+	float _hitC = 0.0;
 #ifdef VOXEL_GI_NRD_ACTIVE
-	hitDistFactor = sqrt(max(texelFetch(colortex26, texelPos, 0).r, 0.08));
+	float _normHit = texelFetch(colortex26, texelPos, 0).r;
+	float _hitDistM = _normHit * (REBLUR_HITDIST_A + abs(viewDist) * REBLUR_HITDIST_B);
+	hitDistFactor = saturate(_hitDistM * rcp(max(frustumSize, 1e-3)));
+	_hitC = _normHit;
 #endif
 
-	vec2 offsetScale = offsetScaleBase * stepBoost * radiusScale * hitDistFactor;
-	// 下限 0.5 画布纹素：再小 8 次 tap 会全部 round 回中心，等于没滤波。
-	offsetScale = max(offsetScale, vec2(0.5));
+	// 官方半径公式：
+	//   blurRadius = saturate( radiusScale * sqrt( hitDistFactor * NLAS ) ) * maxBlurRadius
+	//   blurRadius = max( blurRadius, minBlurRadius )      // minBlurRadius = 1 画布纹素
+	// 下限 1 是必须的：8 个 tap 在步长 < 0.5 时会被 round() 全部吸回中心，那一遍等于没滤波。
+	// NRD_RADIUS_PX 语义 = maxBlurRadius / 10（3.0 即官方 30）。
+	float blurRadius = saturate(SPATIAL_RADIUS_SCALE * sqrt(hitDistFactor * nonLinearSpeed))
+	                 * (NRD_RADIUS_PX * 10.0);
+	blurRadius = max(blurRadius, 1.0);
 
-	// 旋转：同一 2x2 画布块共享角度（官方 rotator 的 intent），否则逐像素完全随机会让
+	vec3 centerViewPos = ScreenToViewPosRaw(centerCanvasUv, normalDepthData.z);
+
+	// 官方各向异性：视线越掠射，核沿表面倾斜方向拉长（斜看地面/墙面时保留细节、减少糊）。
+	//   skew = lerp( 1 - |Nv.xy|, 1, NoV );  skew /= max( skew.x, skew.y );
+	vec3 Vv = normalize(-centerViewPos);
+	float NoV = abs(dot(Nv, Vv));
+	vec2 skew = mix(vec2(1.0) - abs(Nv.xy), vec2(1.0), NoV);
+	skew /= max(max(skew.x, skew.y), 1e-4);
+
+	// 官方法线瓣角参数（Common.hlsli:474 GetNormalWeightParam），diffuse 的 roughness = 1：
+	//   percentOfVolume = 0.75 · lerp( saturate(lobeAngleFraction), 1, NLAS )
+	//   tanHalfAngle    = roughness · sqrt( pov / (1 - pov) )
+	//   angleMax        = max( atan( tanHalfAngle ), NRD_NORMAL_ENCODING_ERROR )
+	//   param           = ( 1 / angleMax ) / fractionScale
+	// 注意 fractionScale：PostBlur（0.5）的角度上限只有 Blur 的一半 ⇒ 大核时边缘保护更严。
+	float _pov = 0.75 * mix(saturate(LOBE_ANGLE_FRACTION), 1.0, saturate(nonLinearSpeed));
+	float _tanHalf = sqrt(_pov * rcp(max(1.0 - _pov, 1e-4)));
+	float normalParam = rcp(max(atan(_tanHalf), NORMAL_ENCODING_ERROR)) * rcp(SPATIAL_FRACTION_SCALE);
+
+	// 官方 minHitDistWeight = gMinHitDistanceWeight · fractionScale · smc(=1) · NLAS
+	// （最后那个 ×NLAS 只在非 prepass、非 occlusion 模式下生效，Blur/PostBlur 都属于此类）
+	float minHitDistWeight = MIN_HITDIST_WEIGHT * SPATIAL_FRACTION_SCALE * nonLinearSpeed;
+
+	// 旋转：同一 2x2 画布块共享角度（官方 rotator 的意图），否则逐像素完全随机会让
 	// 每个像素的模糊方向不同 ⇒ 半分辨率画布上出现颗粒状/斑块状的低频结构。
+	// 官方 rotator mode = NRD_FRAME（逐帧换序列），由 GUI 的 GI_KERNEL_ROT_PER_FRAME 控制。
 	ivec2 rotCell = texelPos >> 1;
 	float _tapAng = hash13(vec3(rotCell, float(FILTER_PASS_INDEX))) * 6.2831853
 	              + float(FILTER_PASS_INDEX) * 2.39996323
 	              + GI_ROT_PER_FRAME * float(frameCounter) * 2.39996323;
 	mat2 _tapRot = mat2(cos(_tapAng), sin(_tapAng), -sin(_tapAng), cos(_tapAng));
 
-	// 官方几何/法线/命中距离参数
-	const float PLANE_DIST_SENS = 0.02;   // planeDistanceSensitivity
-	const float LOBE_COS = 0.9723699;     // cos(lobeAngleFraction(0.15) × 90°)
-	const float MIN_HITDIST_WEIGHT = 0.1; // minHitDistanceWeight
+	float _planeNorm = max(PLANE_DIST_SENS * frustumSize, 1e-3);
 
-	vec3 centerViewPos = ScreenToViewPosRaw(centerCanvasUv, normalDepthData.z);
-	// centerN 是**表面法线**（含法线贴图），用于瓣角判据——必须与追踪采样半球一致。
-	// 平面距离判据一律用上面的 geoNormal（几何法线）：拿含贴图的法线做切平面点积，会在
-	// 砖/木板/树叶这类强凹凸区把同一面墙的邻居判成不同平面，整片拒绝 ⇒ 降噪不足。
-	vec3 centerN = mat3(gbufferModelView) * vec3(OctDecodeSnorm(normalDepthData.xy));
-	// 视锥短边在该深度处的世界尺寸（官方 GetFrustumSize）：几何权重的归一化尺度。
-	float frustumSize = 2.0 * viewDist * rcp(max(gbufferProjection[1][1], 1e-3));
-
-	// 官方 POST_BLUR：a-trous 之后再做一次 3x3，消除波纹状块感（这正是"大团斑块"的块状边缘）。
-	// 这里合并进第 4 级——调度次数与乒乓不变，下游无需改；步长固定 1 画布纹素、不旋转，
-	// 权重仍走几何/法线判据，避免跨表面糊边。
-#if FILTER_PASS_INDEX == 3
-	{
-		const ivec2 postOff[8] = ivec2[8](
-			ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1),
-			ivec2(-1,  0),                ivec2(1,  0),
-			ivec2(-1,  1), ivec2(0,  1), ivec2(1,  1)
-		);
-		f16vec3 postSum = centerSample.rgb;
-		float postW = 1.0;
-		for (int i = 0; i < 8; ++i) {
-			ivec2 smp = texelPos + postOff[i];
-			if (clamp(smp, ivec2(1), canvasEnd - 2) != smp) continue;
-			f16vec3 sampleAux = f16vec3(texelFetch(colortex14, smp, 0).rgb);
-			f16vec4 sampleColVar = f16vec4(imageLoad(EAWF_SRC, smp));
-			if (any(isnan(sampleColVar.rgb)) || any(isinf(sampleColVar.rgb))) continue;
-
-			vec2 tapUv = (vec2(smp) + 0.5) / vec2(canvasEnd);
-			vec3 tapViewPos = ScreenToViewPosRaw(tapUv, sampleAux.z);
-			float planeDist = abs(dot(tapViewPos - centerViewPos, geoNormal));
-			float w = exp(-planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
-			w *= smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02,
-			                dot(OctDecodeSnorm(sampleAux.xy), OctDecodeSnorm(normalDepthData.xy)));
-
-			postSum += sampleColVar.rgb * f16vec3(w);
-			postW += w;
-		}
-		f16vec3 postResult = postSum * f16vec3(rcp(postW));
-
-#ifdef VOXEL_GI_FIREFLY_MEDIAN
-		// 可选：3x3 亮度中值（GUI 项，默认关）。官方用 TA 的 fireflySuppressor，这里保留为
-		// 用户可选的额外手段——只替换亮度分量，色差不动。
-		{
-			float _l[9];
-			int _n = 0;
-			_l[_n++] = postResult.r;
-			for (int i = 0; i < 8; ++i) {
-				ivec2 smp = texelPos + postOff[i];
-				if (clamp(smp, ivec2(1), canvasEnd - 2) != smp) continue;
-				_l[_n++] = f16vec4(imageLoad(EAWF_SRC, smp)).r;
-			}
-			for (int i = 1; i < _n; ++i) {          // 插入排序
-				float v = _l[i];
-				int j = i - 1;
-				while (j >= 0 && _l[j] > v) { _l[j + 1] = _l[j]; --j; }
-				_l[j + 1] = v;
-			}
-			postResult.r = _l[_n / 2];
-		}
-#endif
-
-		imageStore(EAWF_DST, texelPos, min(f16vec4(postResult, centerSample.a), FP16_MAX));
-		return;
-	}
-#endif
-
-	// 官方 Poisson 盘（REBLUR_POISSON_SAMPLE_NUM = 8）。这里用黄金角 Vogel 螺旋生成 8 个
-	// 等面积样本（比固定表更均匀），再整体按像素/Pass 旋转，等价于官方 rotated Poisson disk。
-	const int POISSON_SAMPLES = 8;
+	//======// 官方 8-tap 空间滤波 //==============================================================//
 	f16vec3 sumRGB = centerSample.rgb;
 	float sumW = 1.0;
 
-	for (int i = 0; i < POISSON_SAMPLES; ++i) {
-		float rn = sqrt((float(i) + 0.5) * rcp(float(POISSON_SAMPLES)));   // 0..1
-		float an = float(i) * 2.39996323;
-		ivec2 smp = texelPos + ivec2(round(_tapRot * (vec2(cos(an), sin(an)) * rn * offsetScale)));
+	for (int i = 0; i < 8; ++i) {
+		// 采样偏移 = 旋转( g_Special8.xy ) × blurRadius × skew，单位是**画布纹素**。
+		vec2 dir = _tapRot * SPATIAL_DIR[i];
+		dir *= blurRadius * skew;
+		ivec2 smp = texelPos + ivec2(round(dir));
 		if (clamp(smp, ivec2(1), canvasEnd - 2) != smp) continue;
 
 		f16vec3 sampleAux = f16vec3(texelFetch(colortex14, smp, 0).rgb);
 		f16vec4 sampleColVar = f16vec4(imageLoad(EAWF_SRC, smp));
 		if (any(isnan(sampleColVar.rgb)) || any(isinf(sampleColVar.rgb))) continue;
 
-		// 几何：官方 `GetGeometryWeightParams` ⇒ exp( -|planeDist| / (planeDistanceSensitivity · frustumSize) )
-		// planeDist 用**世界距离**。此前用「相对视距 + max(0.02, 2/z) 的松容差」，
-		// 近处容差被放宽到 0.2·z（约 2 米），不同深度表面会混进同一个核 ⇒ 边缘/台阶斑块。
+		// 几何：官方 ApplyGeometryWeightLast ⇒ ComputeWeight(NoX, a, -b)
+		//   NoX·a + b = dot(Nv, Xvs - Xv) / (planeDistanceSensitivity · frustumSize)
+		// 即**切平面距离**归一化后的三次窗。用几何法线（不含法线贴图）：拿贴图法线做切平面
+		// 会在砖/木板/树叶这类强凹凸区把同一面墙的邻居判成不同平面，整片拒绝 ⇒ 降噪不足。
 		vec2 tapCanvasUv = (vec2(smp) + 0.5) / vec2(canvasEnd);
 		vec3 tapViewPos = ScreenToViewPosRaw(tapCanvasUv, sampleAux.z);
 		float planeDist = abs(dot(tapViewPos - centerViewPos, geoNormal));
-		float w = exp(-planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
+		float w = NonExponentialWeight(planeDist * rcp(_planeNorm));
 
-		// 法线：夹角上限 = 瓣角 × lobeAngleFraction（官方 lobeAngleFraction）
-		float _nd = dot(OctDecodeSnorm(sampleAux.xy), vec3(OctDecodeSnorm(normalDepthData.xy)));
-		w *= smoothstep(LOBE_COS - 0.02, LOBE_COS + 0.02, _nd);
+		// 法线：官方 ComputeWeight(angle, normalParam, 0.0)，逐角度连续衰减（不是硬阈）。
+		float _ang = acos(clamp(dot(OctDecodeSnorm(sampleAux.xy), centerNDirW), -1.0, 1.0));
+		w *= NonExponentialWeight(_ang * normalParam);
 
-		// 命中距离：越远（信号越可靠）权重越高（官方 GetHitDistanceWeight）。
-		// 用 colortex26 的时域平滑值 —— 逐帧抖动的 hitDist 会让同一像素的权重每帧都变，
+		// 命中距离：官方 w *= minHitDistWeight + ExpApprox( -3·|Δhit|/NLAS )。
+		// 用 colortex26 的**时域平滑**命中之——逐帧抖动的 hitDist 会让同一像素的权重每帧都变，
 		// 采样图案跟着跳，这也是"静止仍在扭动"的一条来源。
 #ifdef VOXEL_GI_NRD_ACTIVE
-		w *= mix(MIN_HITDIST_WEIGHT, 1.0, saturate(texelFetch(colortex26, smp, 0).r));
+		{
+			float _hitS = texelFetch(colortex26, smp, 0).r;
+			float _u = 3.0 * abs(_hitS - _hitC) * rcp(max(nonLinearSpeed, 1e-3));
+			w *= minHitDistWeight + rcp(_u * _u + _u + 1.0);
+		}
 #endif
 
-		// 高斯：官方 GetGaussianWeight( offset.z )，offset.z 是该样本在盘内的归一化半径
-		w *= exp(-2.0 * rn * rn);
+		// 高斯：官方 GetGaussianWeight( offset.z ) = exp( -0.66 · r² )，
+		// r 取 g_Special8 的 z 分量（轴点 1.0 ⇒ 0.517，对角点 0.5 ⇒ 0.848）。
+		w *= exp(-0.66 * SPATIAL_GAUSS_R[i] * SPATIAL_GAUSS_R[i]);
 
 		sumRGB += sampleColVar.rgb * f16vec3(w);
 		sumW += w;
 	}
 
 	f16vec3 result = sumRGB * f16vec3(rcp(sumW));
-	// .a 是方差字段（VarianceEstimate 写入）：空间滤波不改变它，原样透传中心值。
+
+#ifdef VOXEL_GI_FIREFLY_MEDIAN
+	// 可选：3×3 亮度中值（GUI 项，默认关）。官方用 TA 的 fireflySuppressor，这里保留为
+	// 用户可选的额外手段——只替换亮度分量，色差不动。放在滤波结果上（不是原始输入）。
+	{
+		const ivec2 _off[8] = ivec2[8](
+			ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1),
+			ivec2(-1,  0),                ivec2(1,  0),
+			ivec2(-1,  1), ivec2(0,  1), ivec2(1,  1)
+		);
+		float _l[9];
+		int _n = 0;
+		_l[_n++] = result.r;
+		for (int i = 0; i < 8; ++i) {
+			ivec2 smp = texelPos + _off[i];
+			if (clamp(smp, ivec2(1), canvasEnd - 2) != smp) continue;
+			_l[_n++] = float(imageLoad(EAWF_SRC, smp).r);
+		}
+		for (int i = 1; i < _n; ++i) {          // 插入排序
+			float v = _l[i];
+			int j = i - 1;
+			while (j >= 0 && _l[j] > v) { _l[j + 1] = _l[j]; --j; }
+			_l[j + 1] = v;
+		}
+		result.r = _l[_n / 2];
+	}
+#endif
+
+	// .a 是方差/帧数字段：空间滤波不改变它，原样透传中心值。
 	imageStore(EAWF_DST, texelPos, min(f16vec4(result, centerSample.a), FP16_MAX));
 }

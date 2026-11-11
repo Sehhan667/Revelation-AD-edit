@@ -729,11 +729,25 @@ option.GI_EFFECTIVE_SPP.comment=Effective samples the upstream contributes per f
 option.GI_DISOC_THRESHOLD=Disocclusion Threshold
 option.GI_DISOC_THRESHOLD.comment=Official disocclusionThreshold (0.01): two samples count as different surfaces when their relative depth difference exceeds threshold x slope scale. Smaller = stricter (less ghosting, harder accumulation on grazing surfaces).
 option.GI_DEBUG_VIEW=GI Debug View
-option.GI_DEBUG_VIEW.comment=Paints GI internals as colors (1 = history length + unreliable flag, 2 = variance, 3 = filter delta, 4 = left accumulated vs right filtered, 5 = history length buckets). Use it to tell whether flicker comes from history, filtering or sampling.
+option.GI_DEBUG_VIEW.comment=Paints GI internals to locate flicker. 1 = history (red) + unreliable (green) + young (blue); 2 = sigma grayscale; 3 = isolated outlier (red = firefly, green = normal); 4 = three segments (left prepass / middle accumulated / right final); 5 = RGB channels (red = history length, green = geometry confidence, blue = unreliable): yellow = old and trusted, green = new but trusted (normal), cyan/blue = fallback, red = old yet untrusted; 6 = geometry confidence grayscale (red = no history used). Shader implementation is the source of truth
 option.GI_FAST_CLAMP_SIGMA=Fast-History Clamp Sigma
 option.GI_FAST_CLAMP_SIGMA.comment=Official fastHistoryClampingSigmaScale (default 2.0): the long history is clamped to the fast history mean +/- k sigma. Larger = looser (more ghosting, more detail preserved); 1.5 works for dirty signals.
+option.GI_FIREFLY_CLAMP=Prepass Outlier Clamp
+option.GI_FIREFLY_CLAMP.comment=Custom (no matching NRD setting; NRD suppresses fireflies in temporal accumulation). 0 = off (default). Higher values clamp reused prepass samples to center luminance x this value. The reference is the center pixel, so dark areas get dimmed too: A/B in bright scenes only
+option.GI_DEBUG_NO_HISTORY_FIX=HistoryFix A/B
+option.GI_DEBUG_NO_HISTORY_FIX.comment=1 = passthrough (deferred1_c copies history without repair). Use it to tell whether ghosting/speckles come from HistoryFix. Keep 0 normally
+option.GI_DEBUG_NO_TS=Stabilization A/B
+option.GI_DEBUG_NO_TS.comment=1 = skip the second temporal accumulator (GIStabilize); final GI is the spatial filter output. Use it to tell whether ghosting is added by stabilization. Keep 0 normally
+option.GI_STABILIZE_FRAMES=Stabilized Frame Cap
+option.GI_STABILIZE_FRAMES.comment=NRD default 63, this pack uses 8 to keep ghosting short. Lower = shorter motion trails but slightly less stable when still; higher = smoother but longer trails
+option.NRD_STABILIZATION_STRENGTH=Stabilization Strength
+option.NRD_STABILIZATION_STRENGTH.comment=NRD stabilizationStrength, multiplied into accumSpeed (affects antilag and the color box). 0 = effectively off; lower = more responsive, higher = more stable
+option.GI_MOTION_RESPONSE=Motion-Adaptive History
+option.GI_MOTION_RESPONSE.comment=When reprojection displacement exceeds 2 screen pixels, boost the current frame weight and suppress stabilized history: motion ghosting drops from tens of frames to about 2. Bit-identical when still (TAA sub-pixel jitter included). Default 1.0; 0 = off, 0.5 = half. Cost: slightly more noise while moving
+option.GI_RECURRENT_HISTORY=Recurrent History Feedback
+option.GI_RECURRENT_HISTORY.comment=Core mechanism of official REBLUR: the main history is the previous frame's SPATIALLY FILTERED result, so the same kernel is iterated frame after frame and the effective denoising strength grows with history length (Ray Tracing Gems II ch.49; in NRD only PostBlur's output is tagged as persistent across frames, and that is exactly what temporal accumulation reads). 1 = official (default): cleaner but softer; 0 = SVGF-style (history keeps raw accumulation): sharper but noisier. Turn this OFF first if the image looks too blurry
 option.GI_KERNEL_ROT_PER_FRAME=Rotate Kernel Per Frame
-option.GI_KERNEL_ROT_PER_FRAME.comment=The random kernel directions are fixed per pixel (cleanest when still) but anchored to the screen: as the camera turns, the world slides under that fixed pattern and the GI looks messy/uneven. On: rotate the pattern every frame so temporal accumulation and TAA average it out (cost: slightly noisier per frame).
+option.GI_KERNEL_ROT_PER_FRAME.comment=Whether the random kernel directions change every frame. OFF (default): the pattern is pinned to the screen, so the sampling error bakes into fixed blotches, but the image stays still. ON: the per-frame error becomes temporally white in theory, BUT in practice, combined with Recurrent History, it makes the image drift while standing still and lengthens ghosting. Be careful enabling both.
 option.PTGI_MEDIAN_RADIUS=Median Radius
 option.PTGI_MEDIAN_RADIUS.comment=1=3x3, 2=5x5. Larger = stronger denoise but blurs detail (targets fireflies/single-pixel noise)
 option.PTGI_EDGE_STRENGTH=Edge Preserve Strength
@@ -742,8 +756,8 @@ option.PTGI_BLEND_STRENGTH=Median Blend Strength
 option.PTGI_BLEND_STRENGTH.comment=Blends median result with the original (1=pure median, 0=original). Lower keeps more detail but noisier
 option.VOXEL_MOON_STRENGTH=Moon Bounce Strength
 option.VOXEL_MOON_STRENGTH.comment=Directional moonlight bounce in voxel GI at night (vanilla moonlightMult is too small so moon GI was missing). Moon-facing faces brighten, away faces stay dark; pairs with AO for shading. 0=off; higher = stronger moon GI
-option.NRD_RADIUS_PX=Filter Radius (Screen Pixels)
-option.NRD_RADIUS_PX.comment=Base radius of the EAWF spatial filter in screen pixels (level 0, the smallest step). Each of the four a-trous passes doubles the step, so total coverage is about 15x this value. Default 1.0 = ~15 screen px. Higher = cleaner but blurrier; lower = sharper but noisier (too blurry -> 0.75; residual noise -> 1.5-2.0). The old metre-based radius saturated at normal view distances and is gone
+option.NRD_RADIUS_PX=Filter Radius (x10 Canvas Texels)
+option.NRD_RADIUS_PX.comment=Max radius of the EAWF spatial filter; value x10 = canvas texels (3.0 = NRD maxBlurRadius 30). Per-level steps are split 1:2:4:8 with a 1-texel floor. Higher = cleaner but blurrier; lower = sharper but noisier (too blurry -> 1.5; residual noise -> 4.0)
 option.NRD_RELIABILITY=Reliability Convergence Rate
 option.NRD_RELIABILITY.comment=Exponential reliability history factor (1-exp(-N*rate), N=accumulated frames). Higher reliability -> stronger edge-preserving sigma; few frames (just appeared / reprojected) -> looser filter for fast convergence. 0=off (original SVGF linear history factor); 0.1-0.3 slow convergence, heavy early blur; 0.5 balanced (default); 1-2 fast convergence, strong edge-preserve early (may under-denoise; pair with lower filter radius). Static/far too blurry -> raise; noisy trails while moving -> lower
 option.NRD_DISOCCLUSION=Disocclusion Repair

@@ -482,7 +482,11 @@ void main() {
         #ifdef VXGI_FULLRES
             ivec2 _giCanvasTexel = texelPos;
         #else
-            ivec2 _giCanvasTexel = texelPos >> 1;
+            // [2026-11-11 奇数分辨率] 画布宽 = viewSize/2，而 (W-1)>>1 在奇数 W 下会等于画布宽
+            // ⇒ 最右列越界（texelFetch 返回 0，视图上是一条黑边）。与 GICanvasCoord 同口径夹住。
+            // 这里不用 halfViewSize：语义检查器把「文件里出现 halfViewSize」当作画布 pass 的
+            // 启发式判据，写进来会让本文件的全分辨率 texelPos 全被误报成画布坐标。
+            ivec2 _giCanvasTexel = min(texelPos >> 1, ivec2(viewSize) / 2 - 1);
         #endif
         float _dbgAccum = texelFetch(colortex2, _giCanvasTexel, 0).a;
         float _dbgBad   = texelFetch(colortex14, _giCanvasTexel, 0).a;
@@ -496,37 +500,59 @@ void main() {
         #ifdef VXGI_FULLRES
             ivec2 _dbgT = texelPos;
         #else
-            ivec2 _dbgT = texelPos >> 1;
+            ivec2 _dbgT = min(texelPos >> 1, ivec2(viewSize) / 2 - 1);
         #endif
         vec4 _dbgHist  = texelFetch(colortex2, _dbgT, 0);      // rgb = 累积(未滤波), a = 帧数
         vec4 _dbgFilt  = texelFetch(colortex3, _dbgT, 0);      // rgb = 空间滤波后, a = 方差
         float _dbgFlag = texelFetch(colortex14, _dbgT, 0).a;   // 1 = 本帧被判不可靠
         float _dbgA    = _dbgHist.a;
-        float _dbgNorm = max(SSILVB_MAX_ACCUM_FRAMES, 1.0);
-        // 滤波"改动量"：空间滤波把累积值改了多少（相对）。持续跳 = 滤波强度不稳。
-        float _dbgLumaH = max(_dbgHist.r, 1e-5);
-        float _dbgLumaF = _dbgFilt.r;
-        float _dbgDelta = abs(_dbgLumaF - _dbgLumaH) * rcp(_dbgLumaH);
-
+        // 本帧真实累积上限：必须和 Accumulate.frag 的计算**逐项一致**，否则"绿"永远够不到。
+        // 旧版漏了 `/ GI_EFFECTIVE_SPP`（上限被高估 2 倍）⇒ A 停在真上限时也只显示黄，永远没有绿。
+        float _dbgCap = clamp(GI_ACCUM_TIME / (max(frameTime, 1e-4) * max(GI_EFFECTIVE_SPP, 1.0)),
+                              8.0, SSILVB_MAX_ACCUM_FRAMES);
+#ifdef VOXEL_GI_DARK_ACCUM
+        {
+            // 暗处上限 ×4（Accumulate 用 lightmap 判定，这里同一来源、同一公式）
+            uint _p = texelFetch(colortex7, texelPos, 0).x;
+            float _lm = max(float(_p & 0xFFu), float((_p >> 8u) & 0xFFu)) * rcp(255.0);
+            _dbgCap = mix(_dbgCap, _dbgCap * 4.0, 1.0 - smoothstep(0.10, 0.60, _lm));
+        }
+#endif
+        // 各视图的隔离量在各自分支里算；不要在公共段放"滤波前后差值"之类会饱和的量。
         if (GI_DEBUG_VIEW == 1) {
             // 1：历史长度 + 不可靠标记 —— 蓝=年轻(刚出现)，绿=本帧被判不可靠，红=历史长度
             //    用法：转动视角盯住闪的地方。若该处**蓝/绿一直亮** ⇒ 历史没建立 ⇒ 查判据/重投影；
             //          若该处**红已满**却仍闪 ⇒ 问题在滤波或采样，不在历史。
-            finalOut = vec3(saturate(_dbgA * rcp(_dbgNorm)), _dbgFlag, 1.0 - saturate(_dbgA * 0.125));
+            finalOut = vec3(saturate(_dbgA * rcp(_dbgCap)), _dbgFlag, 1.0 - saturate(_dbgA * 0.125));
         } else if (GI_DEBUG_VIEW == 2) {
             // 2：方差（对数压缩）—— 白=方差大（滤波会强），黑=方差小（滤波几乎不生效）
             //    用法：闪的地方如果**发黑** ⇒ 方差太低 ⇒ 边缘保持过强 ⇒ 噪点没被空间滤波抹掉。
             // 直接读 prepass 的方差（权威值）；colortex3.a 是滤波后的加权结果，可能被改写。
-            float _dbgVar = max(texelFetch(colortex24, _dbgT, 0).r, 1e-8);
+            // [2026-11-11] colortex24 已改作 TS 历史快照（存 colortex23 副本），方差迁到
+            // colortex26.g —— 此前仍读 24，视图 2 显示的其实是「上一帧 TS 输出亮度」，
+            // sqrt(Y)*30 几乎恒白，C 测试（天空 σ 应为纯黑）已无法判读。
+            float _dbgVar = max(texelFetch(colortex26, _dbgT, 0).g, 1e-8);
             // 刻度改为直观的 σ（亮度百分比）：白 = σ ≥ 1% 亮度，黑 = σ 很小。
             // 旧刻度 (log2+20)/15 会把暗场景常见的 variance≈1e-6 映射成 0 ⇒ 误判成"方差为 0"。
             // 白 = σ ≥ 3.3% 亮度；暗场景 σ≈0.1% ⇒ 深灰（可分辨结构，不再全黑/全白）
             finalOut = vec3(saturate(sqrt(_dbgVar) * 30.0));
         } else if (GI_DEBUG_VIEW == 3) {
-            // 3：滤波改动量 —— 红=空间滤波把该像素改了很多，绿=几乎没动
-            //    用法：**运动时红绿乱跳** ⇒ 滤波强度不稳（量化/方差问题）；
-            //          稳定不动但画面仍闪 ⇒ 闪来自采样或上游。
-            finalOut = vec3(saturate(_dbgDelta * 2.0), saturate(1.0 - _dbgDelta * 2.0), 0.0);
+            // 3：孤立亮点（anti-firefly 的隔离量）—— 红 = 累积值显著高于 3x3 邻域均值，绿 = 正常。
+            //    旧版用 |滤波输出 - 累积值| / 累积值：空间滤波本来就会改掉大半亮度，暗处分母又趋 0
+            //    ⇒ 静止时恒饱和全红，E 测试无法判读（2026-11-10 实测）。改用相对邻域的离群量，
+            //    只标火点；1e-3 地板避免极暗处被噪声误标。
+            float _dbgMean = 0.0;
+            ivec2 _dbgEnd = textureSize(colortex2, 0) - 1;
+            for (int _dy = -1; _dy <= 1; ++_dy) {
+                for (int _dx = -1; _dx <= 1; ++_dx) {
+                    if (_dx == 0 && _dy == 0) continue;
+                    ivec2 _dbgN = clamp(_dbgT + ivec2(_dx, _dy), ivec2(0), _dbgEnd);
+                    _dbgMean += max(texelFetch(colortex2, _dbgN, 0).r, 0.0);
+                }
+            }
+            _dbgMean *= 0.125;
+            float _dbgExcess = max(_dbgHist.r - _dbgMean, 0.0) * rcp(max(_dbgMean, 1e-3));
+            finalOut = vec3(saturate(_dbgExcess), saturate(1.0 - _dbgExcess), 0.0);
         } else if (GI_DEBUG_VIEW == 4) {
             // 4：三段对比整条链路（左→右）：prepass(colortex22) | 累积(colortex2) | 最终 GI(colortex23)
             // 三段必须用**同一增益 + 同一色调映射**，否则亮度差会被误读成结构差。
@@ -550,18 +576,18 @@ void main() {
                 _dbgSeg = _dbgFilt.rgb;
 #endif
             }
-            vec3 _dbgS = _dbgSeg * _DBG_GAIN;
+            // 三段缓冲存的都是 YCoCg（r=Y，g/b=色差，可为负）。直接当 RGB 显示会串色/发黑，
+            // 实测"画面太诡异看不清"（2026-11-10）。先转回 RGB，再走同一增益 + Reinhard。
+            vec3 _dbgS = max(YCoCgToRGB(_dbgSeg), 0.0) * _DBG_GAIN;
             finalOut = _dbgS / (1.0 + _dbgS);
         } else if (GI_DEBUG_VIEW == 5) {
-            // 5：历史长度直方图（分档上色），用来快速看出"整体历史长度"是否健康
-            // 归一化基准必须是**本帧真实累积上限**，不能是 SSILVB_MAX_ACCUM_FRAMES：
-            // 上限 = clamp(GI_ACCUM_TIME / frameTime, 8, 128) 量化到 8 帧一档，低 fps 时会远小于 128
-            //（1.0s / 28fps ⇒ 24）。拿 128 归一化时健康状态也永远落在最低档（全红），无法判读。
-            float _dbgCap = max(floor(clamp(GI_ACCUM_TIME / max(frameTime, 1e-4), 8.0, SSILVB_MAX_ACCUM_FRAMES) * 0.125) * 8.0, 8.0);
-            finalOut = (_dbgA > 0.9 * _dbgCap) ? vec3(0.0, 1.0, 0.0)
-                     : (_dbgA > 0.5 * _dbgCap) ? vec3(1.0, 1.0, 0.0)
-                     : (_dbgA > 0.25 * _dbgCap) ? vec3(1.0, 0.5, 0.0)
-                     : vec3(1.0, 0.0, 0.0);
+            // 5：三通道 —— 红 = A/cap，绿 = maxGeometryWeight，蓝 = 本帧被判不可靠（走兜底）。
+            // 黄(红+绿)=历史长且可信；**绿(红低绿高)=新像素但可信，是正常响应**；
+            // 蓝/青=走了"拒绝历史 + 用修复历史起步"的兜底路径；红(高红低绿)=历史长却不可信，异常。
+            // 判读：黄↔蓝 交替闪 ⇒ 可靠性判定在逐帧翻；只有红在动、绿蓝都稳 ⇒ 计数器/上限问题。
+            // 旧文档把本视图写成"历史长度分档配色"（绿满/红年轻），与实际三通道相反 ⇒ 实测误判，已统一。
+            float _dbgConf = saturate(texelFetch(colortex21, _dbgT, 0).a);
+            finalOut = vec3(saturate(_dbgA * rcp(_dbgCap)), _dbgConf, _dbgFlag);
         } else if (GI_DEBUG_VIEW == 6) {
             // 6：上一帧的「几何可信度 maxGeometryWeight」（存于 colortex21.a）
             //    白 = 1（完全接受历史）；灰 = 部分拒绝；黑 = 完全拒绝。

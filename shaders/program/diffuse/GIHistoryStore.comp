@@ -1,18 +1,35 @@
 /*
 --------------------------------------------------------------------------------
-  Revelation-AD-edit  —  REBLUR 主历史保留（默认不掺滤波结果，仅保留 A/B 开关）
+  Revelation-AD-edit  —  REBLUR 主历史回流（Recurrent）+ TS 历史快照
 --------------------------------------------------------------------------------
 
-  官方口径（NRD v4.11）：
-      主历史（main history）只累积**输入信号**；空间滤波结果不写回主历史，
-      它只进入 TemporalStabilization 的稳定化结果（colortex23），作为最终输出。
-  这一点由 README 原文确认："Fast history is the input signal, accumulated for a few frames.
-  Fast history helps to minimize lags in the main history, which is accumulated for more frames."
-  早期版本的「滤波结果回写 0.6」会让空间核逐帧复合，细节被慢慢抹平；
-  现在默认不回写（0.0），仅保留 GI_BISECT bit1 作为 A/B 开关。
+  本 pass 做两件事，都只在 NRD 路径（VOXEL_GI_NRD_ACTIVE）下有效。
 
-  本 pass 因此只做一件事：把 Accumulate 写好的长历史原样保留（可选 A/B 回写）。
-  关闭（VOXEL_GI_NRD 未定义）时本 pass 不调度，pipeline 与改动前一致。
+  ① TS 历史快照 → colortex24
+
+     GIStabilize 在同一 dispatch 里采样自己的历史、又写本帧输出，而 compute 不 flip
+     ⇒ 读写同一张图是真竞态（EAWF 当年因此改乒乓）。这里先把**上一帧** colortex23
+     快照到 colortex24，GIStabilize 改读快照、仍写 colortex23 ⇒ 读写分离。
+     为什么是 24：colortex25 现在是 EAWF 的最终输出（官方 PostBlur 位置），
+     不能再兼作快照缓冲。colortex24 原本只存 GIPrepass 的调试方差，本轮已让出。
+
+  ② 主历史回流 → colortex2
+
+     官方（2026-11-11 用资源生命周期标签确证；论文 Zhdan, D. "ReBLUR: A Hierarchical
+     Recurrent Denoiser", Ray Tracing Gems II 2021 ch.49）：
+
+         TA 的 gOut_Diff         = NRD_RESOURCE_TRANSIENT
+         Blur 的 gOut_Diff       = NRD_RESOURCE_TRANSIENT
+         HistoryFix 的 gOut_Diff = NRD_RESOURCE_OUT
+         **PostBlur 的 gOut_Diff = NRD_RESOURCE_PERMANENT**   ← 唯一
+         TA 的 gHistory_Diff     = NRD_RESOURCE_PERMANENT（REBLUR_TemporalAccumulation.resources.hlsli:34）
+
+     ⇒ 下一帧的主历史 = 本帧空间滤波的最终输出（官方 PostBlur = 我们的 EAWF deferred7）。
+        即 H_{n+1} = Filter( lerp(H_n, 本帧输入, alpha) )：同一个核被逐帧迭代，
+        等效滤噪力度随历史长度增长 —— 这是 REBLUR 被称为 *recurrent* 的原因。
+
+     本链对应：colortex25 = EAWF deferred7（PostBlur，radiusScale 2.0）= 官方 PostBlur 输出。
+     只替换 rgb；`.a` 必须保留 Accumulate 写下的累积帧数（下一帧的 alpha 与计数都靠它）。
 --------------------------------------------------------------------------------
 */
 
@@ -24,7 +41,6 @@ layout (local_size_x = 8, local_size_y = 8) in;
 
 #include "/lib/Utility.glsl"
 
-// 与 GI 画布同分辨率（默认半分辨率棋盘；VOXEL_GI_FULLRES 全分辨率）。须在 Utility 之后。
 #ifdef VXGI_FULLRES
 const vec2 workGroupsRender = vec2(1.0, 1.0);
 #else
@@ -33,8 +49,9 @@ const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 //======// Uniform //=============================================================================//
 
-layout (rgba16f) restrict uniform image2D colorimg2;             // 长历史（下一帧 Accumulate 的输入）
-layout (rgba16f) restrict readonly uniform image2D colorimg3;    // 本帧 EAWF 滤波结果
+layout (rgba16f) restrict uniform image2D colorimg2;             // 主历史（下一帧 Accumulate 的输入）
+layout (rgba16f) restrict readonly uniform image2D colorimg25;   // 本帧 EAWF（空间滤波）最终输出
+layout (rgba16f) restrict uniform image2D colorimg24;            // TS 历史快照
 
 #include "/lib/universal/Uniform.glsl"
 
@@ -49,18 +66,21 @@ void main() {
     if (any(greaterThanEqual(texelPos, ivec2(halfViewSize)))) return;
 #endif
 
-    // 此时：colortex2 = Accumulate 本帧的「时域混合」结果（滤波前），.a = 累积帧数 a；
-    //       colortex3 = EAWF 四遍滤波后的结果。
-    // 官方口径：主历史不掺空间滤波结果（滤波只进稳定化 colortex23）。
-    // 默认 0.0；GI_BISECT bit1 打开时用 0.6 做 A/B 对比（旧行为）。
-    float _wb = ((GI_BISECT & 2) != 0) ? 0.6 : 0.0;
-    // 不回写时 colortex2 已是 Accumulate 的输出，本 pass 无事可做。
-    if (_wb <= 0.0) return;
+    // colortex23 只在 NRD 模式由 GIStabilize 写入，读写都必须同层保护（语义检查 R3）。
+#ifdef VOXEL_GI_NRD_ACTIVE
+    // ---- ① TS 历史快照 ----
+    // 此刻 colortex23 仍是**上一帧** GIStabilize 的输出（deferred11 还没跑）。
+    imageStore(colorimg24, texelPos, texelFetch(colortex23, texelPos, 0));
+
+    // ---- ② 主历史回流 ----
+    // GI_RECURRENT_HISTORY = 0 时退回"历史只存原始累积"（SVGF 式）；
+    // GI_BISECT bit1 也可强制关掉，作为调试侧的等效回退。
+    if (GI_RECURRENT_HISTORY <= 0 || (GI_BISECT & 2) != 0) return;
 
     vec4 mixed = imageLoad(colorimg2, texelPos);
-    vec3 filtered = imageLoad(colorimg3, texelPos).rgb;
-    vec3 history = mix(mixed.rgb, filtered, _wb);
+    vec3 filtered = imageLoad(colorimg25, texelPos).rgb;
 
-    // .a 保留累积帧数（Accumulate 下一帧的计数）；只替换 rgb。
-    imageStore(colorimg2, texelPos, vec4(history, mixed.a));
+    // .a 保留累积帧数，只替换 rgb（滤波输出的 .a 不是帧数，不能用）
+    imageStore(colorimg2, texelPos, vec4(filtered, mixed.a));
+#endif
 }
