@@ -58,7 +58,9 @@ layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时�
 // 官方 NRD 的 diffuse 本来就在**半分辨率** rect 上跑（README 的 half-res 集成），
 // 所以 30 rect 像素 = 30 画布纹素，与本文件同尺度，不需要额外换算。
 // 官方另乘 sqrt(hitDistFactor) 自适应收缩、取 minBlurRadius = 1 下限（下面已实现）。
-#define PREPASS_RADIUS_TEXELS 30
+#ifndef NRD_PREPASS_RADIUS
+    #define NRD_PREPASS_RADIUS 30.0
+#endif
 // [2026-11-11 更正] 官方 REBLUR_POISSON_SAMPLE_NUM = 8，且官方 prepass **本身就跑在半分辨率**，
 // 输入同样是 1 spp。所以「我们是半分辨率所以要更多样本」不成立 —— 两边同分辨率、同半径、同 spp。
 // 此前取 32 的理由是「半径翻到 30 后按同密度需要 64」：把**半径从 15 改到 30**（对齐官方）
@@ -68,7 +70,9 @@ layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时�
 #define PREPASS_SAMPLES 8
 
 // 官方 planeDistanceSensitivity = 0.02（相对视锥短边世界尺寸）
-#define PLANE_DIST_SENS 0.02
+#ifndef NRD_PLANE_DIST_SENS
+    #define NRD_PLANE_DIST_SENS 0.02
+#endif
 
 // 官方 lobeAngleFraction = 0.15（漫反射 90° 瓣角的 15% ≈ 13.5°）
 #define LOBE_COS 0.9723699
@@ -141,7 +145,7 @@ void main() {
     vec4 _center = texelFetch(colortex3, texelPos, 0);
     float _normHitC = saturate(max(_center.a, 0.0) * rcp(_f));
     float _hitDistM = _normHitC * _f;
-    float prepassRadius = max(sqrt(saturate(_hitDistM * rcp(max(frustumSize, 1e-3)))) * float(PREPASS_RADIUS_TEXELS), 1.0);
+    float prepassRadius = max(sqrt(saturate(_hitDistM * rcp(max(frustumSize, 1e-3)))) * NRD_PREPASS_RADIUS, 1.0);
 
     vec3 sum = vec3(0.0);
     float wSum = 0.0;
@@ -222,7 +226,7 @@ void main() {
         // [3.4 官方] ComputeNonExponentialWeight = SmoothStep(1, 0, t)，t >= 1 全拒。
         // （`NRD_USE_EXPONENTIAL_WEIGHTS` 默认 0 ⇒ 默认配置下官方用的是三次窗，不是 ExpApprox。）
         // 旧实现 exp(-t) 在 t = 1 仍留 0.368 ⇒ 深度断层两侧互混。
-        float _tg = saturate(1.0 - planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
+        float _tg = saturate(1.0 - planeDist * rcp(max(NRD_PLANE_DIST_SENS * frustumSize, 1e-3)));
         float w = _tg * _tg * (3.0 - 2.0 * _tg);
         // [3.5 官方] 法线按夹角**连续**衰减：w = SmoothStep(1, 0, angle · normalParam)。
         // param = 1/angleMax / fractionScale，prepass 固定 NLAS = 1/11、fractionScale = 2：

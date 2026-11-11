@@ -70,8 +70,14 @@ layout (rgba16f) restrict uniform image2D colorimg25;   // 输出：重建后的
 #define HISTORY_FIX_FRAME_NUM 3.0     // historyFixFrameNum
 #define FIX_RADIUS 2                  // REBLUR_HISTORY_FIX_FILTER_RADIUS
 #define FAST_CLAMP_RADIUS 2           // REBLUR_FAST_HISTORY_CLAMPING_RADIUS
-#define FAST_CLAMP_SIGMA 2.0          // fastHistoryClampingSigmaScale
-#define PLANE_DIST_SENS 0.02          // planeDistanceSensitivity
+#ifndef NRD_HISTORYFIX_CLAMP_SIGMA
+    #define NRD_HISTORYFIX_CLAMP_SIGMA 2.0
+#endif
+#ifndef NRD_PLANE_DIST_SENS
+    #define NRD_PLANE_DIST_SENS 0.02
+#endif
+#define FAST_CLAMP_SIGMA NRD_HISTORYFIX_CLAMP_SIGMA
+#define PLANE_DIST_SENS NRD_PLANE_DIST_SENS
 #define LOBE_ANGLE_FRACTION 0.15      // lobeAngleFraction
 // 官方 hitDist 归一化参数（ReblurHitDistanceParameters）：f = A + |viewZ|·B（diffuse，roughness=1）
 #define REBLUR_HITDIST_A 3.0

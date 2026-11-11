@@ -304,7 +304,8 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define GI_ACCUM_TIME 1.0 // [0.35 0.5 0.75 1.0 1.5 2.0] 时域累积时间（秒）
 	// 每帧输入的等效样本数（1.0 = 官方 1 spp 口径）。prepass 32 样本空间重用 + ReSTIR 复用
 	// 让每帧噪声远低于单样本；照搬官方「时间/帧时间」会把累积上限高估 ⇒ 过粘（拖影）。
-	// 上限 = GI_ACCUM_TIME / (帧时间 × 本值)，再量化到 8 帧一档。
+	// 上限 = GI_ACCUM_TIME / (低通帧时间 × 本值)，下限 8 帧、硬上限 SSILVB_MAX_ACCUM_FRAMES。
+	// 低通由 GlobalStorage.comp 的全局 SSBO 字段统一维护（官方 NRD README 要求 FPS 先平滑）。
 	// [2026-11-11 官方口径修正] 官方 REBLUR 是 1 spp 输入（VOXEL_REUSE 已 #undef ⇒ 每画布像素
 	// 每帧 1 条新射线，与官方同构）。旧值 2.0 把累积上限腰斩成官方一半（0.5s ⇒ 15 帧而不是 30），
 	// 是「静止满屏噪点」的直接来源之一。改成 1.0 后 cap 恢复到官方 maxAccumulatedFrameNum=30。
@@ -367,12 +368,12 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define GI_RECURRENT_HISTORY 1 // [0 1] 主历史回流（1=官方 Recurrent，0=SVGF 式原始累积）
 	// 新累积的像素用大半径压噪，随累积帧数把半径收到最小 ⇒ 细节随时间显现。
 	// 值 = 衰减到最小半径所需的帧数（0=关）。
-	// 短历史裁剪的 sigma 倍数（官方 fastHistoryClampingSigmaScale，默认 2.0；
-	// 官方注释：脏信号 1.5 也行，遮挡去噪 1.1 更安全。越大越宽松 = 拖影越多、细节越保）。
-	// [2026-11-11 官方口径] 官方 TA **没有颜色盒**（`MixHistoryAndCurrent` 是纯 lerp，
-	// fast-history clamp 在 HistoryFix pass）。我们放在 TA 里的 5×5 μ±kσ 会把长历史每帧
-	// 拉向 6 帧短历史的噪声 ⇒ 静止残噪。默认 0 = 关闭（对齐官方）；>0 保留旧行为做 A/B。
-	#define GI_FAST_CLAMP_SIGMA 0.0 // [0.0 1.1 1.5 2.0 2.5 3.0] 短历史裁剪 sigma 倍数（0=关，对齐官方）
+	// [2026-11-11 废弃] 这里原来有一个 TA（Accumulate）里的自造 fast-history clamp：
+	// 5×5 μ±kσ + 门控地板，用来近似官方的 fastHistoryClampingSigmaScale。
+	// 官方位置其实在 **HistoryFix**（本包 deferred5），对应 GUI 项 NRD_HISTORYFIX_CLAMP_SIGMA；
+	// 旧实现会把 6 帧短历史的噪声逐帧拉进长历史（静止蠕动来源），已从代码与 GUI 移除。
+	// 宏保留为 0、且不再被任何 shader 读取，只为兼容旧配置文件（Iris 对未定义键会告警）。
+	#define GI_FAST_CLAMP_SIGMA 0.0
 	// prepass 空间重用的离群样本钳制（自造项：官方 ReblurSettings 无对应字段，
 	// 官方 anti-firefly 在 TA，见清单 4.11）。0 = 关（默认，画面逐位不变）。
 	// >0 时把参与重用的样本亮度压到中心亮度 × 本值；参考量是中心像素，
@@ -408,6 +409,36 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 旧写法在稳定像素上正好算出 0.50/0.68 ⇒ 4 级 a-trous 的前两级是空转，这是残噪的直接来源。
 	// 调大更干净但更糊；调小保细节但残噪多（0.5-6.0 ⇒ 5-60 画布纹素）。
 	#define NRD_RADIUS_PX 3.0 // [0.5 0.75 1.0 1.5 2.0 3.0 4.0 6.0] 最大滤波半径（×10 画布纹素）
+
+	// ===== 官方 ReblurSettings 的四个可调项（2026-11-11 补齐 GUI 接线）=====
+	// `diffusePrepassBlurRadius`（默认 30，单位 = NRD rect / 画布纹素）：
+	//   **时域累积之前**的空间重用半径。1 spp 输入很稀疏，prepass 先在 30 纹素内加权平均，
+	//   得到"稠密"信号再交给累积器。调大 ⇒ 单帧更平滑、收敛更快，但会把接触阴影、小凹槽
+	//   和 1 米体素的块状结构一起摊平；调小 ⇒ 保细节、单帧更噪（时域压力更大）。
+	//   官方 0 = 完全关闭；本包最低 1 画布纹素（8 个 tap 会全部落回中心，等价于近关闭）。
+	#define NRD_PREPASS_RADIUS 30.0 // [1.0 2.0 4.0 6.0 8.0 12.0 16.0 20.0 24.0 30.0 36.0 48.0 64.0] 预滤波空间重用半径（画布纹素）
+
+	// `minHitDistanceWeight`（默认 0.1）：空间滤波里「命中距离差很大」的邻居仍保留的最小权重。
+	//   命中距离 = 该像素的 GI 射线打到多远的表面。两个像素命中距离差大 ⇒ 它们很可能处在
+	//   不同深度的物体上（薄墙、栅栏、接触缝）。调大 ⇒ 跨深度更愿意混合（更平滑，但会漏进
+	//   背景光、接触区发亮）；调小 ⇒ 保接触细节，代价是薄结构周围残噪。
+	//   官方还会按 pass 再乘 fractionScale（Blur 1.0 / PostBlur 0.5）与 nonLinearAccumSpeed。
+	#define NRD_MIN_HITDIST_WEIGHT 0.1 // [0.0 0.02 0.05 0.1 0.15 0.2 0.3 0.5 1.0] 跨命中距离的最小邻居权重
+
+	// `planeDistanceSensitivity`（默认 0.02）：判定两个像素「是否同一平面」的相对阈值，
+	//   单位是视锥短边在当前深度的世界尺寸（所以自动随距离放大）。
+	//   prepass / Blur / PostBlur / HistoryFix / TS 五处共用同一个值。
+	//   调大 ⇒ 更容易跨小台阶与凹凸混合（更平滑，但台阶边缘渗色、拖影变长）；
+	//   调小 ⇒ 判据更严（保边缘，但斜面与法线贴图区域更难累积、残噪上升）。
+	#define NRD_PLANE_DIST_SENS 0.02 // [0.005 0.01 0.02 0.03 0.05 0.08 0.1 0.15] 同一平面的距离容差（×视锥尺寸）
+
+	// `fastHistoryClampingSigmaScale`（默认 2.0，官方在 **HistoryFix** 里生效）：
+	//   把空间滤波后的长历史亮度夹到「未经滤波的短历史（6 帧）」的 mean ± kσ。
+	//   作用：光照突变（火把移动 / 方块增删）时，滞后几十帧的长历史会被短历史拉回来。
+	//   调大 ⇒ 夹得更松（细节保得多、拖影更长）；调小 ⇒ 夹得更紧（拖影短、残噪多）。
+	//   官方注释：脏信号可降到 1.5，遮挡去噪用 1.1 更安全。
+	//   注意与 `GI_FAST_CLAMP_SIGMA` 区分：那个是已移除的 TA 自造 clamp（宏保留为 0），这个是官方位置。
+	#define NRD_HISTORYFIX_CLAMP_SIGMA 2.0 // [1.1 1.5 2.0 2.5 3.0] HistoryFix 短历史裁剪 sigma 倍数
 	// 注意：VOXEL_GI_NRD_ACTIVE 在文件后段（GI_MODE / GI_ACTIVE_VXGI 定义之后）才推导。
 	// 预处理器对"尚未定义的标识符"按 0 处理，因此任何 `#if GI_MODE == ...` 都必须写在
 	// 第 630 行 `#define GI_MODE` 之后，否则恒为假——这里曾经因此让整条 REBLUR 链形同虚设。

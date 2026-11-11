@@ -224,10 +224,10 @@
 | 4.1 | 重投影 | surface/virtual motion vector，历史用 CatRom12 带 fallback 到 Bilinear（TA:167-173），disocclusion 逐 tap 判定（TA:253-267） | 深度 + 相机位移，4-tap 双线性（1.3 已 ✅） | 静止/纯平移 0 误差（1.3 已实机确认） | N+V | ✅ 矢量本身成立；历史采样滤波器是 CatRom12 而非双线性 ⇒ 归入 4.3 |
 | 4.2 | 去遮挡判据 | `GetDisocclusionThreshold(0.01, frustumSize, NoV)`，逐 tap 用 `step(planeDist, threshold)` 生成 **二值 occlusion 位**（TA:254-267） | `tapGeo = saturate(1 - dist/tol)` 连续权重 × 法线 `linearstep`，另加相位补偿 `6·giDepthGrad` | 掠射面不误拒，遮挡边界必拒 | S+R | ⚠️ 结构等效但形态不同：官方是二值位 + 双线性质量，我们是连续权重；相位补偿是本包特有。原 ✅ 撤回 |
 | 4.3 | 历史采样 + 深度容差 | **颜色历史也用双三次**：`BicubicFilterNoCornersWithFallbackToBilinearFilterWithCustomWeights`（TA:934-937、TS:147-152），门控 `dot(16 个 occlusion 位, 1) > 11.5`；帧数走双线性（`ApplyBilinearCustomWeights`） | `HistTap()` 逐 tap 几何判据；颜色 = CatRom 12 tap（4×4 去 4 角，门控 `足迹有效率 > 11.5/16`）或双线性兜底；**帧数与 quality 恒走双线性** | 边界夹取不越界；跨深度历史不得混入；历史不被反复重采样糊掉 | S+R | ✅ **2026-11-11 实现**。CatRom 的意义在 Recurrent 下放大：同一份历史逐帧重采样，双线性的模糊会**累加**，CatRom 负瓣可抵消。负瓣也乘 tapGeo（否则跨表面负权重造成边缘过冲）；`abs(crW) < 1e-3` 时退回双线性 |
-| 4.4 | 颜色盒 clamp | **官方 TA 没有颜色盒**：`MixHistoryAndCurrent` 是纯 `lerp(history, current, f)`（REBLUR_Common.hlsli:193）；fast-history clamp 在 **HistoryFix** pass（HistoryFix.cs:278/487） | 5×5 μ±kσ 的 fast clamp + `+0.02` 门控地板；**`GI_FAST_CLAMP_SIGMA` 默认已改 0.0（关闭）** | 突变被裁到邻域范围 | R | ❌ 自造且位置错，**2026-11-11 起默认关闭**（对齐官方 TA）。>0 时保留旧行为做 A/B；它会把长历史每帧拉向 6 帧短历史的噪声，是静止残噪来源之一 |
+| 4.4 | 颜色盒 clamp | **官方 TA 没有颜色盒**：`MixHistoryAndCurrent` 是纯 `lerp(history, current, f)`（REBLUR_Common.hlsli:193）；fast-history clamp 在 **HistoryFix** pass（HistoryFix.cs:278/487） | **2026-11-11 已删除** TA 里的自造 5×5 μ±kσ clamp；宏 `GI_FAST_CLAMP_SIGMA` 保留为 0、不再被任何 shader 读取（仅兼容旧配置）。官方 clamp 在 HistoryFix，GUI 项 `NRD_HISTORYFIX_CLAMP_SIGMA`（默认 2.0） | 突变由 HistoryFix 的官方 clamp 处理 | R | ✅ 已对齐：TA 为纯 lerp。旧自造项会把长历史每帧拉向 6 帧短历史的噪声（静止残噪 / 蠕动来源），代码与 GUI 均已移除 |
 | 4.5 | alpha | `GetAdvancedNonLinearAccumSpeed(accumSpeed)` = `1/(1+e·N)`，`e = s·lerp(b,1,saturate(N/(1+p·maxAccum)))`，默认 s=1/b=0.2/p=0.8（NRDSettings.h:254-268、REBLUR_Common.hlsli:302-308） | `_convS=1 / _convB=0.2 / _convP=0.8`，`alpha = 1/(1+k·N)` | 静止收敛曲线与公式逐项一致 | N+R | ✅ 重判保留：常数与公式逐项对齐，是本链少数真正与官方一致的一项 |
-| 4.6 | `maxAccumulatedFrameNum` | 30（NRDSettings.h:279），注释要求「按秒而非按帧」；`REBLUR_DEFAULT_ACCUMULATION_TIME = 0.5 s` | `GI_ACCUM_TIME/(frameTime·GI_EFFECTIVE_SPP)`，clamp 下限 8，暗处 `×4` | 60 fps / 0.5 s ⇒ cap = 30（官方同值） | N | ⚠️ **已修正**：`GI_EFFECTIVE_SPP` 2.0→**1.0**（VOXEL_REUSE 已 undef ⇒ 与官方 1 spp 同构），旧值 2.0 把 0.5 s 腰斩成 15 帧，是「静止满屏噪点」的直接来源之一。剩余偏差：下限 8 + 暗处 ×4 仍是 9.6 拖影来源 |
-| 4.7 | σ / 颜色盒 | 官方 TA 无 σ；`fastHistoryClampingSigmaScale=2` 只出现在 HistoryFix（HistoryFix.cs:482） | 我们在 TA 自造 fast clamp（见 4.4） | 官方 TA 不产生 σ | R | ⚠️ 自造，官方对应项在 §5 而非本链；保留但标注，与 4.4 同一处代码 |
+| 4.6 | `maxAccumulatedFrameNum` | 30（NRDSettings.h:279），注释要求「按秒而非按帧」；`REBLUR_DEFAULT_ACCUMULATION_TIME = 0.5 s` | `GI_ACCUM_TIME/(smoothedFrameTime·GI_EFFECTIVE_SPP)`，clamp 下限 8，暗处 `×4` | 60 fps / 0.5 s ⇒ cap = 30（官方同值） | N | ⚠️ **已修正**：`GI_EFFECTIVE_SPP` 2.0→**1.0**（VOXEL_REUSE 已 undef ⇒ 与官方 1 spp 同构），旧值 2.0 把 0.5 s 腰斩成 15 帧，是「静止满屏噪点」的直接来源之一。剩余偏差：下限 8 + 暗处 ×4 仍是 9.6 拖影来源。**[2026-11-11] 帧时间低通已对齐官方**：新增 `global.smoothedFrameTime`（GlobalStorage.comp 单 invocation 每帧 EMA，系数 0.1 ≈ 10 帧；`frameTime <= 0` 不更新），Accumulate / EAWF / GIStabilize / Final 诊断视图共用；此前三处直接吃瞬时 `frameTime`，是「静止整屏同步小幅呼吸」的直接来源 |
+| 4.7 | σ / 颜色盒 | 官方 TA 无 σ；`fastHistoryClampingSigmaScale=2` 只出现在 HistoryFix（HistoryFix.cs:482） | TA 已无颜色盒（自造 clamp 随 4.4 一并删除）；官方 σ 只在 HistoryFix 的 fast clamp 里使用 | 官方 TA 不产生 σ | R | ✅ 与 4.4 同步：自造 clamp 已移除，不再有 TA 侧 σ 消费者 |
 | 4.11 | anti-firefly | `maxRel = 2 + 38/(accumSpeed+1)`；`amount = accumSpeed·maxBlurRadius·0.1` 饱和；`ChangeLuma(result, lerp(luma, min(luma, cap), amount))`，fast 分支 ×1.5（TA:960-999） | 主链 + 短历史同口径（Accumulate.frag:370-397） | 单帧火点不进入主/短历史 | R+V | ✅ 实机 E 通过（2026-11-10 第二轮重载）：火点移走 1~2 帧回全绿。唯一缺口：官方对 `.w`=hitDist 也 clamp，我们的 `.a` 是历史长度 ⇒ 不适用 |
 | 4.12 | 负值历史 | `ClampNegativeToZero`：YCoCg 模式转回 RGB、clamp 负值、再转回（REBLUR_Common.hlsli:221-233） | **2026-11-11 补上**（Accumulate 的历史入口，紧跟 NaN 兜底） | 历史不得含负亮度 | S | ✅ 新增。负 Y 会让 antilag / RCRS / firefly 的亮度判据拿到错误分母（黑块、滤波异常）；正值历史往返恒等 |
 | 4.13 | 历史缓冲的尺寸/mip/UV 口径（本轮新增） | NRD 的 `resourceSize = rectSize`（降噪分辨率），所有读写都用同一个 `pixelPos`；NRD 自己**不做 mip 链** | colortex3 是全分辨率共享暂存缓冲（GI 只写左上 1/4）；`Accumulate` 的非 NRD 回退曾用 `textureLod(colortex3, texelToUv(texelPos), 3.0)` | 半分辨率信号只能用画布坐标 + texelFetch 读取 | R | ❌ **2026-11-11 已修**：`texelToUv` 是全分辨率像素尺寸，而 texelPos 是画布坐标 ⇒ 取到「整张全分辨率缓冲的第 3 级 mip」，与画布内容完全错位（等于把 1/16 分辨率当邻居起点）。改为画布坐标 4-tap `texelFetch`；同时删掉只为它服务的 `colortex3MipmapEnabled`（省一条全分辨率 mip 链）。另 `DeferredLight` 的 SSILVB 分支 `texelPos >> 1` 改为 `GICanvasCoord()`（奇数分辨率越界） |
@@ -342,6 +342,15 @@
 | B6 | **6.1 / 6.6 / 6.8 空间滤波重写为官方 Blur + PostBlur** | ✅ 2026-11-11 |
 | B7 | **4.3 CatRom12 历史采样** | ✅ 2026-11-11 |
 | B5 | 10.1~10.4（基准场景与残差） | ⏳ 需要实机 |
+
+> **[2026-11-11 第四轮 · 四个官方字段补齐 GUI]** 新增四个可调项，**默认值全部等于官方，不改观感**：
+> `NRD_PREPASS_RADIUS`（diffusePrepassBlurRadius=30，画布纹素）、`NRD_MIN_HITDIST_WEIGHT`（minHitDistanceWeight=0.1）、
+> `NRD_PLANE_DIST_SENS`（planeDistanceSensitivity=0.02，prepass / Blur / PostBlur / HistoryFix / TS 五处共用）、
+> `NRD_HISTORYFIX_CLAMP_SIGMA`（fastHistoryClampingSigmaScale=2.0，HistoryFix 内生效）。
+> 四处接线：settings.glsl（带中英文注释）/ shaders.properties（screen.VXGI + sliders + profile.Default）/ 双语 lang；
+> 三个 comp 各有 `#ifndef` 兜底（单独展开也能编译）。待实机只需确认两件事：滑块有反应、默认画面逐位不变。
+> 仍未暴露的官方字段：`hitDistanceReconstructionMode`（未实现，prepass 30 纹素平均已覆盖其功能）、
+> `maxFastAccumulatedFrameNum=6` / `historyFixFrameNum=3` / `historyFixBasePixelStride=14` / `antilagSettings` / `lobeAngleFraction`。
 
 > **[2026-11-11 进度]** B0/B0b/B2 **代码已实现**（2026-11-11）：
 > `GI_NRD_WEIGHTS`（B0+B0b 共用，GIPrepass + EAWF 主循环 + post-blur）与 `GI_NRD_TS`（B2，

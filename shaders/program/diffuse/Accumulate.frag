@@ -44,6 +44,7 @@ layout (location = 2) out vec4 fastHistory;
 //======// Uniform //=============================================================================//
 
 #include "/lib/universal/Uniform.glsl"
+#include "/lib/universal/SSBO.glsl"
 
 //======// Function //============================================================================//
 
@@ -295,65 +296,11 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             // 快速采纳本帧。之所以能删，是因为新像素的稳定性现在由 prepass（30px 稠密化）与
             // history fix（邻域重建）承担，不再需要靠压低混合率硬拖。
 
-            // [REBLUR 历史裁剪] 官方做法（`fastHistoryClampingSigmaScale = 2.0`，原文：「REBLUR clamps
-            // the spatially processed main history to the spatially unprocessed fast history」）：
-            // 把**空间滤波后**的长历史，夹到**未经滤波**的短历史的 `mean ± k·σ`。
-            // 短历史只累积、不掺滤波结果（固定 1/6 混合率 = 官方 maxFastAccumulatedFrameNum = 6）
-            // ⇒ 参考不会滞后：
-            //   · 光照变化（火把挪走）→ 短历史几帧内跟上 → 长历史被拉回 ⇒ 不拖影；
-            //   · 静止时短历史邻域足够宽、长历史原样通过 ⇒ 降噪收益不减；
-            //   · 长历史被逐帧夹在「当前信号附近」⇒ 滤波反馈不会把细节逐帧压掉。
-            // σ 取自短历史 3×3；另加绝对下限（暗处 σ≈0 时防过紧）。
-            #ifdef VOXEL_GI_NRD_ACTIVE
-                if (GI_FAST_CLAMP_SIGMA > 0.0) {
-                    // 官方 fastHistoryClampingSigmaScale = 2.0：σ 取自未经滤波的短历史邻域。
-                    // 关键修正（2026-11-08 实测「静止也扭动、动起来更糟」）：
-                    //   · 参考必须比被夹的东西**更平滑**，否则每帧都会夹住。短历史只有 6 帧，
-                    //     低光下单像素仍有约 40% 波动；用它 3×3 的 σ 当窗口 ⇒ 30 帧的长历史永远在
-                    //     窗口外 ⇒ 每帧被拉回，且 anti-lag 每帧把 alpha 抬到 0.3 ⇒ 累积建立不起来。
-                    //   · 官方能用是因为它的短历史在 prepass 里已做过 30px 空间重用（参考被平滑过）。
-                    //   · 这里改用 5×5 估 μ/σ（等效平滑参考），并加相对下限 15%·μ + 0.01，
-                    //     让正常波动落在窗口内；只有真正落后（拖影）才被夹。
-                    vec3 _fSum = prevFast;
-                    vec3 _fSum2 = prevFast * prevFast;
-                    float _fN = 1.0;
-                    for (int _fy = -2; _fy <= 2; ++_fy) {
-                        for (int _fx = -2; _fx <= 2; ++_fx) {
-                            if (_fx == 0 && _fy == 0) continue;
-                            ivec2 _ft = texelPos + ivec2(_fx, _fy);
-                            if (clamp(_ft, ivec2(0), canvasEnd - 1) != _ft) continue;
-                            vec3 _fc = texelFetch(colortex21, _ft, 0).rgb;
-                            _fSum += _fc;
-                            _fSum2 += _fc * _fc;
-                            _fN += 1.0;
-                        }
-                    }
-                    vec3 _mu = _fSum / _fN;
-                    vec3 _sigma = sqrt(max(_fSum2 / _fN - _mu * _mu, vec3(0.0)));
-                    vec3 _tol = GI_FAST_CLAMP_SIGMA * _sigma + 0.15 * _mu + vec3(0.01);
-                    vec3 _histOld = prevDiffuse.rgb;
-                    // [门控] 参考（短历史）本身每帧在变，5×5 的 μ/σ 也跟着变。若每帧都裁剪，
-                    // 60 帧的长历史会被反复拉向噪声 ⇒ 静止永远不稳（实测两轮）。
-                    // 只处理"真实变化"：偏差超过 max(3σ, 50%·μ) 才裁剪，噪声幅度内完全不碰。
-                    // 门控再加绝对地板 0.02：弱光下 μ/σ 都极小，`max(3σ, 0.5μ)` 会小到
-                    // 噪声幅度之外，于是长历史每帧都被拉向 6 帧的短历史 ⇒ 暗处静止也持续蠕动。
-                    // 0.02 在亮处可忽略，在暗部（Y≈0.02）等于 100% ⇒ 噪声完全不动历史。
-                    float _devMax = max(max(_sigma.r, _sigma.g), _sigma.b);
-                    float _muMax  = max(max(_mu.r, _mu.g), _mu.b);
-                    float _gate   = max(3.0 * _devMax, 0.5 * _muMax) + 0.02;
-                    float _devLen = length(_histOld - _mu);
-                    if (_devLen > _gate) {
-                        prevDiffuse.rgb = clamp(_histOld, _mu - _tol, _mu + _tol);
-                    }
-                    // [官方位置] antilag **不在**主累积里：NRD 的 `ComputeAntilag` 只在
-                    // REBLUR_TemporalStabilization 中调用（TA 只有 convergenceSettings +
-                    // fastHistory clamp）。此前在这里用「裁剪量 → 抬 alpha」是自造近似，
-                    // 每帧都会在噪声幅度内抬高 alpha ⇒ 静止时累积帧数上不去 ⇒ GI 小幅闪。
-                    // 现在统一由 GIStabilize（TS）按官方 mode 2 公式处理，这里不再干预 alpha。
-                }
-
-                // firefly 抑制见下方「混合之后」处（官方位置：TA 的 diffResult，不在历史侧）。
-            #endif
+            // [fast-history clamp] 官方机制在 **GIHistoryFix**（deferred5）里执行：
+            // 把空间滤波后的长历史亮度夹到「未经滤波的 6 帧短历史」的 mean ± k·σ
+            //（fastHistoryClampingSigmaScale，默认 2.0，GUI 项 NRD_HISTORYFIX_CLAMP_SIGMA）。
+            // TA 这里**不做**颜色盒——官方 TA 是纯 lerp；旧的自造 5×5 clamp 已于 2026-11-11 移除
+            //（它把 6 帧短历史的噪声逐帧拉进长历史，是静止蠕动与拖影的来源之一）。
 
             // [2026-11 回正] 原"_preSmooth 运动前置平滑"已删除。它用全分辨率 UV 与象限空间的
             // screenPos 相减，恒带 ≈0.25 的假底盘 ⇒ 平滑每帧无条件执行；而且混合源 colortex3
@@ -543,10 +490,18 @@ void main() {
         //   "The FPS passed to this function must be **low pass filtered** to reduce reactions to
         //    transient drops (stutters). Without filtering, a momentary 60 => 30 => 60 FPS change
         //    with a 0.5-second accumulation time changes the limit from 30 => 15 => 30 frames."
-        // 我们没有跨帧状态做低通，只能让 cap 随 frameTime 连续变化（原先的 8 帧离散化反而放大抖动）。
+        // [2026-11-11 已对齐] 官方要求的「FPS 先低通」现在由 GlobalStorage.comp 统一完成
+        //（SSBO `global.smoothedFrameTime`，EMA 时间常数约 10 帧）。三处消费者
+        //（本文件 / EAWF / GIStabilize）读同一个值 ⇒ cap、alpha、滤波半径、TS 权重
+        // 不再随单帧掉帧整屏抽动。这里的注释保留为历史记录，不再代表现状。
         // [有效样本数折算] 上限按「每帧等效样本数」折算：
         // 除以 GI_EFFECTIVE_SPP 是为了不让上游的 32 样本空间重用被重复计入。
-        float _targetCap = clamp(GI_ACCUM_TIME / (max(frameTime, 1e-4) * max(GI_EFFECTIVE_SPP, 1.0)),
+        // 兜底：若 SSBO 尚未被 GlobalStorage 写过（首帧/异常路径），退回瞬时值，
+        // 避免 `max(0, 1e-4)` 把 cap 顶到硬上限导致累积过粘。
+        float _stableFrameTime = global.smoothedFrameTime > 1e-6
+                               ? global.smoothedFrameTime
+                               : max(frameTime, 1e-4);
+        float _targetCap = clamp(GI_ACCUM_TIME / (_stableFrameTime * max(GI_EFFECTIVE_SPP, 1.0)),
                                  8.0, SSILVB_MAX_ACCUM_FRAMES);
         // [2026-11-10 去掉 8 帧量化] 量化本意是"fps 抖动不该改变档位"，但档位边界上它会
         // 把连续抖动放大成整档跳变（24↔32），而 A 现在会饱和到上限 ⇒ **整屏亮度逐帧跳**。

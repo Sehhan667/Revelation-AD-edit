@@ -508,7 +508,12 @@ void main() {
         float _dbgA    = _dbgHist.a;
         // 本帧真实累积上限：必须和 Accumulate.frag 的计算**逐项一致**，否则"绿"永远够不到。
         // 旧版漏了 `/ GI_EFFECTIVE_SPP`（上限被高估 2 倍）⇒ A 停在真上限时也只显示黄，永远没有绿。
-        float _dbgCap = clamp(GI_ACCUM_TIME / (max(frameTime, 1e-4) * max(GI_EFFECTIVE_SPP, 1.0)),
+        // [2026-11-11] 与 Accumulate 同步改用 GlobalStorage 的低通帧时间（同一 SSBO 字段），
+        // 否则诊断读数的分母仍在逐帧抖，A/cap 会假性抽动。
+        float _stableFrameTime = global.smoothedFrameTime > 1e-6
+                               ? global.smoothedFrameTime
+                               : max(frameTime, 1e-4);
+        float _dbgCap = clamp(GI_ACCUM_TIME / (_stableFrameTime * max(GI_EFFECTIVE_SPP, 1.0)),
                               8.0, SSILVB_MAX_ACCUM_FRAMES);
 #ifdef VOXEL_GI_DARK_ACCUM
         {

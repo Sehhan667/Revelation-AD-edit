@@ -110,6 +110,7 @@ layout (rgba16f) restrict uniform image2D colorimg25;
 //======// Uniform //=============================================================================//
 
 #include "/lib/universal/Uniform.glsl"
+#include "/lib/universal/SSBO.glsl"
 
 //======// Function //============================================================================//
 
@@ -127,9 +128,13 @@ layout (rgba16f) restrict uniform image2D colorimg25;
 #define REBLUR_HITDIST_B 0.1
 
 // 官方空间滤波参数（Common.hlsli / REBLUR_Config.hlsli / NRDSettings.h 默认值）
-#define PLANE_DIST_SENS 0.02       // planeDistanceSensitivity
+#ifndef NRD_PLANE_DIST_SENS
+	#define NRD_PLANE_DIST_SENS 0.02
+#endif
 #define LOBE_ANGLE_FRACTION 0.15   // lobeAngleFraction
-#define MIN_HITDIST_WEIGHT 0.1     // minHitDistanceWeight
+#ifndef NRD_MIN_HITDIST_WEIGHT
+	#define NRD_MIN_HITDIST_WEIGHT 0.1
+#endif
 #define NORMAL_ENCODING_ERROR 0.0059  // NRD_NORMAL_ENCODING_ERROR（≈1.5/255）
 
 // 官方 g_Special8（Common.hlsli:207）：4 个轴点（半径 1.0）+ 4 个对角点（半径 0.25·√2 = 0.5）。
@@ -219,7 +224,13 @@ void main() {
 	// maxAccum 必须是**累积上限本身**（与 Accumulate 同一个 cap 公式）：
 	// 旧写法用 SSILVB_MAX_ACCUM_FRAMES(=128) 当分母，N=30 时把 NLAS 算成 1/9 而不是 1/31
 	// ⇒ 半径大 2 倍；一旦主历史回流，这个错误会被逐帧放大成"整体发糊"。
-	float _accumCap = clamp(GI_ACCUM_TIME / (max(frameTime, 1e-4) * max(GI_EFFECTIVE_SPP, 1.0)),
+	// [2026-11-11 官方对齐] 用 GlobalStorage 低通过的帧时间：瞬时 frameTime 会让 cap
+	// 逐帧抖几帧 ⇒ nonLinearSpeed / 半径 / 权重整屏同步抽动。
+	// 兜底：SSBO 未被写过（首帧/异常路径）时退回瞬时值，避免 cap 顶到硬上限。
+	float _stableFrameTime = global.smoothedFrameTime > 1e-6
+	                       ? global.smoothedFrameTime
+	                       : max(frameTime, 1e-4);
+	float _accumCap = clamp(GI_ACCUM_TIME / (_stableFrameTime * max(GI_EFFECTIVE_SPP, 1.0)),
 	                        8.0, SSILVB_MAX_ACCUM_FRAMES);
 	float fade = saturate(frameIndex * rcp(max(_accumCap, 1.0)));
 	float nonLinearSpeed = rcp(1.0 + fade * max(frameIndex, 1.0));
@@ -265,7 +276,7 @@ void main() {
 
 	// 官方 minHitDistWeight = gMinHitDistanceWeight · fractionScale · smc(=1) · NLAS
 	// （最后那个 ×NLAS 只在非 prepass、非 occlusion 模式下生效，Blur/PostBlur 都属于此类）
-	float minHitDistWeight = MIN_HITDIST_WEIGHT * SPATIAL_FRACTION_SCALE * nonLinearSpeed;
+	float minHitDistWeight = NRD_MIN_HITDIST_WEIGHT * SPATIAL_FRACTION_SCALE * nonLinearSpeed;
 
 	// 旋转：同一 2x2 画布块共享角度（官方 rotator 的意图），否则逐像素完全随机会让
 	// 每个像素的模糊方向不同 ⇒ 半分辨率画布上出现颗粒状/斑块状的低频结构。
@@ -276,7 +287,7 @@ void main() {
 	              + GI_ROT_PER_FRAME * float(frameCounter) * 2.39996323;
 	mat2 _tapRot = mat2(cos(_tapAng), sin(_tapAng), -sin(_tapAng), cos(_tapAng));
 
-	float _planeNorm = max(PLANE_DIST_SENS * frustumSize, 1e-3);
+	float _planeNorm = max(NRD_PLANE_DIST_SENS * frustumSize, 1e-3);
 
 	//======// 官方 8-tap 空间滤波 //==============================================================//
 	f16vec3 sumRGB = centerSample.rgb;

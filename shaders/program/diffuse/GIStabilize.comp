@@ -55,6 +55,7 @@ layout (rgba16f) restrict readonly uniform image2D colorimg25;   // EAWF（空�
 layout (rgba16f) restrict uniform image2D colorimg23;            // 稳定化输出
 
 #include "/lib/universal/Uniform.glsl"
+#include "/lib/universal/SSBO.glsl"
 #include "/lib/universal/Transform.glsl"
 #include "/lib/universal/Fetch.glsl"
 
@@ -65,7 +66,10 @@ layout (rgba16f) restrict uniform image2D colorimg23;            // 稳定化输
 // 官方 historyFixFrameNum = 3：antilag 触发时历史长度最低回落到这里
 #define HISTORY_FIX_FRAME_NUM 3.0
 // 官方 planeDistanceSensitivity = 0.02（与 prepass / EAWF / HistoryFix 同一口径）
-#define PLANE_DIST_SENS_TS 0.02
+#ifndef NRD_PLANE_DIST_SENS
+    #define NRD_PLANE_DIST_SENS 0.02
+#endif
+#define PLANE_DIST_SENS_TS NRD_PLANE_DIST_SENS
 
 // Catmull-Rom 核（官方 BicubicFilterNoCorners 用的就是它）：
 //   |t| < 1 : 1.5|t|³ - 2.5|t|² + 1
@@ -334,11 +338,18 @@ void main() {
 
     // 官方 `gMaxAccumulatedFrameNum`：TS 的权重公式用的是 **TA 的累积上限**（与 Accumulate/EAWF
     // 同一个公式），不是本级自造的帧数上限。
-    float accumCap = clamp(GI_ACCUM_TIME / (max(frameTime, 1e-4) * max(GI_EFFECTIVE_SPP, 1.0)),
+    // [2026-11-11 官方对齐] accumCap 与 framerateScale 都改用 GlobalStorage 低通过的帧时间。
+    // 官方 NRD 要求传入的 FPS 先平滑；直接用瞬时 frameTime 会让 antilag 的 magic 逐帧变，
+    // 历史权重随之摆动。
+    // 兜底：SSBO 未被写过（首帧/异常路径）时退回瞬时值，避免 cap 顶到硬上限。
+    float _stableFrameTime = global.smoothedFrameTime > 1e-6
+                           ? global.smoothedFrameTime
+                           : max(frameTime, 1e-4);
+    float accumCap = clamp(GI_ACCUM_TIME / (_stableFrameTime * max(GI_EFFECTIVE_SPP, 1.0)),
                            8.0, SSILVB_MAX_ACCUM_FRAMES);
 
     // 官方 framerateScale = clamp(fps / 60, 0.5, 2.0)：低帧率时时间步更大，antilag 更敏感
-    float framerateScale = clamp(rcp(60.0 * max(frameTime, 1e-4)), 0.5, 2.0);
+    float framerateScale = clamp(rcp(60.0 * _stableFrameTime), 0.5, 2.0);
     // [7.2] 官方 magic = luminanceSensitivity·(2·fpsScale)²（ComputeAntilag，REBLUR_Common:241）。
     float magic = ANTILAG_LUMA_SENSITIVITY * (2.0 * framerateScale) * (2.0 * framerateScale);
 

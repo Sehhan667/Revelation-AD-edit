@@ -46,6 +46,12 @@ layout (std430, binding = 0) SSBO_DECLARED_TPYE buffer GlobalData {
     vec4 skyViewStatePending;    // 暂存：与 skyViewPending 同帧写入，次帧提交
     float skyViewWetnessPending;
     float skyViewMoonMultPending;
+    // [2026-11-11] **低通后的帧时间**（秒）。官方 NRD README 明确要求：传给
+    // `GetMaxAccumulatedFrameNum` 的 FPS 必须先低通，否则瞬时掉帧（60→30→60）会让
+    // 累积上限在 30→15→30 之间跳，进而 alpha / 空间滤波半径 / TS 历史权重整屏逐帧抽动。
+    // 由 GlobalStorage.comp（binding 0、单 invocation）每帧 EMA 更新，其余 pass 只读。
+    // std430 追加在结构体尾部，不影响任何既有字段偏移。
+    float smoothedFrameTime;
 } global;
 
 layout (std430, binding = 1) SSBO_DECLARED_TPYE buffer ExposureData {

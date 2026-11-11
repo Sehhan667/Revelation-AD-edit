@@ -34,8 +34,27 @@ const ivec3 workGroups = ivec3(1, 1, 1);
 #include "/lib/atmosphere/Common.glsl"
 #include "/lib/atmosphere/clouds/Common.glsl"
 
+// 帧时间 EMA 系数。0.1 ⇒ 时间常数约 10 帧（60 fps 下 ≈ 160 ms）：足以滤掉逐帧抖动与
+// 单帧卡顿，又不会让累积上限对真实帧率变化反应过慢。cap 只影响降噪强度、不影响画面亮度，
+// 所以帧率突变时慢半拍是安全的。
+#define GI_FRAME_TIME_SMOOTHING 0.1
+
 //======// Main //================================================================================//
 void main() {
+	// ---- 帧时间低通（官方 NRD README 的硬要求）----
+	// "The FPS passed to this function must be low pass filtered to reduce reactions to
+	//  transient drops (stutters)." 三个消费者（Accumulate / EAWF / GIStabilize）都直接
+	// 拿它算 accumCap 与 framerateScale，用瞬时 frameTime 会让这三处整屏同步逐帧抽动。
+	// 持久 SSBO 首帧为 0 ⇒ 直接取当前值，避免从 0 缓慢爬升把首帧 cap 打到下限。
+	// frameTime <= 0（暂停/加载/异常）时**不更新**：若把 0 参与 EMA，平滑值会被拉向 0，
+	// cap 随后撞到上限（128）⇒ 恢复后几十帧累积过粘、拖影明显。
+	float _prevFrameTime = global.smoothedFrameTime;
+	if (frameTime > 0.0) {
+		global.smoothedFrameTime = _prevFrameTime > 1e-6
+			? mix(_prevFrameTime, frameTime, GI_FRAME_TIME_SMOOTHING)
+			: frameTime;
+	}
+
 	// Compute illuminance
 	vec3 sunIlluminance = sunIrradiance * AtmosphereTransmittanceToSun(atmosphereViewPos, worldSunDir);
 	vec3 moonIlluminance = sunIrradiance * AtmosphereTransmittanceToSun(atmosphereViewPos, -worldSunDir) * moonlightMult;
