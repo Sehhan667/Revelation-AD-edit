@@ -56,6 +56,23 @@
 	const int 	colortex18Format 			= RGBA16F;	// SSS 源项（半分辨率；rgb = 源项×mask，a = mask）
 	const int 	colortex19Format 			= RGBA16F;	// SSS 横向模糊结果（半分辨率）
 	const int 	colortex20Format 			= RGBA16F;	// SSS 纵向模糊结果（半分辨率）
+	// REBLUR 短历史（fastHistory）：只累积、不掺滤波结果，用作长历史的裁剪参考。
+	// REBLUR prepass 输出：rgb = 空间重用后的噪声输入（YCoCg），a = 归一化命中距离。
+	// 独立缓冲是官方做法（prepass 是一个 pass，不是采样处顺手平均）。
+	// REBLUR stabilized radiance：对**滤波后**结果再累积一档（最长 63 帧），
+	// 用途是消除滤波输出的残余时域起伏（官方 maxStabilizedFrameNum = REBLUR_MAX_HISTORY_FRAME_NUM）。
+	// rgb = 稳定化辐射（YCoCg），a = 累积帧数。
+	// REBLUR prepass 的方差输出（官方在 prepass 里用空间重用样本的离散度估方差）。
+	// r = 方差；其余通道留空。
+	const int 	colortex24Format 			= RGBA16F;
+	// EAWF a-trous ping-pong scratch（compute pass 不自动 flip，原地读写会竞态）
+	const int 	colortex25Format 			= RGBA16F;
+	// 时域平滑后的归一化命中距离（EMA）：prepass 读上一帧、写本帧，供 EAWF 的
+	// minHitDistanceWeight 与半径缩放使用（官方要求命中距离是稳定量，不能逐帧抖）
+	const int 	colortex26Format 			= RGBA16F;
+	const int 	colortex23Format 			= RGBA16F;
+	const int 	colortex22Format 			= RGBA16F;
+	const int 	colortex21Format 			= RGBA16F;
 
 	// [2026-09-10] Iris 官方常量（location: composite/deferred/final/prepare）：
 	// shadow.culling = reversed 时，玩家周围这个半径内的几何在 shadow pass 里不剔除、
@@ -83,6 +100,12 @@
 	const bool	colortex18Clear				= false;
 	const bool	colortex19Clear				= false;
 	const bool	colortex20Clear				= false;
+	const bool 	colortex21Clear			= false;
+	const bool 	colortex22Clear			= true;
+	const bool 	colortex23Clear			= false;   // 时域缓冲，必须保留
+	const bool 	colortex24Clear			= false;   // 2026-11-11 起：TS 历史快照，必须跨帧保留
+	const bool 	colortex25Clear			= false;  // EAWF 每遍全量覆盖，不需要清
+	const bool 	colortex26Clear			= false;  // 时域缓冲，必须保留
 
 	const vec4	colortex6ClearColor			= vec4(0.0, 0.0, 0.0, 1.0);
 

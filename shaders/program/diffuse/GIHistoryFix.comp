@@ -1,0 +1,246 @@
+/*
+--------------------------------------------------------------------------------
+  Revelation-AD-edit  —  REBLUR HistoryFix（按官方 REBLUR_HistoryFix.cs.hlsl 重写）
+--------------------------------------------------------------------------------
+
+  官方位置（`Source/Reblur.cpp:145-186`，diffuse 分支的派发顺序）：
+
+      PREPASS → TEMPORAL_ACCUMULATION → **HISTORY_FIX** → BLUR → POST_BLUR → TEMPORAL_STABILIZATION
+
+  官方输入/输出（`REBLUR_HistoryFix.resources.hlsli`）：
+      in : gIn_Diff   = **本帧 TA 的输出**（不是历史！）、gIn_Data1 = 帧数
+      out: gOut_Diff  = `NRD_RESOURCE_OUT`（当帧临时，只喂给 Blur）
+           gOut_DiffFast = `NRD_RESOURCE_PERMANENT`（跨帧的短历史）
+
+  ⇒ 两个关键性质，本项目此前都没有：
+   1. 它修的是**本帧的 TA 输出**，不是历史缓冲；
+   2. 修复结果**不回写历史**（`gOut_Diff` 只是当帧临时）。
+
+  官方算法（不是"从邻居借历史"，而是"对帧数不足的像素做一次宽步长重建"）：
+      if (frameNum >= historyFixFrameNum) → 跳过重建，只做 fast-history 亮度夹取
+      else:
+          sumd = 1 + frameNum;  diff = 本像素值 × sumd        // 自己的权重是 1+frameNum
+          for 5×5 邻域（跳过中心与 4 个角，共 20 tap，步长 = stride）:
+              w = 平面距离权重 × 法线瓣角权重 × (1 + 邻居帧数) × 命中距离权重
+              diff += w × 邻居的**本帧 TA 输出**;  sumd += w
+          diff /= sumd
+      然后：亮度夹到 fast history 的 μ±2σ，再按 `lerp(clamped, orig, 1/(1+frameNum·2))` 软化，
+            最后 ChangeLuma（只动亮度）。
+
+  stride（官方 historyFixBasePixelStride = 14，经 `*2/RADIUS(2)` 与 `/2` 折成半径）：
+      stride = round( 7 × lerp(0.25 + 0.75·sqrt(hitDistFactor), 1, NLAS) )
+      tap 位置 = offset × stride，offset ∈ [-2..2]²（去掉 4 个角）
+  即最大覆盖 ±14 个降噪纹素（= ±28 屏幕像素）。本包此前固定用 2（±4）是"怕贴出硬边界"，
+  但那是旧算法（借历史）的副作用；官方算法是对**本帧**信号做加权平均，不存在跨帧污染。
+
+  本 pass 在管线里的位置：**deferred5**（Accumulate 之后、EAWF 之前）。
+  `deferred5` 原本跑 VarianceEstimate，但它在 NRD 路径里只是把 colortex2 复制到 colortex3
+  （EAWF 的实际源是 colortex2，这次复制没有消费者）⇒ 复用这个槽位不丢任何功能；
+  GI_MODE==1（SSILVB/SVGF）仍走原 VarianceEstimate，见 world0/deferred5.csh 的分派。
+
+  输出：colortex25（rgb = 重建后的辐射，YCoCg）—— 只给本帧 EAWF 用，不参与历史。
+--------------------------------------------------------------------------------
+*/
+
+//======// Input //===============================================================================//
+
+layout (local_size_x = 8, local_size_y = 8) in;
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+#ifdef VXGI_FULLRES
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+#else
+const vec2 workGroupsRender = vec2(0.5, 0.5);
+#endif
+
+//======// Uniform //=============================================================================//
+
+layout (rgba16f) restrict uniform image2D colorimg25;   // 输出：重建后的本帧信号（当帧临时）
+
+#include "/lib/universal/Uniform.glsl"
+#include "/lib/universal/Transform.glsl"
+#include "/lib/universal/Fetch.glsl"
+
+//======// Function //============================================================================//
+
+// 官方默认值
+#define HISTORY_FIX_FRAME_NUM 3.0     // historyFixFrameNum
+#define FIX_RADIUS 2                  // REBLUR_HISTORY_FIX_FILTER_RADIUS
+#define FAST_CLAMP_RADIUS 2           // REBLUR_FAST_HISTORY_CLAMPING_RADIUS
+#ifndef NRD_HISTORYFIX_CLAMP_SIGMA
+    #define NRD_HISTORYFIX_CLAMP_SIGMA 2.0
+#endif
+#ifndef NRD_PLANE_DIST_SENS
+    #define NRD_PLANE_DIST_SENS 0.02
+#endif
+#define FAST_CLAMP_SIGMA NRD_HISTORYFIX_CLAMP_SIGMA
+#define PLANE_DIST_SENS NRD_PLANE_DIST_SENS
+#define LOBE_ANGLE_FRACTION 0.15      // lobeAngleFraction
+// 官方 hitDist 归一化参数（ReblurHitDistanceParameters）：f = A + |viewZ|·B（diffuse，roughness=1）
+#define REBLUR_HITDIST_A 3.0
+#define REBLUR_HITDIST_B 0.1
+
+// 官方 GetNormalWeightParam：pov = 0.75·lerp(lobeAngleFraction, 1, NLAS)，
+// tanHalf = sqrt(pov/(1-pov))，angleMax = max(atan(tanHalf), 1.5/255)，param = 1/angleMax。
+float NormalWeightParam(float nlas) {
+    float pov = 0.75 * mix(LOBE_ANGLE_FRACTION, 1.0, saturate(nlas));
+    float tanHalf = sqrt(pov * rcp(max(1.0 - pov, 1e-4)));
+    return rcp(max(atan(tanHalf), 1.5 / 255.0));
+}
+
+// 官方 ComputeNonExponentialWeight = Math::SmoothStep(1, 0, |u|) 三次窗
+// （NRD_USE_EXPONENTIAL_WEIGHTS 默认 0 ⇒ 几何权重走它）
+float WindowWeight(float u) {
+    float t = saturate(1.0 - abs(u));
+    return t * t * (3.0 - 2.0 * t);
+}
+
+// 官方 ComputeExponentialWeight = ExpApprox( -3·|u| )，ExpApprox(x) = rcp(x² - x + 1)
+// ⇒ rcp(9u² + 3u + 1)。HistoryFix 的**法线**与**命中距离**权重走它（官方这两处显式用指数），
+// 只有几何权重走三次窗。此前法线用三次窗，与官方不一致。
+float ExpWeight(float u) {
+    float v = 3.0 * abs(u);
+    return rcp(v * v + v + 1.0);
+}
+
+void main() {
+    ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+
+#ifdef VXGI_FULLRES
+    ivec2 canvasEnd = ivec2(viewSize);
+    ivec2 rt = texelPos;
+#else
+    ivec2 canvasEnd = ivec2(halfViewSize);
+    ivec2 rt = texelPos * 2 + GI_CANVAS_PHASE;
+#endif
+    if (any(greaterThanEqual(texelPos, canvasEnd))) return;
+
+#if GI_DEBUG_NO_HISTORY_FIX > 0
+    // A/B 直通：不做重建、不做 fast clamp，直接把本帧 TA 输出搬过去
+    imageStore(colorimg25, texelPos, texelFetch(colortex2, texelPos, 0));
+    return;
+#endif
+
+    float depth = loadDepth0(rt);
+    // 天空：与 Accumulate 同口径清零（那里天空也写 0）
+    if (depth >= 1.0) {
+        imageStore(colorimg25, texelPos, vec4(0.0));
+        return;
+    }
+
+    // 本帧 TA 的输出（Accumulate 在 deferred4 写入；rgb = YCoCg，a = 累积帧数）
+    vec4 src = texelFetch(colortex2, texelPos, 0);
+    vec3 diff = src.rgb;
+    float frameNum = src.a;
+    if (!(frameNum >= 0.0) || frameNum > 1e6) frameNum = 0.0;
+
+    vec2 canvasUv = (vec2(texelPos) + 0.5) / vec2(canvasEnd);
+    float viewZ = ScreenToViewDepth(depth);
+    vec3 viewPos = ScreenToViewPosRaw(canvasUv, viewZ);
+
+    // 视锥短边在该深度处的世界尺寸（官方 GetFrustumSize）
+    float frustumSize = 2.0 * max(abs(viewZ), 1e-3) * rcp(max(gbufferProjection[1][1], 1e-3));
+
+    // 本帧几何引导（官方用 gIn_Normal_Roughness / gIn_ViewZ，都是**本帧**数据）
+    vec3 geoNormal, surfNormal;
+    FetchNormalData(rt, geoNormal, surfNormal);
+    vec3 planeN = mat3(gbufferModelView) * geoNormal;
+
+    // ---- ① 重建（仅当帧数不足）----
+    if (frameNum < HISTORY_FIX_FRAME_NUM) {
+        // 官方 NLAS = 1/(1+frameNum)
+        float nlas = rcp(1.0 + frameNum);
+        float normalParam = NormalWeightParam(nlas);
+
+        // 命中距离（colortex26 = prepass 时域平滑后的归一化值），用来缩放 stride
+#ifdef VOXEL_GI_NRD_ACTIVE
+        float normHit = texelFetch(colortex26, texelPos, 0).r;
+#else
+        float normHit = 0.0;
+#endif
+        float hitDistM = normHit * (REBLUR_HITDIST_A + abs(viewZ) * REBLUR_HITDIST_B);
+        float hitDistFactor = saturate(hitDistM * rcp(max(frustumSize, 1e-3)));
+
+        // 官方 stride：基值 7 个降噪纹素，再按 hitDistFactor / NLAS 收缩，最后取整
+        float stride = round(7.0 * mix(0.25 + 0.75 * sqrt(hitDistFactor), 1.0, nlas));
+        stride = max(stride, 1.0);
+
+        float sumd = 1.0 + frameNum;
+        vec3 acc = diff * sumd;                 // 自己的权重就是 1+frameNum
+
+        for (int j = -FIX_RADIUS; j <= FIX_RADIUS; ++j) {
+            for (int i = -FIX_RADIUS; i <= FIX_RADIUS; ++i) {
+                if (i == 0 && j == 0) continue;
+                if (abs(i) + abs(j) == FIX_RADIUS * 2) continue;      // 官方跳过 4 个角
+                ivec2 t = texelPos + ivec2(i, j) * int(stride);
+                if (clamp(t, ivec2(1), canvasEnd - 2) != t) continue;
+
+#ifdef VXGI_FULLRES
+                ivec2 tScreen = t;
+#else
+                ivec2 tScreen = t * 2 + GI_CANVAS_PHASE;
+#endif
+                float nz = ScreenToViewDepth(loadDepth0(tScreen));
+                if (nz > -1e-4 && nz < 1e-4) continue;                // 天空邻居
+                vec3 nViewPos = ScreenToViewPosRaw((vec2(tScreen) + 0.5) * viewPixelSize, nz);
+                float planeDist = abs(dot(nViewPos - viewPos, planeN));
+                float w = WindowWeight(planeDist * rcp(max(PLANE_DIST_SENS * frustumSize, 1e-3)));
+
+                vec3 nAux = texelFetch(colortex14, t, 0).xyz;
+                float cosA = clamp(dot(OctDecodeSnorm(nAux.xy), surfNormal), -1.0, 1.0);
+                float ang = acos(cosA);
+                w *= ExpWeight(ang * normalParam);          // 官方法线权重 = 指数，不是三次窗
+                if (w <= 1e-4) continue;
+
+                vec4 ns = texelFetch(colortex2, t, 0);
+                float nAge = ns.a;
+                if (!(nAge >= 0.0) || nAge > 1e6) nAge = 0.0;
+                // 官方 `w *= 1 + data1.x`：已稳定的邻居更可信（不夹上限）
+                w *= 1.0 + nAge;
+
+                // 命中距离一致性：只从命中距离接近的邻居继承
+#ifdef VOXEL_GI_NRD_ACTIVE
+                {
+                    float nHit = texelFetch(colortex26, t, 0).r;
+                    float u = 3.0 * abs(nHit - normHit) * rcp(max(nlas, 1e-3));
+                    w *= rcp(u * u + u + 1.0);
+                }
+#endif
+                acc += ns.rgb * w;
+                sumd += w;
+            }
+        }
+        diff = acc * rcp(max(sumd, 1e-4));
+    }
+
+    // ---- ② fast-history 亮度夹取（官方无条件执行，与是否重建无关）----
+    // 官方：μ/σ 取 fast history 的 5×5（FAST_CLAMP_RADIUS=2），
+    //   diffLumaClamped = clamp(diffLuma, μ-2σ, μ+2σ)
+    //   diffLuma = lerp(diffLumaClamped, diffLuma, 1/(1+frameNum·2))
+    //   然后 ChangeLuma（只动亮度，色差比例不变）
+    {
+        float m1 = 0.0, m2 = 0.0, n = 0.0;
+        for (int j = -FAST_CLAMP_RADIUS; j <= FAST_CLAMP_RADIUS; ++j) {
+            for (int i = -FAST_CLAMP_RADIUS; i <= FAST_CLAMP_RADIUS; ++i) {
+                ivec2 t = clamp(texelPos + ivec2(i, j), ivec2(0), canvasEnd - 1);
+                float y = texelFetch(colortex21, t, 0).r;    // 短历史亮度（未滤波）
+                m1 += y; m2 += y * y; n += 1.0;
+            }
+        }
+        if (n > 0.5) {
+            float inv = rcp(n);
+            float mu = m1 * inv;
+            float sigma = sqrt(max(m2 * inv - mu * mu, 0.0)) * FAST_CLAMP_SIGMA;
+            float luma = diff.r;
+            float clamped = clamp(luma, mu - sigma, mu + sigma);
+            float newLuma = mix(clamped, luma, rcp(1.0 + frameNum * 2.0));
+            if (luma > 1e-6) diff *= newLuma * rcp(luma);   // ChangeLuma
+        }
+    }
+
+    // 官方 HistoryFix **不改帧数**（data1 由 TA 算好、PostBlur 原样写出），这里原样透传。
+    imageStore(colorimg25, texelPos, vec4(diff, frameNum));
+}

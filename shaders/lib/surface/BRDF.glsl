@@ -2,7 +2,7 @@
 // References:
 // https://ubm-twvideo01.s3.amazonaws.com/o1/vault/gdc2017/Presentations/Hammon_Earl_PBR_Diffuse_Lighting.pdf
 // https://schuttejoe.github.io/post/disneybsdf/
-// https://www.pbr-book.org/3ed-2018/Reflection_Models/Microfacet_Models#\
+// https://www.pbr-book.org/3ed-2018/Reflection_Models/Microfacet_Models
 // https://media.disneyanimation.com/uploads/production/publication_asset/48/asset/s2012_pbs_disney_brdf_notes_v3.pdf
 // https://www.gamedevs.org/uploads/real-shading-in-unreal-engine-4.pdf
 // https://www.guerrilla-games.com/read/decima-engine-advances-in-lighting-and-aa

@@ -22,6 +22,12 @@ uniform sampler2D colortex12;
 uniform usampler2D colortex13;
 uniform sampler2D colortex14;
 uniform sampler2D colortex15;
+uniform sampler2D colortex21;
+uniform sampler2D colortex22;
+uniform sampler2D colortex23;
+uniform sampler2D colortex24;   // REBLUR prepass 方差（r）   // REBLUR stabilized radiance（rgb=稳定化结果，a=帧数）（radiance + 归一化命中距离）   // REBLUR 短历史（fastHistory）
+uniform sampler2D colortex25;   // HistoryFix 修复后的长历史（Accumulate 的历史输入）/ EAWF 乒乓中间体 / deferred10 写出的 TS 历史快照
+uniform sampler2D colortex26;   // 时域平滑后的归一化命中距离（r）
 
 uniform sampler2D depthtex0;
 uniform sampler2D depthtex1;

@@ -1,0 +1,286 @@
+/*
+--------------------------------------------------------------------------------
+  Revelation-AD-edit  —  REBLUR Prepass（官方 diffusePrepassBlurRadius = 30）
+--------------------------------------------------------------------------------
+
+  官方 NRD `ReblurSettings`：
+      // (pixels) - pre-accumulation spatial reuse pass blur radius
+      // (0 = disabled, must be used in case of badly defined signals and probabilistic sampling)
+      float diffusePrepassBlurRadius = 30.0f;
+
+  它的职责有两个（都在**累积之前**完成）：
+  1. **空间重用**：把稀疏的 1 spp 噪声输入在 30 px 半径内加权平均，得到"稠密"的输入，
+     这样时域累积器与后面的空间滤波面对的不再是大量 0；
+  2. **归一化命中距离**：官方定义
+         normHitDist = saturate( hitDistance / f )
+         f = ( A + viewZ * B ) * lerp( 1, C, exp2( D * roughness^2 ) )
+     A=3.0, B=0.1, C=20.0, D=-25.0；漫反射 roughness=1 时 exp2(-25)≈0 ⇒ 因子塌缩为 1
+     ⇒ `f = A + viewZ * B`。该值写入输出 .a，供空间 pass 的 `minHitDistanceWeight` 使用。
+
+  输出：colortex22（半分辨率，RGBA16F）
+      rgb = 空间重用后的 YCoCg 输入
+      a   = 归一化命中距离
+--------------------------------------------------------------------------------
+*/
+
+//======// Input //===============================================================================//
+
+layout (local_size_x = 8, local_size_y = 8) in;
+
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
+#ifdef VXGI_FULLRES
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+#else
+const vec2 workGroupsRender = vec2(0.5, 0.5);
+#endif
+
+//======// Uniform //=============================================================================//
+
+layout (rgba16f) restrict uniform image2D colorimg22;   // 输出：rgb = 重用后输入，a = 归一化命中距离
+layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时域平滑后的归一化命中距离
+
+#include "/lib/universal/Uniform.glsl"
+#include "/lib/universal/Random.glsl"
+#include "/lib/universal/Transform.glsl"
+#include "/lib/universal/Fetch.glsl"
+
+//======// Function //============================================================================//
+
+// 官方默认参数（ReblurHitDistanceParameters）
+#define REBLUR_HITDIST_A 3.0
+#define REBLUR_HITDIST_B 0.1
+
+// 官方 diffusePrepassBlurRadius = 30，单位是 NRD rect 像素：源码用
+// gRectSizeInv * blurRadius 换算采样偏移，半径不随渲染分辨率缩放。
+// 官方 NRD 的 diffuse 本来就在**半分辨率** rect 上跑（README 的 half-res 集成），
+// 所以 30 rect 像素 = 30 画布纹素，与本文件同尺度，不需要额外换算。
+// 官方另乘 sqrt(hitDistFactor) 自适应收缩、取 minBlurRadius = 1 下限（下面已实现）。
+#ifndef NRD_PREPASS_RADIUS
+    #define NRD_PREPASS_RADIUS 30.0
+#endif
+// [2026-11-11 更正] 官方 REBLUR_POISSON_SAMPLE_NUM = 8，且官方 prepass **本身就跑在半分辨率**，
+// 输入同样是 1 spp。所以「我们是半分辨率所以要更多样本」不成立 —— 两边同分辨率、同半径、同 spp。
+// 此前取 32 的理由是「半径翻到 30 后按同密度需要 64」：把**半径从 15 改到 30**（对齐官方）
+// 误当成了**分辨率翻倍**。官方在半径 30 下就是 8 个样本，采样密度已经一致。
+// 多出的 24 次 fetch 换不到等效降噪：真正压不住的是体素 1 m 网格量化（系统误差，空间平均消不掉），
+// 而随机噪声由后面的 TA + Blur/PostBlur（总覆盖 8.6 画布纹素）负责。32 只让 prepass 慢 4 倍。
+#define PREPASS_SAMPLES 8
+
+// 官方 planeDistanceSensitivity = 0.02（相对视锥短边世界尺寸）
+#ifndef NRD_PLANE_DIST_SENS
+    #define NRD_PLANE_DIST_SENS 0.02
+#endif
+
+// 官方 lobeAngleFraction = 0.15（漫反射 90° 瓣角的 15% ≈ 13.5°）
+#define LOBE_COS 0.9723699
+
+// 自造项：官方 ReblurSettings 没有 fireflyClampThreshold，官方 anti-firefly 在 TA（清单 4.11）。
+// 参与重用的样本亮度超过中心像素亮度 × 本值时等比缩回阈值；0 = 关闭（默认）。
+// 参考量是中心像素，暗处会连带压暗 ⇒ 只在亮场做 A/B。选项在 settings.glsl。
+#ifndef GI_FIREFLY_CLAMP
+    #define GI_FIREFLY_CLAMP 0.0
+#endif
+
+// [2026-11-11 B0] 官方权重 A/B（默认 0 = 现状，逐位不变；1 = §3 五处偏差换成官方公式）。
+// 官方口径的关键更正：NRD_USE_EXPONENTIAL_WEIGHTS 两版默认都是 0，几何/法线权重
+// 实际是 ComputeNonExponentialWeight = SmoothStep(1, 0, u) 三次窗（u>=1 全拒），
+// ExpApprox(-3u) 只是可选的指数变体（旧清单 3.4 把两者看混了）；ExpApprox 仅在
+// hitDist 权重处被显式使用。各公式的推导见 REBLUR-CHECKLIST 3.4/3.5/3.6/3.10/3.13。
+// 官方法线权重参数（prepass 固定）：NLAS = 1/11（REBLUR_PRE_PASS_NON_LINEAR_ACCUM_SPEED），
+// fractionScale = 2 ⇒ pov = 0.75·lerp(0.15, 1, 1/11) = 0.1705，
+// tanHalf = sqrt(pov/(1-pov)) = 0.4533，angleMax = atan(0.4533) = 0.4255 rad，
+// param = 1/(angleMax·2) = 1.1748（全拒角 0.851 rad ≈ 48.8°）。
+
+void main() {
+    ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+#ifdef VXGI_FULLRES
+    if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+    ivec2 rt = texelPos;
+#else
+    if (any(greaterThanEqual(texelPos, ivec2(halfViewSize)))) return;
+    ivec2 rt = texelPos * 2 + GI_CANVAS_PHASE;
+#endif
+
+    float depth = loadDepth0(rt);
+    float viewZ = ScreenToViewDepth(depth);
+    // 法线要按用途分开取（FetchNormalData 一次给出两者）：
+    //   平面距离判据 → **几何法线**。FetchSurfaceNormal 含法线贴图，砖/木板/树叶的凹凸会把
+    //                  同一面墙的邻居判成"不同平面"而整片拒绝 ⇒ 这些区域降噪不足。
+    //   瓣角判据     → **表面法线**，必须与追踪采样半球所用法线一致。
+    vec3 geoNormal, normal;
+    FetchNormalData(rt, geoNormal, normal);
+    vec3 planeN = mat3(gbufferModelView) * geoNormal;                    // 视空间（切平面判据用）
+    vec3 centerViewPos = ScreenToViewPosRaw((vec2(rt) + 0.5) * viewPixelSize, viewZ);
+
+    // 天空早退（官方 TA / PrePass 第一行即 `if (isSky) return`）。
+    // 天空像素没有可降噪的 GI：不早退时几何法线在 depth = 1 处退化，切平面/瓣角判据失效，
+    // 会把邻近地形的 GI 混进天空像素（上采样后表现为边缘渗色/光晕），而且白跑 PREPASS_SAMPLES 次采样。
+    if (depth >= 1.0) {
+        imageStore(colorimg22, texelPos, vec4(0.0));
+        imageStore(colorimg26, texelPos, vec4(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    // 注意：image2D 只能用 imageSize()，不能用 textureSize()（后者是 sampler 的重载）。
+    // 这里直接用视口尺寸，语义等价且无重载风险。
+#ifdef VXGI_FULLRES
+    ivec2 canvasEnd = ivec2(viewSize);
+#else
+    ivec2 canvasEnd = ivec2(halfViewSize);
+#endif
+
+    // 视锥短边在该深度处的世界尺寸（官方 GetFrustumSize）：几何权重的归一化尺度。
+    float frustumSize = 2.0 * max(abs(viewZ), 1e-3) * rcp(max(gbufferProjection[1][1], 1e-3));
+
+    // [3.13 官方] 半径自适应收缩（SpatialFilter:113-124）：
+    //   blurRadius = saturate( sqrt(hitDistFactor) ) · MAX_BLUR_RADIUS · smc   （diffuse smc = 1）
+    //   blurRadius = max( blurRadius, gMinBlurRadius = 1 )
+    // hitDistFactor = saturate( hitDist(米) / frustumSize )，
+    // hitDist = normHit · f（f 见上方 front-end 归一化参数）。
+    // 命中距离小（接触区/自遮挡）⇒ 收小半径保细节；命中距离大（平坦远处）⇒ 用满 30 纹素。
+    float _f = REBLUR_HITDIST_A + abs(viewZ) * REBLUR_HITDIST_B;
+    vec4 _center = texelFetch(colortex3, texelPos, 0);
+    float _normHitC = saturate(max(_center.a, 0.0) * rcp(_f));
+    float _hitDistM = _normHitC * _f;
+    float prepassRadius = max(sqrt(saturate(_hitDistM * rcp(max(frustumSize, 1e-3)))) * NRD_PREPASS_RADIUS, 1.0);
+
+    vec3 sum = vec3(0.0);
+    float wSum = 0.0;
+    float w2Sum = 0.0;
+    // 官方 prepass 会把命中距离随颜色一起加权平均（不是只取中心像素）；噪声小得多。
+    float hitSum = 0.0;
+    // 自造诊断量（官方 prepass 不估方差，colortex24 只被调试视图 2 读）：加权一/二阶矩。
+    // w2Sum 用于消除加权矩估计的偏差，见文件末尾。
+    float lSum = 0.0;
+    float lSum2 = 0.0;
+    // [3.10 官方] `sum = 1; result = 中心样本` 起手：中心样本**无条件**参与且权重为 1，
+    // 邻域全被拒时输出自然退化为中心（wSum >= 1，不会走下方兜底分支）。
+    // 旧实现是 sum = 0、只在 wSum < 1e-4 时兜底取中心，语义不同。
+    sum = _center.rgb;
+    wSum = 1.0;
+    // [2026-11-11 量纲修正] 中心样本必须以**归一化**命中距离起手。
+    // 循环里累加的是逐 tap 归一化后的 `_normHitS`（0..1），这里此前塞的是 `_center.a`（**米**）：
+    //   · 远命中 / GI_HITDIST_NONTRACED(=1024) ⇒ 中心项量级压倒一切 ⇒ normHit 恒饱和到 1；
+    //   · 近命中 ⇒ 中心项被 wSum 稀释 ⇒ normHit 反而偏大 20~40%。
+    // 两种都直接进 hitDistFactor（sqrt 后乘 maxBlurRadius），是「整体过糊、接触区也糊」的来源。
+    hitSum = _normHitC;
+    lSum = _center.r;
+    lSum2 = _center.r * _center.r;
+    w2Sum = 1.0;
+
+    // Poisson 盘（黄金角 Vogel）在整个盘内均匀铺开；2x2 画布块共享旋转。
+    // [2026-11-10 波前] 旋转角必须**逐帧**变化（黄金角步进）。只按像素哈希固定时，
+    // 32 个稀疏样本带来的采样误差是「时域相关」的：累积多少帧都平均不掉，只会把它
+    // 固化成一块跟着屏幕走的偏差。实测症状正是这样——
+    //   · 静止：偏差钉在原地 ⇒ 不动的斑点；
+    //   · 转头：图案相对世界内容滑动 + 新露出像素拿到另一份偏差 ⇒ 噪声水平的波前 = 拖影。
+    // 逐帧旋转后它变成时域白噪声，由 Accumulate 平均掉（代价：单帧略噪一点）。
+#ifndef GI_ROT_PER_FRAME
+    #define GI_ROT_PER_FRAME 0.0
+#endif
+    ivec2 rotCell = texelPos >> 1;
+    float ang0 = hash13(vec3(rotCell, 3.0)) * 6.2831853
+               + GI_ROT_PER_FRAME * float(frameCounter) * 2.39996323;
+
+#if GI_FIREFLY_CLAMP > 0.0
+    // firefly 阈值：以中心像素亮度为参考（同帧、无需第二遍循环）
+    float fireflyLimit = max(texelFetch(colortex3, texelPos, 0).r, 1e-5) * GI_FIREFLY_CLAMP;
+#endif
+
+    for (int i = 0; i < PREPASS_SAMPLES; ++i) {
+        float rn = sqrt((float(i) + 0.5) * rcp(float(PREPASS_SAMPLES)));   // 0..1
+        float an = float(i) * 2.39996323 + ang0;
+        ivec2 t = texelPos + ivec2(round(vec2(cos(an), sin(an)) * rn * prepassRadius));
+        if (clamp(t, ivec2(1), canvasEnd - 2) != t) continue;
+        // 同帧视深 + 同帧法线（法线不能再取 colortex14：那是上一帧的，跨帧混用会在运动时误拒）
+#ifdef VXGI_FULLRES
+        ivec2 tapScreen = t;
+#else
+        ivec2 tapScreen = t * 2 + GI_CANVAS_PHASE;
+#endif
+        float nz = ScreenToViewDepth(loadDepth0(tapScreen));
+        vec3 tapN = FetchSurfaceNormal(tapScreen);                   // 世界空间（本帧）
+        vec4 tapSample = texelFetch(colortex3, t, 0);
+        // [2026-11-11 官方口径] 官方 REBLUR 的 alpha 是**归一化**命中距离，归一化在 front-end
+        // 完成（`ExtractHitDist(s) * _REBLUR_GetHitDistanceNormalization(zs, ...)`），也就是说
+        // 空间 pre-pass 平均的是**归一化值**，每个 tap 用**自己的**视深算分母。
+        // 我们此前是「先平均米值、再用中心像素的分母归一化」：平坦面上两者恒等，
+        // 但在深度不连续处，平均后被最远的那个 tap 主导 ⇒ normHit 更容易饱和到 1
+        // ⇒ hitDistFactor = 1 ⇒ 半径永远取满 ⇒ 接触区/台阶处过糊。改成逐 tap 归一化。
+        float _fTap = REBLUR_HITDIST_A + abs(nz) * REBLUR_HITDIST_B;
+        float _normHitS = saturate(max(tapSample.a, 0.0) * rcp(_fTap));
+        vec3 tapCol = tapSample.rgb;
+        if (any(isnan(tapCol)) || any(isinf(tapCol))) continue;      // 官方 Denanify
+#if GI_FIREFLY_CLAMP > 0.0
+        // 等比压缩（只动 Y 会改色相）：保留色差比例，只削亮度
+        if (tapCol.r > fireflyLimit) tapCol *= fireflyLimit * rcp(max(tapCol.r, 1e-5));
+#endif
+
+        // 几何：官方 GetGeometryWeightParams ⇒ ComputeWeight(NoX, a, -b) = |a·planeDist|。
+        // planeDist 用**世界距离**（与 EAWF 保持同一口径）。
+        vec3 tapViewPos = ScreenToViewPosRaw((vec2(tapScreen) + 0.5) * viewPixelSize, nz);
+        float planeDist = abs(dot(tapViewPos - centerViewPos, planeN));
+        // [3.4 官方] ComputeNonExponentialWeight = SmoothStep(1, 0, t)，t >= 1 全拒。
+        // （`NRD_USE_EXPONENTIAL_WEIGHTS` 默认 0 ⇒ 默认配置下官方用的是三次窗，不是 ExpApprox。）
+        // 旧实现 exp(-t) 在 t = 1 仍留 0.368 ⇒ 深度断层两侧互混。
+        float _tg = saturate(1.0 - planeDist * rcp(max(NRD_PLANE_DIST_SENS * frustumSize, 1e-3)));
+        float w = _tg * _tg * (3.0 - 2.0 * _tg);
+        // [3.5 官方] 法线按夹角**连续**衰减：w = SmoothStep(1, 0, angle · normalParam)。
+        // param = 1/angleMax / fractionScale，prepass 固定 NLAS = 1/11、fractionScale = 2：
+        //   pov = 0.75·lerp(0.15, 1, 1/11) = 0.1705，tanHalf = sqrt(pov/(1-pov)) = 0.4533，
+        //   angleMax = atan(tanHalf) = 0.4256 rad，param = (1/0.4256)/2 = 1.1748。
+        // 旧实现是 cos 硬阈 smoothstep(0.952, 0.992, dot)，二值化会在折角两侧留下边界。
+        float _ang = acos(clamp(dot(tapN, normal), -1.0, 1.0));
+        float _sn = saturate(1.0 - _ang * 1.1748);
+        w *= _sn * _sn * (3.0 - 2.0 * _sn);
+        // [3.13 官方] hitDist 权重：w *= minHitDistWeight + ExpApprox( -3·|ΔnormHit|/NLAS )。
+        // ExpApprox(-u) = rcp(u² + u + 1)（有理逼近，不是 exp）；minHitDistWeight
+        // = 0.1 · fractionScale(2) = 0.2；a = 1/NLAS = 11 ⇒ u = 3·11·|Δ| = 33·|Δ|。
+        // Δ 在归一化域（每个 tap 用自身视深归一化，见上）。
+        {
+            float _u = 33.0 * abs(_normHitS - _normHitC);
+            w *= 0.2 + rcp(_u * _u + _u + 1.0);
+        }
+        // [3.6 官方] GetGaussianWeight(r) = exp( -0.66 · r² )，r 归一化到 1。
+        // 旧实现 exp(-2r²) 在 r = 1 时只剩 0.135（官方 0.517）⇒ 边缘样本被过度压低、等效半径远小于 30。
+        w *= exp(-0.66 * rn * rn);
+
+        sum += tapCol * w;
+        hitSum += _normHitS * w;
+        lSum  += tapCol.r * w;
+        lSum2 += tapCol.r * tapCol.r * w;
+        wSum  += w;
+        w2Sum += w * w;
+    }
+
+    vec3 reused = wSum > 1e-4 ? sum / wSum : texelFetch(colortex3, texelPos, 0).rgb;
+
+    // 归一化命中距离：hitSum 已经是逐 tap 归一化后的加权和 ⇒ 直接取平均即可（官方口径）。
+    // 兜底（全被拒）用中心像素自己的归一化值；视深是**负**的（眼前为负）⇒ 取绝对值。
+    float normHit = wSum > 1e-4
+        ? saturate(hitSum / wSum)
+        : saturate(max(texelFetch(colortex3, texelPos, 0).a, 0.0)
+                   * rcp(REBLUR_HITDIST_A + abs(viewZ) * REBLUR_HITDIST_B));
+
+    imageStore(colorimg22, texelPos, vec4(reused, normHit));
+
+    // [命中距离时域平滑] 官方 Blur 的 `minHitDistanceWeight` 与 `sqrt(hitDistFactor)` 缩半径
+    // 都假设命中距离是**稳定量**。我们的 hitDist 是 1spp 即时值（这里只做了空间平均），
+    // 逐帧抖动会让整套采样图案跟着跳。用 EMA 把它稳下来（同一 invocation 先读后写，安全）。
+    // 历史无值（首帧 / 刚清除）时直接取本帧。
+    float prevHit = imageLoad(colorimg26, texelPos).r;
+    float smoothedHit = prevHit > 0.0 ? mix(prevHit, normHit, 0.15) : normHit;
+
+    // [2026-11-11 诊断恢复] colortex24 已改作 TS 历史快照，方差改存 colortex26 的 **.g**
+    //（.r = normHit，.ba 全链无人读，零新增缓冲）。官方 prepass 不估方差，这是自造诊断量，
+    // 只喂 Final.frag 的调试视图 2。加权矩估计有偏：E[var] = σ²·(1-S) ⇒ 乘 1/(1-S) 校正，
+    // S = Σw²/(Σw)²（w2Sum 就是为此累加的）。
+    float _S    = wSum > 1e-4 ? w2Sum * rcp(wSum * wSum) : 1.0;
+    float _muY  = wSum > 1e-4 ? lSum * rcp(wSum) : _center.r;
+    float _varY = max(lSum2 * rcp(max(wSum, 1e-4)) - _muY * _muY, 0.0) * rcp(max(1.0 - _S, 1e-3));
+
+    imageStore(colorimg26, texelPos, vec4(smoothedHit, _varY, 0.0, 1.0));
+}

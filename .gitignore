@@ -5,4 +5,10 @@ renderdoc.txt
 ProbeGI_写端调试记录.txt
 rdc_analysis/
 # WorkBuddy AI 的工作目录（记忆日志等，非项目文件；勿删，只是不入库）
+.workbuddy/
 .workbuddy-ai/
+.zcode/
+
+# 大体积二进制（RenderDoc 抓帧 / 论文 PDF），不入库
+*.rdc
+Rosen.2012.I3D.rtwsm.pdf
