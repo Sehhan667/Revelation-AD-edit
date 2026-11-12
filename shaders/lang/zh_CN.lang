@@ -646,7 +646,6 @@ value.AGX_LOOK.1=Golden
 value.AGX_LOOK.2=Punchy
 value.AGX_LOOK.3=自定义
 
-option.GAMMA_CORRECTION=伽马校正
 
 option.CAS_ENABLED=对比度自适应锐化(CAS)
 option.CAS_STRENGTH=CAS强度

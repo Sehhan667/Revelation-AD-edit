@@ -181,21 +181,41 @@ void HistogramDisplay(inout vec3 color, in ivec2 texel) {
 // 强度 CHROMATIC_ABERRATION_STRENGTH 定义为四角最大偏移像素数，随到中心距离线性增长
 // （中心无色散，符合真实镜头）。这个效果不新增 pass，只在本 pass 采样时生效。
 vec3 LoadChromaticScene(in ivec2 texel) {
-    vec3 e = FFXCasFilter(texel, CAS_STRENGTH);
 #ifdef CHROMATIC_ABERRATION
-    vec2 uv = (vec2(texel) + 0.5) * viewPixelSize;
-    vec2 c = uv - 0.5;
-    float dist = length(c);
-    float distNorm = dist * rcp(0.70710678118); // 除以半对角，四角归一为 1.0
-    vec2 dir = c * rcp(maxEps(dist));
-    vec2 off = dir * (CHROMATIC_ABERRATION_STRENGTH * distNorm) * viewPixelSize;
-    return vec3(
-        LoadGradedUV(uv + off).r,
-        e.g,
-        LoadGradedUV(uv - off).b
-    );
+    #ifdef CAS_ENABLED
+        // CAS 在显示空间做锐化，无法并入仿射上下文 —— 这条路径保持原样（逐通道完整调色）
+        vec3 e = FFXCasFilter(texel, CAS_STRENGTH);
+        vec2 uv = (vec2(texel) + 0.5) * viewPixelSize;
+        vec2 c = uv - 0.5;
+        float dist = length(c);
+        float distNorm = dist * rcp(0.70710678118); // 除以半对角，四角归一为 1.0
+        vec2 dir = c * rcp(maxEps(dist));
+        vec2 off = dir * (CHROMATIC_ABERRATION_STRENGTH * distNorm) * viewPixelSize;
+        return vec3(
+            LoadGradedUV(uv + off).r,
+            e.g,
+            LoadGradedUV(uv - off).b
+        );
+    #else
+        // [2026-11-12 B1] 调色上下文只算一次：泛光/雨幕/曝光/Purkinje/暗角是同一个仿射变换，
+        // 三个通道各自只剩 tone map + gamma（原来每通道各跑一遍完整 GradeScene）。
+        // 色差偏移只有几个像素，泛光/暗角这类低频项按中心 uv 取样视觉上无差异。
+        vec2 uv = (vec2(texel) + 0.5) * viewPixelSize;
+        vec2 c = uv - 0.5;
+        float dist = length(c);
+        float distNorm = dist * rcp(0.70710678118); // 除以半对角，四角归一为 1.0
+        vec2 dir = c * rcp(maxEps(dist));
+        vec2 off = dir * (CHROMATIC_ABERRATION_STRENGTH * distNorm) * viewPixelSize;
+        vec3 center = SceneColorUV(uv);
+        GradeCtx ctx = BuildGradeCtx(center, uv, ActiveExposure(), texel, false);
+        return vec3(
+            FinishGrade(ctx, SceneColorUV(uv + off)).r,
+            FinishGrade(ctx, center).g,
+            FinishGrade(ctx, SceneColorUV(uv - off)).b
+        );
+    #endif
 #else
-    return e;
+    return FFXCasFilter(texel, CAS_STRENGTH);
 #endif
 }
 

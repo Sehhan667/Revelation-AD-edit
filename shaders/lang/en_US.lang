@@ -637,7 +637,6 @@ value.AGX_LOOK.1=Golden
 value.AGX_LOOK.2=Punchy
 value.AGX_LOOK.3=Custom
 
-option.GAMMA_CORRECTION=Gamma Correction
 
 option.CAS_ENABLED=Contrast-Adaptive Sharpening
 option.CAS_STRENGTH=CAS Strength

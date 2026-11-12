@@ -26,11 +26,10 @@
 
 // 【低端特供优化宏】
 #define ULTRA_LOW_END_ALU_REDUCTION // 启用底层 RCP 指令和指令流乘加合并优化
-#define POTATO_GAMMA_APPROX         // 启用土豆级 Gamma 逼近：单周期硬件 sqrt 近似替代昂贵的全局 pow
+// [2026-11-12] gamma 固定为 sqrt 近似（原 POTATO_GAMMA_APPROX 恒定义 ⇒ GAMMA_CORRECTION 滑条
+// 从来不起作用，属于空旋钮，已随滑条一起删掉；这里保留常量只为说明 gamma 走的是 sqrt）。
 
 #define TONE_MAPPER AcademyFit // [None AcademyFit AcademyFull AgX_Minimal AgX_Full Lottes GT GT7 Fast_Reinhard]
-
-#define GAMMA_CORRECTION 3.0 // [1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.1 2.2 2.3 2.4 2.5 2.6 2.7 2.8 2.9 3.0 3.1 3.2 3.3 3.4 3.5 3.6 3.7 3.8 3.9 4.0 4.1 4.2 4.3 4.4 4.5 4.6 4.7 4.8 4.9 5.0]
 
 #define BLOOM_BLENDING_MODE 1 // [0 1 2]
 #define BLOOM_INTENSITY 1.6 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 3.0 4.0 5.0 7.0 10.0 15.0 20.0]
@@ -51,9 +50,19 @@ vec3 Fast_Reinhard(in vec3 x) {
     return x * rcp(x + vec3(1.0));
 }
 
-// 泛光混合。screenCoord 为采样点 UV（texel 路径 = (texel+0.5)*viewPixelSize，与
-// 原 gl_FragCoord.xy * viewPixelSize 逐位一致）。
-void CombineBloomAndFog(inout vec3 scene, in vec2 screenCoord, in float activeExposure) {
+// [2026-11-12 B1] 调色管线的「与通道无关」部分：泛光/雨幕/曝光/Purkinje/暗角。
+// 这些项对同一个像素只是同一个仿射变换 x' = x * mul + add（泛光混合、曝光、Purkinje 的
+// mix、暗角都是仿射的），所以色差的三次采样可以共用一份上下文，只把 tone map + gamma
+// 留成逐通道。mul/add 的累乘顺序严格按原顺序（泛光 → 雨幕 → 曝光 → Purkinje → 暗角），
+// 否则「先乘后加」会得到不同结果（例如暗角必须同时缩 mul 和 add）。
+struct GradeCtx {
+    vec3 mul;
+    vec3 add;
+};
+
+// 泛光 + 雨幕的仿射系数：x' = x * mul + add。与场景色无关（只依赖屏幕位置与曝光），
+// 因此三个色差通道完全一致。逐项对应原 CombineBloomAndFog 的三种混合模式。
+void BloomAffine(out vec3 mul, out vec3 add, in vec2 screenCoord, in float activeExposure) {
     // 泛光数据 = colortex4 左上象限的 L0 画布（半分辨率 box 降采样 + 宽高斯）。
     // 旧代码在此之上又按 0.47 混了一层 tile2：单级管线从不向 colortex4 下半区
     // 写第二级降采样，那里只有 TAA 历史/上一帧残留 —— 会叠出错位、滞后一帧的
@@ -70,32 +79,86 @@ void CombineBloomAndFog(inout vec3 scene, in vec2 screenCoord, in float activeEx
     bloomIntensity *= rcp(activeExposure + 2.0);
 
     #if BLOOM_BLENDING_MODE == 0
-        scene += bloomData * bloomIntensity;
+        mul = vec3(1.0);
+        add = bloomData * bloomIntensity;
     #elif BLOOM_BLENDING_MODE == 1
-        scene = mix(scene, bloomData, bloomIntensity);
+        mul = vec3(1.0 - bloomIntensity);
+        add = bloomData * bloomIntensity;
     #else
-        scene = (scene + bloomData * bloomIntensity) * rcp(1.0 + bloomIntensity * 0.5);
+        float denom = rcp(1.0 + bloomIntensity * 0.5);
+        mul = vec3(denom);
+        add = bloomData * bloomIntensity * denom;
     #endif
 
     if (rainStrength > 1e-2) {
         float rainAlpha = textureLod(colortex6, screenCoord, 0.0).a;
         rainAlpha = (1.0 - rainAlpha) * RAIN_VISIBILITY;
-        scene = mix(scene, bloomData * 1.25, rainAlpha);
+        // mix(scene, bloomData * 1.25, rainAlpha)
+        mul *= 1.0 - rainAlpha;
+        add = add * (1.0 - rainAlpha) + bloomData * 1.25 * rainAlpha;
     }
 }
 
-vec3 ScotopicVision(in vec3 colorData, in float activeExposure, in ivec2 texelPos) {
-    const vec3 tint = vec3(PURKINJE_SHIFT_R, PURKINJE_SHIFT_G, PURKINJE_SHIFT_B);
+// 构建调色上下文。sceneRef 只作 Purkinje 的亮度参考（色差三通道取中心采样即可）。
+// skipBloom：调试视图会整屏覆盖 LUT 读数，此时不参与泛光混合（与原顺序等价：原来先混
+// 泛光、随后 scene 被整个覆盖，等于泛光被丢掉）。
+GradeCtx BuildGradeCtx(in vec3 sceneRef, in vec2 screenCoord, in float activeExposure,
+                        in ivec2 texelPos, in bool skipBloom) {
+    vec3 mul = vec3(1.0);
+    vec3 add = vec3(0.0);
 
-    float rodLuminance = dot(colorData, vec3(0.05, 0.55, 0.40));
-
-    float mesopicFactor = saturate((activeExposure * 0.25) * rcp(1.0 + rodLuminance));
-
-    #ifdef PURKINJE_SHIFT_NOISE
-        rodLuminance *= 0.5 + SampleStbnVec1(texelPos, frameCounter);
+    #ifdef BLOOM
+    if (!skipBloom) {
+        BloomAffine(mul, add, screenCoord, activeExposure);
+    }
     #endif
 
-    return mix(colorData, vec3(rodLuminance) * tint, float(PURKINJE_SHIFT_STRENGTH) * mesopicFactor);
+    // 曝光（仿射：mul 与 add 一起缩）
+    mul *= activeExposure;
+    add *= activeExposure;
+
+    #ifdef PURKINJE_SHIFT
+    {
+        // Purkinje 的亮度取自「泛光 + 曝光之后」的参考色，与原 ScotopicVision 一致
+        vec3 ref = sceneRef * mul + add;
+        const vec3 tint = vec3(PURKINJE_SHIFT_R, PURKINJE_SHIFT_G, PURKINJE_SHIFT_B);
+
+        float rodLuminance = dot(ref, vec3(0.05, 0.55, 0.40));
+
+        #ifdef PURKINJE_SHIFT_NOISE
+            rodLuminance *= 0.5 + SampleStbnVec1(texelPos, frameCounter);
+        #endif
+
+        float mesopicFactor = saturate((activeExposure * 0.25) * rcp(1.0 + rodLuminance));
+        float amount = float(PURKINJE_SHIFT_STRENGTH) * mesopicFactor;
+
+        // mix(scene, vec3(rodLuminance) * tint, amount)
+        mul *= 1.0 - amount;
+        add = add * (1.0 - amount) + vec3(rodLuminance) * tint * amount;
+    }
+    #endif
+
+    #ifdef VIGNETTE_ENABLED
+    {
+        vec2 ndcCoord = screenCoord * 2.0 - 1.0;
+        ndcCoord.x *= mix(1.0, aspectRatio, float(VIGNETTE_ROUNDNESS));
+        float vig = saturate(1.0 - 0.5 * float(VIGNETTE_STRENGTH) * dot(ndcCoord, ndcCoord));
+        mul *= vig;
+        add *= vig;
+    }
+    #endif
+
+    GradeCtx ctx;
+    ctx.mul = mul;
+    ctx.add = add;
+    return ctx;
+}
+
+// 用上下文结算单个通道：仿射 -> tone map -> gamma。逐通道只剩这两个非线性环节。
+vec3 FinishGrade(in GradeCtx ctx, in vec3 scene) {
+    scene = scene * ctx.mul + ctx.add;
+    scene = TONE_MAPPER(scene);
+    return saturate(sqrt(scene));
 }
 
 vec3 None(in vec3 x) { return x; }
@@ -123,16 +186,18 @@ vec3 Lottes(in vec3 x) {
 
 // Grade 主管线：输入未调色场景色，输出 bloom 混合 / 曝光 / Purkinje / 暗角 /
 // tone map / gamma 后的最终色。scene 原值来自 colortex0(MOTION_BLUR) 或 colortex1。
+// 内部拆成「上下文（与通道无关，可被色差三通道复用）」+「逐通道结算」两步。
 vec3 GradeScene(in vec3 scene, in vec2 screenCoord, in float activeExposure) {
     ivec2 texelPos = ivec2(screenCoord * viewSize);
 
-    #ifdef BLOOM
-        CombineBloomAndFog(scene, screenCoord, activeExposure);
-    #endif
+    // 调试视图用 LUT 读数整屏替换场景色。此时不参与泛光混合 —— 与原顺序等价：
+    // 原来先混泛光、随后整个 scene 被覆盖，等于泛光被丢掉。
+    bool skipBloom = false;
 
     #ifdef DEBUG_SKY_MAP
         if (all(lessThan(texelPos, textureSize(skyMapTex, 0)))) {
             scene = texelFetch(skyMapTex, texelPos, 0).rgb;
+            skipBloom = true;
         }
     #endif
 
@@ -140,38 +205,22 @@ vec3 GradeScene(in vec3 scene, in vec2 screenCoord, in float activeExposure) {
         ivec2 tempTexel = texelPos;
         if (all(lessThan(tempTexel, textureSize(skyViewTex, 0)))) {
             scene = texelFetch(skyViewTex, tempTexel, 0).rgb;
+            skipBloom = true;
         }
         tempTexel.x -= textureSize(skyViewTex, 0).x;
         if (clamp(tempTexel, ivec2(0), textureSize(tLutTex, 0) - 1) == tempTexel) {
             scene = texelFetch(tLutTex, tempTexel, 0).rgb * 64.0;
+            skipBloom = true;
         }
         tempTexel.x -= textureSize(tLutTex, 0).x;
         if (clamp(tempTexel, ivec2(0), textureSize(msLutTex, 0) - 1) == tempTexel) {
             scene = texelFetch(msLutTex, tempTexel, 0).rgb * 512.0;
+            skipBloom = true;
         }
     #endif
 
-    scene *= activeExposure;
-
-    #ifdef PURKINJE_SHIFT
-        scene = ScotopicVision(scene, activeExposure, texelPos);
-    #endif
-
-    #ifdef VIGNETTE_ENABLED
-        vec2 ndcCoord = screenCoord * 2.0 - 1.0;
-        ndcCoord.x *= mix(1.0, aspectRatio, float(VIGNETTE_ROUNDNESS));
-        scene *= saturate(1.0 - 0.5 * float(VIGNETTE_STRENGTH) * dot(ndcCoord, ndcCoord));
-    #endif
-
-    {
-        scene = TONE_MAPPER(scene);
-
-        #ifdef POTATO_GAMMA_APPROX
-            scene = saturate(sqrt(scene));
-        #else
-            scene = saturate(pow(scene, vec3(1.0 / (GAMMA_CORRECTION))));
-        #endif
-    }
+    GradeCtx ctx = BuildGradeCtx(scene, screenCoord, activeExposure, texelPos, skipBloom);
+    scene = FinishGrade(ctx, scene);
 
     #ifdef DEBUG_TONE_MAPPING_PLOT
         const float scale = 1.5;
@@ -202,12 +251,16 @@ vec3 GradeSceneTexel(in ivec2 texelPos) {
     return GradeScene(scene, (vec2(texelPos) + 0.5) * viewPixelSize, ActiveExposure());
 }
 
+// 连续 UV 取未调色场景色（色差三通道共享一份调色上下文时用）
+vec3 SceneColorUV(in vec2 uv) {
+    #ifdef MOTION_BLUR
+        return texture(colortex0, uv).rgb;
+    #else
+        return texture(colortex1, uv).rgb;
+    #endif
+}
+
 // 连续 UV 路径（色差偏移点 / glitch 采样点）
 vec3 GradeSceneUV(in vec2 uv) {
-    #ifdef MOTION_BLUR
-        vec3 scene = texture(colortex0, uv).rgb;
-    #else
-        vec3 scene = texture(colortex1, uv).rgb;
-    #endif
-    return GradeScene(scene, uv, ActiveExposure());
+    return GradeScene(SceneColorUV(uv), uv, ActiveExposure());
 }
