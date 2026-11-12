@@ -39,7 +39,7 @@
     57 个 tap 且必然欠采样。1080p 下 1/8 画布只有 240x135，三个 pass 合计约 4M
     次取样 —— 比单 pass 64 tap 的全分辨率核还便宜。
 
-    门控：三个 pass 的第一条指令都是 frameCounter 判断，超出 LOGO_DURATION_FRAMES
+    门控：三个 pass 的第一条指令都是 global.logoElapsed 判断，超出 LOGO_DURATION_SECONDS
     立即 return（不采样、不写图）。Iris 无法按 uniform 决定是否调度一个 pass，
     所以 1/8 分辨率的空 dispatch 是能做到的最小开销。
 
@@ -84,6 +84,9 @@ uniform int frameCounter;
 
 #include "/lib/Utility.glsl"
 #include "/lib/post/StartupLogo.glsl"
+// [2026-11-12] 门控要读 global.logoElapsed（按秒计时），需要 SSBO；只读 ⇒ readonly。
+#define SSBO_DECLARED_TPYE readonly
+#include "/lib/universal/SSBO.glsl"
 
 //======// 可分离高斯的读/写目标 ===============================================================//
 
@@ -101,7 +104,7 @@ uniform int frameCounter;
 
 void main() {
     // 门控：启动画面之外直接退出。放在第一行，logo 消失后本 pass 不做任何取样/写入。
-    if (frameCounter >= LOGO_DURATION_FRAMES) return;
+    if (global.logoElapsed >= LOGO_DURATION_SECONDS) return;
 
     ivec2 outPos = ivec2(gl_GlobalInvocationID.xy);
 

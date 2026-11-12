@@ -269,17 +269,17 @@ void main() {
 
     // 启动 logo（[2026-10-08] 整幅淡入 → 保持 → 整幅淡出；不再逐笔描画）
     #ifdef STARTUP_LOGO
-        // 时间轴（帧）：0 → LOGO_FADE_IN_FRAMES 淡入，(logoDuration - LOGO_FADE_OUT_FRAMES)
-        // → logoDuration 淡出，中间是保持段。两条常量在 lib/post/StartupLogo.glsl 里（#ifndef 兜底）。
-        // 总时长 240 帧 = 4 秒 @60fps（原 180 = 3 秒）；淡入 32 帧、淡出 80 帧
-        // ⇒ 保持 128 帧。淡入/淡出都按 4/3 等比加长，节奏与原来一致。
-        // 帧率不同则实际秒数不同（50fps 下 4.8 秒），与原实现同一口径：按帧计数。
-        const int logoDuration = LOGO_DURATION_FRAMES;
-        if (frameCounter < logoDuration) {
-            float logoFrame = float(frameCounter);
-            float fadeIn  = LOGO_FADE_IN_FRAMES  > 0.0 ? smoothstep(0.0, LOGO_FADE_IN_FRAMES, logoFrame) : 1.0;
-            float fadeOut = 1.0 - smoothstep(float(logoDuration) - LOGO_FADE_OUT_FRAMES,
-                                             float(logoDuration), logoFrame);
+        // 时间轴（秒，与帧率无关）：0 → LOGO_FADE_IN_SECONDS 淡入，
+        // (LOGO_DURATION_SECONDS - LOGO_FADE_OUT_SECONDS) → LOGO_DURATION_SECONDS 淡出。
+        // 秒数由 prepare(GlobalStorage) 的 global.logoElapsed 累加；logoFrame 仍按 60fps 折算，
+        // 供字形动画（现在都是 0 时长）使用。
+        const float logoDuration = LOGO_DURATION_SECONDS;
+        float logoTime = global.logoElapsed;
+        if (logoTime < logoDuration) {
+            float logoFrame = logoTime * 60.0;
+            float fadeIn  = LOGO_FADE_IN_SECONDS  > 0.0 ? smoothstep(0.0, LOGO_FADE_IN_SECONDS, logoTime) : 1.0;
+            float fadeOut = 1.0 - smoothstep(logoDuration - LOGO_FADE_OUT_SECONDS,
+                                             logoDuration, logoTime);
             float fade = fadeIn * fadeOut;
             vec2 screenUV = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
 

@@ -69,6 +69,9 @@ layout (std430, binding = 0) SSBO_DECLARED_TPYE buffer GlobalData {
     // [2026-11-12 logo 跟随] 相机朝向的低通值（yaw, pitch，弧度）：启动 logo 用它和当前朝向
     // 的差做「浮在镜头前、慢半拍跟上的板子」。由 prepare(GlobalStorage) 每帧更新一次。
     vec2 logoLaggedView;
+    // [2026-11-12 logo 计时] 管线加载后经过的秒数（GlobalStorage 每帧累加）。
+    // 启动 logo 的时长/淡入淡出改成按**秒**，不再按帧 —— 否则 60fps 4 秒、144fps 只有 1.7 秒。
+    float logoElapsed;
 } global;
 
 layout (std430, binding = 1) SSBO_DECLARED_TPYE buffer ExposureData {

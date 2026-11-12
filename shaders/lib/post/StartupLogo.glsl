@@ -56,7 +56,7 @@
 //     （RenderStartupMark 的 sweep 是 mix(-0.02, vMax+0.02, progress)，progress=1 时扫掠线
 //      已在最远端之外，等于整幅都画好了）；
 //   - LOGO_AD_FADE_FRAMES = 0 ⇒ 文字不单独淡入（与主字形同相）。
-// 时间轴改由 Final.frag 的两条淡入淡出常量控制（LOGO_FADE_IN_FRAMES / LOGO_FADE_OUT_FRAMES）。
+// 时间轴改由 Final.frag 的两条淡入淡出常量控制（LOGO_FADE_IN_SECONDS / LOGO_FADE_OUT_SECONDS）。
 // 想把逐笔描画调回来：LOGO_MARK_DRAW_FRAMES 设回 48.0、LOGO_AD_FADE_FRAMES 设回 30.0 即可
 // （配 rdc_analysis/make_logo_gameview.js --frame=N 预览）。
 #ifndef LOGO_MARK_DRAW_FRAMES
@@ -83,29 +83,17 @@
 // 就是这个（当时 contentH 只算到基线），叠加之后包围盒余量只有 3px 又切掉几像素。
 #define LOGO_AD_INK_H 1.1667
 
-// 整体淡入 / 淡出时长（帧）。总时长是 LOGO_DURATION_FRAMES（240）：
-// 淡出起点 = logoDuration - LOGO_FADE_OUT_FRAMES，所以两者之和必须小于 240
+// [2026-11-12 改为按秒] 原来按帧计数：60fps 4 秒、144fps 只剩 1.7 秒。
+// 现在总时长与淡入淡出都用秒（GlobalStorage 的 global.logoElapsed 累加），与帧率无关。
+// 淡出起点 = LOGO_DURATION_SECONDS - LOGO_FADE_OUT_SECONDS
 // 才有保持段（32 + 80 = 112 < 240，保持 128 帧）。
 // [2026-11-11] 总时长 180 -> 240（+1s @60fps），淡入/淡出按 4/3 等比加长，
 // 保持段与淡出的比例不变。
-// [2026-11-12 logo 跟随] 让启动 logo 像「浮在镜头前、略微延迟跟上视角」的板子：
-// 相机的转向先低通，再用「低通朝向 - 当前朝向」的差换算成屏幕位移与滚转。
-// 0 延迟 = 完全固定跟随（旧行为）；延迟越大，快速转身时板子越明显地「甩在后面」。
-#ifndef LOGO_FOLLOW_DELAY
-    #define LOGO_FOLLOW_DELAY 0.12 // [0.0 0.04 0.06 0.08 0.1 0.12 0.15 0.2 0.3 0.5] 跟随延迟（秒，0=固定跟随）
+#ifndef LOGO_FADE_IN_SECONDS
+    #define LOGO_FADE_IN_SECONDS 0.53     // 淡入（秒，与帧率无关）
 #endif
-#ifndef LOGO_FOLLOW_STRENGTH
-    #define LOGO_FOLLOW_STRENGTH 1.0 // [0.0 0.5 1.0 1.5 2.0 2.5 3.0 4.0] 滞后量→屏幕位移（焦距倍率，0=不位移）
-#endif
-#ifndef LOGO_FOLLOW_ROLL
-    #define LOGO_FOLLOW_ROLL 0.35 // [0.0 0.15 0.3 0.45 0.6 0.8 1.0] 滞后量→滚转角（弧度/弧度）
-#endif
-
-#ifndef LOGO_FADE_IN_FRAMES
-    #define LOGO_FADE_IN_FRAMES 32.0      // 淡入 0.53s @60fps
-#endif
-#ifndef LOGO_FADE_OUT_FRAMES
-    #define LOGO_FADE_OUT_FRAMES 80.0     // 淡出 1.33s @60fps
+#ifndef LOGO_FADE_OUT_SECONDS
+    #define LOGO_FADE_OUT_SECONDS 1.33    // 淡出（秒，与帧率无关）
 #endif
 
 // 绘制速度曲线：先快后慢。
@@ -185,11 +173,11 @@
     #define LOGO_PANEL_LIFT 1.0
 #endif
 
-// 启动画面（logo + 面板）总时长（帧）。240 帧 = 4s @60fps（原来是 180 = 3s）。
-// 帧率不同则实际秒数不同（50fps 下 4.8s），与原实现同一口径：按帧计数，不引入时间驱动。
-// 模糊链的三个 pass 也用这个常量做运行期门控（>= 就不干活）。
-#ifndef LOGO_DURATION_FRAMES
-    #define LOGO_DURATION_FRAMES 240
+// [2026-11-12 改为按秒] 启动画面（logo + 面板）总时长。原来按帧（240 帧），
+// 于是 60fps 4 秒、144fps 只有 1.7 秒；现在由 GlobalStorage 累加 global.logoElapsed（秒），
+// 时长与帧率无关。模糊链三个 pass 的门控也用这个常量。
+#ifndef LOGO_DURATION_SECONDS
+    #define LOGO_DURATION_SECONDS 4.0 // [2.0 3.0 4.0 5.0 6.0 8.0] 启动 logo 总时长（秒，与帧率无关）
 #endif
 
 //======// 几何（设计框坐标，源像素）=============================================================//

@@ -77,6 +77,9 @@ void main() {
 		#endif
 	}
 
+	// [2026-11-12 logo 计时] 按秒累计（frameTime 是秒）；暂停/加载时 frameTime<=0 不推进。
+	if (frameTime > 0.0) global.logoElapsed += frameTime;
+
 	// Compute illuminance
 	vec3 sunIlluminance = sunIrradiance * AtmosphereTransmittanceToSun(atmosphereViewPos, worldSunDir);
 	vec3 moonIlluminance = sunIrradiance * AtmosphereTransmittanceToSun(atmosphereViewPos, -worldSunDir) * moonlightMult;
