@@ -56,11 +56,32 @@ const vec2 workGroupsRender = vec2(0.5, 0.5);
 
 //======// Uniform //=============================================================================//
 
-layout (r11f_g11f_b10f) restrict uniform image2D colorimg4;
+// [2026-11-12 B8] 原来是「横向/纵向两趟都就地读写 colortex4」：横向 pass 写出的纹素正是同一批
+// 工作组下一批要读的 halo（kernel 半宽 8），等于读和写落在同一块内存上；`restrict` 还向编译器
+// 断言此处没有别名访问，属于 UB，只是驱动碰巧没出事（典型表现是 128 像素网格接缝）。
+// 现在改成乒乓：
+//   横向：读 colortex4 的 L0 画布 -> 写 colortex19（同为半分辨率的 SSS 横向缓冲，
+//         本帧 composite3 之后不再有人读，零额外显存）
+//   纵向：读 colortex19 -> 写回 colortex4 画布
+// 消费者（Final 的 CombineBloomAndFog、Translucent 反射、SSR 命中色）读的仍是 colortex4
+// 左上象限，位置与内容都不变。
+layout (r11f_g11f_b10f) writeonly uniform image2D colorimg4;
+layout (rgba16f)        writeonly uniform image2D colorimg19;
 
-// 输入端用 sampler2D 激活显卡 L1 纹理缓存（横向/纵向 pass 均就地读写 colortex4）
 uniform sampler2D colortex4;
+uniform sampler2D colortex19;
 uniform vec2 viewSize;
+
+// 由 worldN/composite20_a.csh（横向）/ composite21_a.csh（纵向）定义
+#ifndef BLOOM_PASS_HORIZONTAL
+    #define BLOOM_PASS_HORIZONTAL 0
+#endif
+#ifndef BLOOM_PASS_VERTICAL
+    #define BLOOM_PASS_VERTICAL 1
+#endif
+#ifndef BLOOM_PASS
+    #define BLOOM_PASS BLOOM_PASS_HORIZONTAL
+#endif
 
 //======// Kernel //==============================================================================//
 
@@ -113,14 +134,24 @@ void main() {
 
     // L0 画布边界（colortex4 左上象限半分辨率区）。模糊 tap 越界会被 clamp 到
     // 画布边缘，而不是混入右侧/下侧的 TAA 历史残留。
-    ivec2 canvasLimit = ivec2(ceil(viewSize * 0.5)) - 1;
+    // [B8] 另外与乒乓缓冲 colortex19 取交集：奇数分辨率下 ceil(viewSize*0.5) 可能比
+    // 半分辨率缓冲大 1 个纹素，越界 texelFetch 是 UB（读到 0），所以这里收一下。
+    ivec2 canvasLimit = min(ivec2(ceil(viewSize * 0.5)) - 1, textureSize(colortex19, 0) - 1);
     ivec2 zero = ivec2(0);
+
+    #if BLOOM_PASS == BLOOM_PASS_VERTICAL
+        #define BLOOM_SOURCE colortex19
+        #define BLOOM_TARGET colorimg4
+    #else
+        #define BLOOM_SOURCE colortex4
+        #define BLOOM_TARGET colorimg19
+    #endif
 
     // 每线程把自己的纹素装入共享槽 index（槽 j 存放 texel - C + j 的值），
     // 行首 C 个与行尾 C 个 halo 由边界线程补充。
-    sharedData[index] = texelFetch(colortex4, clamp(texel - OFFSET * BLOOM_KERNEL_C, zero, canvasLimit), 0).rgb;
+    sharedData[index] = texelFetch(BLOOM_SOURCE, clamp(texel - OFFSET * BLOOM_KERNEL_C, zero, canvasLimit), 0).rgb;
     if (index < uint(BLOOM_KERNEL_C * 2)) {
-        sharedData[index + 128] = texelFetch(colortex4, clamp(texel + OFFSET * (128 - BLOOM_KERNEL_C), zero, canvasLimit), 0).rgb;
+        sharedData[index + 128] = texelFetch(BLOOM_SOURCE, clamp(texel + OFFSET * (128 - BLOOM_KERNEL_C), zero, canvasLimit), 0).rgb;
     }
     barrier();
 
@@ -130,5 +161,5 @@ void main() {
     }
 
     // 写入目标（覆盖范围与读取范围一致，均为左上象限 L0 画布）
-    imageStore(colorimg4, texel, vec4(bloomTiles, 1.0));
+    imageStore(BLOOM_TARGET, texel, vec4(bloomTiles, 1.0));
 }
