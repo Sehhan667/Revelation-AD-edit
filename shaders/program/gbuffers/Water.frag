@@ -128,10 +128,8 @@ void main() {
         // 原来写的是 OctEncodeSnorm 却用 Packup2x8/OctDecodeUnorm 解码，负数分量会被折返 ——
         // 这也顺手修掉了 TRANSLUCENT_SKY_REF 里那份潜在的错法线。
         albedoOut = vec4(0.0);   // 水面不需要 albedo（水体着色由 Translucent 做）
-        vec2 waterOct = OctEncodeSnorm(worldNormal);
-        normalOut.zw = waterOct;                  // c8：波法线（还原）
-        waterOut = vec4(distance(worldPos, worldPos1) * rcp255,
-                        Packup2x8(OctEncodeUnorm(worldNormal)), 0.0, 1.0);
+        normalOut.zw = OctEncodeSnorm(worldNormal);   // c8：波法线
+        waterOut = vec4(distance(worldPos, worldPos1) * rcp255, 0.0, 0.0, 1.0);
     } else { // 不透明 / 半透明物体
         vec4 albedo = texture(tex, texCoord) * vertColor;
 
@@ -153,8 +151,8 @@ void main() {
         normalOut.zw = OctEncodeSnorm(glassNormal);   // c8：玻璃法线（还原）
         materialOut.z = Packup2x8U(albedo.xy);
         materialOut.w = Packup2x8U(albedo.zw);
-        // 玻璃：x = -1 哨兵（非水面），法线同样走 c12.y
-        waterOut = vec4(-1.0, Packup2x8(OctEncodeUnorm(glassNormal)), 0.0, 1.0);
+        // 玻璃：x = -1 哨兵（非水面）；法线走 c8
+        waterOut = vec4(-1.0, 0.0, 0.0, 1.0);
     }
 
     materialOut.x = PackupDithered2x8U(lightmap, bayer4(gl_FragCoord.xy));

@@ -223,8 +223,8 @@ void main() {
     vec3 worldDir = worldPos * invWorldDist;
     worldPos += gbufferModelViewInverse[3].xyz;
 
-    // [2026-11-12 P2] 半透明法线统一在 c12.y（8bit oct, UNORM），c12.x 是哨兵：
-    // >0 = 水面（值 = 水深/255）、<0 = 玻璃、==0 = 非半透明。c8 不再为半透明像素写入。
+    // [2026-11-12 试验结论] 法线仍来自 c8；c12 只用来区分「水 / 玻璃 / 非半透明」：
+    // >0 = 水面（值 = 水深/255）、<0 = 玻璃、==0 = 非半透明。
     vec4 transInfo = texelFetch(colortex12, texelPos, 0);
     float waterData = transInfo.x;            // >0 时 = 水深/255
     bool waterMask = waterData > 0.0;
@@ -256,7 +256,7 @@ void main() {
 
             #ifdef TRANSLUCENT_SKY_REF
             if (materialID == 2u) {
-                vec3 worldNormal = OctDecodeUnorm(Unpack2x8(transInfo.y));   // 波法线：c12.y
+                vec3 worldNormal = FetchSurfaceNormal(texelPos);   // 波法线：c8.zw
 
                 float NdotV = abs(dot(worldNormal, worldDir));
                 vec3 rayDir = worldDir + worldNormal * (NdotV * 2.0);

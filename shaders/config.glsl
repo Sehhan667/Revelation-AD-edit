@@ -31,10 +31,9 @@
 	// [2026-11-12] colortex10 已随击杀特效（kill-ripple）整条删除：它只被 composite5(HurtTimer)
 	// 写、被 Final 的 #ifdef KILL_RIPPLE 段读，而那条链默认关、打开还会因为内部常量被注释掉而
 	// 编译失败。实体受击故障的帧级门控现在走 SSBO 的 global.hurtEntitySeen，不再需要这个缓冲。
-	// [2026-11-12 P2] c12 = RG16F：.x 哨兵（>0 水面水深/255，-1 玻璃，0 非半透明）、
-	// .y = 8bit oct 打包的半透明法线（Water.frag 写，Fetch.glsl 的 FetchTranslucentNormal 读）。
-	// gbuffers_water 因此不再写 colortex8（省 8 B/px）。
-	const int 	colortex12Format 			= RG16F;
+	// [2026-11-12 试验结论] 法线回到 colortex8（水下看水面时折射/反射要读它，移除 c8 会异常），
+	// c12 因此只剩 .x：>0 = 水面水深/255，-1 = 玻璃哨兵，0 = 非半透明（每帧清 0）⇒ 用 R16F。
+	const int 	colortex12Format 			= R16F;
 	const int 	colortex13Format 			= R8I;
 	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
 	// [2026-09-11 DoF 移植] colortex15 原为 Voxel GI propagation 输出（RGBA8），
@@ -153,7 +152,7 @@
 	|	colortex7	|   rgba16ui        |	Full res  	|	Material data
 	|	colortex8	|   rgba16_snorm    |	Full res  	|	Normal data
 	|	colortex9	|   rgba16f     	|	Full res	|	Cloud history
-	|	colortex12	|   rg16f         	|	Full res	|	Water data: x = depth/255 (water) or -1 (glass), y = 8-bit oct normal of translucent surfaces
+	|	colortex12	|   r16f          	|	Full res	|	Water data: x = depth/255 (water) or -1 (glass); normals live in colortex8
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)
 	|	colortex15	|   rg16f		    |	Full res  	|	DoF CoC data: x = centerCoc, y = gatherRadius (written by Prepare, read by Gather; Postfilter merged into Gather 2026-09-21, filtered color no longer staged here)
