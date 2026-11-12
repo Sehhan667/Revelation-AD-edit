@@ -80,6 +80,11 @@ bool ScreenSpaceRaytrace(in vec3 viewPos, in vec3 viewDir, in float dither, in u
     #endif
 
     bool hit = false;
+    // [2026-11-12 A8] 命中来自「解析天空交」时为 true。天空面在屏幕深度上是常数，命中点已经不是
+    // 步进格点、而是精确交点，二分细化对它没有信息增益（每轮只是一次 loadDepth2 + 一次判断，
+    // 而 sampleDepth=1.0、screenPos.z=1.0 会让判定反复翻转）—— 纯白付 8 次串行依赖的深度读，
+    // 而且会把命中点重新拉向背景几何（等于偷偷改了「天空命中」的语义）。
+    bool skyHit = false;
 
     // [2026-10-08 修 P0-1；同日两处"性能向"改动已按用户实测回退，原因记在下面]
     //  P0-1 原实现只在"射线在表面前方"（rayPos.z <= sampleDepth）时推进 t：厚度测试失败
@@ -116,6 +121,7 @@ bool ScreenSpaceRaytrace(in vec3 viewPos, in vec3 viewDir, in float dither, in u
             float tSky = max((screenDepthSky - origin.z) * rcp(max(rayDir.z, 1e-8)), 0.0);
             screenPos = origin + rayDir * tSky;
             hit = true;
+            skyHit = true;
         #endif
             break;
         }
@@ -170,8 +176,9 @@ bool ScreenSpaceRaytrace(in vec3 viewPos, in vec3 viewDir, in float dither, in u
     }
 
     // ---- 二分细化（必须开启） ----
+    // [2026-11-12 A8] 天空命中跳过：见函数开头 skyHit 的说明。
     #ifdef SSRT_REFINEMENT
-    if (hit) {
+    if (hit && !skyHit) {
         for (uint i = 0u; i < SSRT_REFINEMENT_STEPS; ++i) {
             rayStep *= 0.5;
             float sampleDepth = loadDepth2(ivec2(screenPos.xy));
