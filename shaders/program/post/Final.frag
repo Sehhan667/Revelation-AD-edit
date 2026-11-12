@@ -293,17 +293,18 @@ void main() {
 
     // ========== 实体区域故障 ==========
     #ifdef ENTITY_AREA_GLITCH
-        // [2026-09-20 帧级门控] colortex10 的 (0,0).B = HurtTimer（composite5）每帧聚合的
-        // 「上一帧稀疏网格上存在受伤实体」标志（R > 0 ⟺ 受伤实体 mask）。常态（无受伤
-        // 实体）下整段跳过——否则全屏每像素无条件白付 7 次 sin 链 + GLITCH_TEAR_LAYERS
-        // 层撕裂循环（约 27 次 SFU sin + ~40 ALU）。标志晚一帧（受击首帧故障延迟一帧
-        // 显示，无感）；KILL_RIPPLE 关闭时 B 恒 1，本特效保持无门控的原行为。
-        // [2026-09-22 门控修复] 原帧级门控 `if (texelFetch(colortex10, ivec2(0,0),0).b > 0.5)` 已移除。
-        // 原因：B 由 composite5(HurtTimer) 写入，而 composite5 被 properties 的
-        // `program.world0/composite5.enabled = KILL_RIPPLE` 门控、KILL_RIPPLE 默认关闭
-        // ⇒ 该 pass 根本不调度 ⇒ colortex10 既不写也不清（colortex10Clear = false）
-        // ⇒ B 恒为未初始化值（实测 0）⇒ 门控恒假 ⇒ **实体受伤特效整个消失**。
-        // 故本段改回无条件执行（本次只改这一处，KILL_RIPPLE / colortex10 / 8 个文件全部保持原样）。
+        // [2026-11-12 A1 帧级门控（重做）] `global.hurtEntitySeen` 由 gbuffers_entities 在本帧
+        // 画到受伤实体像素时置 1、由 prepare(GlobalStorage) 每帧清零。场上没有受伤实体时整段跳过，
+        // 省掉每像素 7 次 sin 链 + GLITCH_TEAR_LAYERS 层撕裂循环（约 17 SFU + ~120 ALU）、
+        // 2 次 colortex7 取样和 2 次深度读（Firefox 抓帧里这是 final pass 的主要固定成本）。
+        // 历史：2026-09-20 曾用 colortex10.b 做过同样的门控，2026-09-22 因为该标志的写入者
+        // composite5(HurtTimer) 被 KILL_RIPPLE 门控（默认关）⇒ 标志恒 0 ⇒ **特效整个消失**，
+        // 只能把门控整段撤掉。现在标志改走 SSBO，不依赖任何可关的 pass。
+        // 门控只能是帧级：`:srcIsEntity` 判的是被位移的**源**像素（背景像素承载拖拽条带与补洞），
+        // 按当前像素的 isEntity/isHurt 门控会把补洞那半效果丢掉。
+    #endif
+    #ifdef ENTITY_AREA_GLITCH
+    if (global.hurtEntitySeen != 0u) {
         uvec4 matPack = texelFetch(colortex7, texelPos, 0);
         uint matW = matPack.w;
         bool isEntity = ((matW & 1u) != 0u);          // bit0
@@ -373,6 +374,7 @@ void main() {
                 finalOut = mix(finalOut, glitchColor, intensity);
             }
         #endif
+    }   // if (global.hurtEntitySeen != 0u) —— 帧级门控，见本段开头
     #endif
 
     // ========== 全屏受伤故障（支持始终显示） ==========

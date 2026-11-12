@@ -41,6 +41,11 @@ const ivec3 workGroups = ivec3(1, 1, 1);
 
 //======// Main //================================================================================//
 void main() {
+	// [2026-11-12 A1] 每帧清「受伤实体」标志。本帧 gbuffers_entities 遇到受伤实体像素时置位
+	// （见 Entities.frag）；Final 的实体受击故障段据此整段跳过。prepare 排在所有 gbuffers 之前
+	// （Iris 顺序：setup → begin → shadow → shadowcomp → prepare → gbuffers → deferred → composite → final）。
+	global.hurtEntitySeen = 0u;
+
 	// ---- 帧时间低通（官方 NRD README 的硬要求）----
 	// "The FPS passed to this function must be low pass filtered to reduce reactions to
 	//  transient drops (stutters)." 三个消费者（Accumulate / EAWF / GIStabilize）都直接

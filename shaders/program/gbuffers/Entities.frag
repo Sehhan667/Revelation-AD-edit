@@ -18,6 +18,12 @@
 
 #include "/lib/Utility.glsl"
 
+//======// SSBO //================================================================================//
+// [2026-11-12 A1] 这里只**写** global.hurtEntitySeen（不读），所以整块声明成 writeonly ——
+// 与其它写端（GlobalStorage 等）同一写法，避免引入 read-write 的额外同步约束。
+#define SSBO_DECLARED_TPYE writeonly
+#include "/lib/universal/SSBO.glsl"
+
 /* RENDERTARGETS: 6,7,8 */
 layout (location = 0) out vec4 albedoOut;
 layout (location = 1) out uvec4 materialOut;
@@ -86,6 +92,12 @@ void main() {
     float hurt = float(entityColor.a > 0.0 && entityColor.b < 0.1);
     uint flags = 1u | (uint(hurt) << 1);
     matW = (matW & 0xFCu) | flags;
+
+    // [2026-11-12 A1] 帧级门控：本帧只要画出一个受伤实体像素就置位（只在命中像素写，零带宽）。
+    // Final.frag 的 ENTITY_AREA_GLITCH 段每像素要付 7 次 sin 链 + 10 层撕裂循环 + 2 次深度读，
+    // 而常态（场上没有受伤实体）它产出恒 0 —— 这个标志让它整段跳过。
+    // 注意这里刻意**不**区分不透明/半透明：门控宁可多开（偶尔多跑一次），也不能漏开（特效消失）。
+    if (hurt > 0.5) global.hurtEntitySeen = 1u;
 
     // 半透明实体（纹理 alpha<1，如彩色玻璃、冰等掉落物）复用方块玻璃管线：
     // materialID 置为 2u，并把真实 albedo(rgba) 打包进 materialPack.zw（与方块玻璃

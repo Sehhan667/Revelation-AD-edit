@@ -52,6 +52,14 @@ layout (std430, binding = 0) SSBO_DECLARED_TPYE buffer GlobalData {
     // 由 GlobalStorage.comp（binding 0、单 invocation）每帧 EMA 更新，其余 pass 只读。
     // std430 追加在结构体尾部，不影响任何既有字段偏移。
     float smoothedFrameTime;
+    // [2026-11-12 A1 实体故障帧级门控] 本帧画面上是否存在「受伤实体」像素。gbuffers_entities
+    // 只要画出一个受伤实体像素就置 1（只在命中像素写，零带宽），prepare(GlobalStorage) 每帧清零。
+    // Final.frag 的 ENTITY_AREA_GLITCH 段据此整段跳过 —— 那段每像素 7 次 sin 链 + 10 层撕裂
+    // 循环 + 2 次深度读，常态（场上无受伤实体）产出恒 0，属于纯白付。
+    // 为什么不用 colortex10.b：那个标志由 composite5(HurtTimer) 写，而该 pass 被 KILL_RIPPLE
+    // 门控（默认关）⇒ 2026-09-22 门控恒假、特效整个消失，最后只能把门控撤掉。SSBO 方案不依赖
+    // 任何可以关掉的 pass。std430 追加在结构体尾部，不影响既有字段偏移。
+    uint hurtEntitySeen;
 } global;
 
 layout (std430, binding = 1) SSBO_DECLARED_TPYE buffer ExposureData {
