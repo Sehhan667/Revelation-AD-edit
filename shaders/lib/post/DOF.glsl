@@ -69,19 +69,22 @@ vec2 DofApertureOffset(vec2 direction, float aperturePhase, float radius) {
 }
 
 #ifdef DOF_APERTURE_VIGNETTING
+	// 口径蚀（cat's eye）：离画面中心越远，出瞳在径向被遮挡越多，切向不受影响。
+	// 只能让采样核围绕像素自身沿径向收缩，不能整体平移：旧实现里的
+	// (radialOffset + kernelRadius) 会给每个采样点叠加 kernelRadius 倍的平移，
+	// 离轴像素采到的是朝画面中心偏移的邻域，导致除屏幕正中外整屏发糊并抖出噪点。
 	vec3 DofApertureVignettingPrepare(vec2 centerUv) {
 		vec2 centerPos = centerUv - 0.5;
 		float centerRadiusSq = sdot(centerPos);
 		float centerRadiusInv = inversesqrt(maxEps(centerRadiusSq));
-		float compression = centerRadiusSq * centerRadiusInv;
-        compression *= 4.0 * gbufferProjectionInverse[1].y;
+		// 1.2 * tan(fovY/2)：同样屏幕半径下视场越大离轴角越大，遮挡越强；上限 0.6 保证径向跨度不低于 40%
+		float compression = min(centerRadiusSq * centerRadiusInv * 1.2 * gbufferProjectionInverse[1].y, 0.6);
 		return vec3(centerPos * centerRadiusInv, compression);
 	}
 
-	void DofApertureVignettingApply(inout vec2 sampleOffset, float kernelRadius, vec3 vignettingData) {
+	void DofApertureVignettingApply(inout vec2 sampleOffset, vec3 vignettingData) {
 		float radialOffset = dot(sampleOffset, vignettingData.xy);
-		float radialWarp = (radialOffset + kernelRadius) * vignettingData.z;
-		sampleOffset -= vignettingData.xy * radialWarp;
+		sampleOffset -= vignettingData.xy * (radialOffset * vignettingData.z);
 	}
 #endif
 

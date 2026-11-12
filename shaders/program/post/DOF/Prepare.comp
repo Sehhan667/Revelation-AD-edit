@@ -104,18 +104,21 @@ vec3 DofPropagateCoC(ivec2 texelPos, float centerDepth, float focusDepth, float 
 		vec2 sampleDirection = direction * (1.0 - 2.0 * pairSide);
 		float samplePhase = aperturePhase + 0.5 * pairSide;
 		vec2 sampleOffset = DofApertureOffset(sampleDirection, samplePhase, sampleRadius * maxBlurRadius);
+		float sampleDistance = sampleRadius;
 		#ifdef DOF_APERTURE_VIGNETTING
-			DofApertureVignettingApply(sampleOffset, maxBlurRadius, vignettingData);
+			DofApertureVignettingApply(sampleOffset, vignettingData);
+			// 覆盖判据必须用畸变后的真实采样距离，否则层归属与实际采样位置不一致
+			sampleDistance = length(sampleOffset) * inverseMaxBlurRadius;
 		#endif
 		vec2 sampleUv = DofMirrorUv(centerUv + sampleOffset * viewPixelSize);
 		float sampleDepth = DofLoadViewDepthUv(sampleUv);
 		float sampleCocRadius = abs(DofCoCRadius(sampleDepth, focusDepth, cocScale, maxBlurRadius)) * inverseMaxBlurRadius;
-		float sampleCoverage = DofApertureCoverage(sampleCocRadius, sampleRadius, maxBlurRadius);
+		float sampleCoverage = DofApertureCoverage(sampleCocRadius, sampleDistance, maxBlurRadius);
 
 		if (sampleCoverage > 0.0 && sampleDepth <= centerDepth) {
 			gatherRadiusFraction = max(gatherRadiusFraction, sampleCocRadius);
-			if (centerCocRadius < sampleCocRadius - sampleRadius) {
-				centerCoc = (sampleRadius - sampleCocRadius) * maxBlurRadius;
+			if (centerCocRadius < sampleCocRadius - sampleDistance) {
+				centerCoc = (sampleDistance - sampleCocRadius) * maxBlurRadius;
 				centerCocRadius = abs(centerCoc) * inverseMaxBlurRadius;
 			}
 		}

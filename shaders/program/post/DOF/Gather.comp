@@ -167,16 +167,21 @@ vec3 DofGatherDisk(
 		vec2 secondOffset = DofApertureOffset(
 			-direction, aperturePhase + 0.5, secondRadius * gatherRadius
 		);
+		float firstDistance = firstRadius * gatherRadiusFraction;
+		float secondDistance = secondRadius * gatherRadiusFraction;
 		#ifdef DOF_APERTURE_VIGNETTING
-			DofApertureVignettingApply(firstOffset, gatherRadius, vignettingData);
-			DofApertureVignettingApply(secondOffset, gatherRadius, vignettingData);
+			DofApertureVignettingApply(firstOffset, vignettingData);
+			DofApertureVignettingApply(secondOffset, vignettingData);
+			// 覆盖判据使用畸变后的真实采样距离，与采样位置保持一致
+			firstDistance = length(firstOffset) * inverseMaxBlurRadius;
+			secondDistance = length(secondOffset) * inverseMaxBlurRadius;
 		#endif
 		DofGatherSample firstSample = DofBuildGatherSample(
-			centerUv, firstOffset, firstRadius * gatherRadiusFraction,
+			centerUv, firstOffset, firstDistance,
 			centerCoc, centerCocRadius, coveringCoc
 		);
 		DofGatherSample secondSample = DofBuildGatherSample(
-			centerUv, secondOffset, secondRadius * gatherRadiusFraction,
+			centerUv, secondOffset, secondDistance,
 			centerCoc, centerCocRadius, coveringCoc
 		);
 
