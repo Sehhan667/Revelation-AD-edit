@@ -161,6 +161,18 @@ vec3 CalculateWaterCaustics(in vec3 worldPos, in float waterDepth, in float dith
     return brightnessBoost * (-smin(-caustics, -0.1, 0.15)) * saturate(exp2(-rLOG2 * waterExtinction * waterDepth));
 }
 
+// [2026-11-12 B3] 透明遮挡（玻璃/水）判定。
+// 原写法 `step(shadowZ, depth0Point) != solidFiltered` 把**点采样**的 0/1 与**滤波后**的 0..1
+// 直接比较：半影里滤波值介于 0 和 1 之间，几乎永远不相等 ⇒ 半影像素被误判成「被透明物遮挡」，
+// 于是走彩色分支，用遮挡物 albedo 给半影染色/压暗，还白读 shadowcolor0/1（性能与观感双输）。
+// 这里改成两侧都取「明确多数」：
+//   · shadowtex0（含半透明）点采样判定本 texel 确实被挡；
+//   · shadowtex1 的 2x2 滤波全亮（= 1.0）⇒ 挡住它的东西不在不透明层里 ⇒ 只能是玻璃/水。
+// 真正的透明遮挡（玻璃/水的影子、水底焦散）行为不变。
+bool IsTranslucentBlocker(in float shadowZ, in float depth0Point, in float solidFiltered) {
+    return step(shadowZ, depth0Point) > 0.5 && solidFiltered > 0.999;
+}
+
 // 核心采样过滤 (PCF/PCSS/Hard)
 vec3 PercentageCloserFilter(in vec3 shadowScreenPos, in vec3 worldPos, in float dither, in float blockerDepth) {
     
@@ -172,7 +184,7 @@ vec3 PercentageCloserFilter(in vec3 shadowScreenPos, in vec3 worldPos, in float 
             ivec2 sampleTexel = ivec2(shadowScreenPos.xy * realShadowMapRes);
             float sampleDepth0 = texelFetch(shadowtex0, sampleTexel, 0).x;
 
-            if (step(shadowScreenPos.z, sampleDepth0) != sampleDepth1) {
+            if (IsTranslucentBlocker(shadowScreenPos.z, sampleDepth0, sampleDepth1)) {
                 float waterMask = texelFetch(shadowcolor1, sampleTexel, 0).w;
                 if (waterMask > EPS) {
                     float waterDepth = (sampleDepth0 - shadowScreenPos.z) * shadowProjInv2z * 5.0;
@@ -230,7 +242,7 @@ vec3 PercentageCloserFilter(in vec3 shadowScreenPos, in vec3 worldPos, in float 
                 ivec2 sampleTexel = ivec2(sampleCoord * invRes);
                 float sampleDepth0 = texelFetch(shadowtex0, sampleTexel, 0).x;
 
-                if (step(shadowScreenPos.z, sampleDepth0) != sampleDepth1) {
+                if (IsTranslucentBlocker(shadowScreenPos.z, sampleDepth0, sampleDepth1)) {
                     hasColor = true;
                     float waterMask = texelFetch(shadowcolor1, sampleTexel, 0).w;
                     if (waterMask > EPS) {
@@ -296,7 +308,7 @@ vec3 PercentageCloserFilter(in vec3 shadowScreenPos, in vec3 worldPos, in float 
                 ivec2 sampleTexel = ivec2(sampleCoord * invRes);
                 float sampleDepth0 = texelFetch(shadowtex0, sampleTexel, 0).x;
 
-                if (step(shadowScreenPos.z, sampleDepth0) != sampleDepth1) {
+                if (IsTranslucentBlocker(shadowScreenPos.z, sampleDepth0, sampleDepth1)) {
                     float waterMask = texelFetch(shadowcolor1, sampleTexel, 0).w;
                     if (waterMask > EPS) {
                         waterData += vec2(sampleDepth0 - shadowScreenPos.z, 1.0);

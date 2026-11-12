@@ -145,8 +145,13 @@ vec3 SampleFogSunShadow(in vec3 camRelPos, in float viewDist) {
             #ifdef COLORED_VOLUMETRIC_FOG
                 // 玻璃染色是可选开销：每采样点多 2 次纹理读取（shadowtex0 + shadowcolor0）。
                 // 默认关 —— 光束的可见度只需要"挡/不挡"，染色是锦上添花。
-                float translucentShadow = step(ssp.z, textureLod(shadowtex0, ssp.xy, 0.0).x);
-                float coloredShadow = saturate(solidShadow - translucentShadow);
+                // [2026-11-12 B3] 这里原来用 textureLod(shadowtex0, ssp.xy, 0.0) —— 那是**双线性
+                // 插值的深度**，在轮廓处会插出「哪都不存在」的中间深度；改成点采样（texelFetch），
+                // 与 shadowtex1 的判据口径一致。solidShadow 需要「不透明层全亮」才算玻璃/水，
+                // 否则半影里 solidShadow 介于 0..1，染色项会把玻璃影子染成半透的糊边。
+                ivec2 shadowTexel = ivec2(ssp.xy * realShadowMapRes);
+                float translucentShadow = step(ssp.z, texelFetch(shadowtex0, shadowTexel, 0).x);
+                float coloredShadow = saturate(step(0.999, solidShadow) - translucentShadow);
                 result = vec3(translucentShadow);
                 if (coloredShadow > 1e-3) {
                     vec4 shadowColorSample = textureLod(shadowcolor0, ssp.xy, 0.0);
