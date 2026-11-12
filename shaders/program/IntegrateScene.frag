@@ -294,6 +294,17 @@ void main() {
             vec4 translucent = ExtractSpecularTex(materialPack);
             vec3 albedo = sRGBToLinear(translucent.rgb);
 
+            // [2026-11-12 W6] 玻璃：颜色以 **colortex6（标准 albedo 缓冲）** 为准。
+            // 以前只依赖 c7.zw 的 2x8bit 打包，链路里任何一处对不上就表现为「染色玻璃没颜色」；
+            // c6 现在由 gbuffers_water 的玻璃分支直接写入（alpha 强制 1.0）。
+            if (glassMask) {
+                vec4 glassAlbedo = texelFetch(colortex6, texelPos, 0);
+                if (maxOf(glassAlbedo.rgb) > 0.001) {
+                    albedo = sRGBToLinear(glassAlbedo.rgb);
+                    translucent = vec4(albedo, 1.0);
+                }
+            }
+
             // 安全回退：部分玻璃实体（掉落物/展示实体）可能未把 albedo 打包进 materialPack.zw，
             // zw 为 0 时 log2(0) 得到 -inf/NaN，会让玻璃乘出纯黑不可见。
             // 此时回退使用 colortex6 中的真实 albedo，保证物体至少可见。

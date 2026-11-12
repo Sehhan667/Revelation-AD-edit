@@ -30,9 +30,10 @@
 //   x > 0 = 水面（x 存 水深/255）、x < 0 = 玻璃（写 -1）、x == 0 = 非半透明（c12 每帧清 0）。
 // 省下 8 B/px（水面/玻璃像素的 c8 写入），读取侧统一走 lib/universal/Fetch.glsl 的
 // FetchTranslucentNormal —— c8 再也不会在半透明像素上被读到。
-/* RENDERTARGETS: 7,12 */
-layout (location = 0) out uvec4 materialOut;
-layout (location = 1) out vec4 waterOut;
+/* RENDERTARGETS: 6,7,12 */
+layout (location = 0) out vec4 albedoOut;    // c6：玻璃的真实 albedo（水写 0）
+layout (location = 1) out uvec4 materialOut;
+layout (location = 2) out vec4 waterOut;
 
 //======// Uniform //=============================================================================//
 
@@ -121,6 +122,7 @@ void main() {
         // [2026-11-12 P2] 波法线写进 c12.y（OctEncodeUnorm -> Packup2x8 是配套的 [0,1] 编码；
         // 原来写的是 OctEncodeSnorm 却用 Packup2x8/OctDecodeUnorm 解码，负数分量会被折返 ——
         // 这也顺手修掉了 TRANSLUCENT_SKY_REF 里那份潜在的错法线。
+        albedoOut = vec4(0.0);   // 水面不需要 albedo（水体着色由 Translucent 做）
         waterOut = vec4(distance(worldPos, worldPos1) * rcp255,
                         Packup2x8(OctEncodeUnorm(worldNormal)), 0.0, 1.0);
     } else { // 不透明 / 半透明物体
@@ -137,6 +139,10 @@ void main() {
             glassNormal = normal;
         #endif
 
+        // [2026-11-12 W6] 玻璃颜色改走标准 albedo 缓冲 c6（以前只塞在 c7.zw 的打包里，
+        // 一旦打包/解包链路有任何问题就表现为「染色玻璃没颜色」）。alpha 强制 1.0：
+        // 玻璃纹理的 alpha 不该被当成染色指数用。
+        albedoOut = vec4(albedo.rgb, 1.0);
         materialOut.z = Packup2x8U(albedo.xy);
         materialOut.w = Packup2x8U(albedo.zw);
         // 玻璃：x = -1 哨兵（非水面），法线同样走 c12.y
