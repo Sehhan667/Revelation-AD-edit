@@ -150,7 +150,10 @@ vec3 SampleFogSunShadow(in vec3 camRelPos, in float viewDist) {
                 result = vec3(translucentShadow);
                 if (coloredShadow > 1e-3) {
                     vec4 shadowColorSample = textureLod(shadowcolor0, ssp.xy, 0.0);
-                    result += sRGBToLinear(shadowColorSample.rgb) * shadowColorSample.a * coloredShadow;
+                    // [2026-11-12 A12] 这里只用来做「玻璃/水染色」的乘子，不是主光照：真 sRGB 解码是
+                    // 每分量一次 pow（= log2+exp2，3 个 SFU/采样点），而库里已有 chilliant 多项式近似
+                    // （误差 <1%，乘在这个染色项上远低于 1/255）。每个被照到的采样点省 3 次 SFU。
+                    result += sRGBToLinearApprox(shadowColorSample.rgb) * shadowColorSample.a * coloredShadow;
                 }
             #else
                 result = vec3(1.0);

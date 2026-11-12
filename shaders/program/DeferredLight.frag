@@ -305,10 +305,18 @@ void main() {
     float puddleMask = 0.0;
     #ifdef RAIN_PUDDLES
         if (wetnessCustom > EPS) {
+            // materialID 1000..1002 不积水（保留原判据：它同时也决定哪些像素参与水坑生成）
             if (materialID < 1000u || materialID > 1002u) {
                 puddleMask = CalculateRainPuddles(albedo, worldNormal, specularTex.rgb, worldPos, geoNormal, lightmap.y);
-                materialPack.z = Packup2x8U(specularTex.xy);
-                imageStore(colorimg7, texelPos, materialPack);
+                // [2026-11-12 A7 死写清理] 这里原本还有两行：
+                //     materialPack.z = Packup2x8U(specularTex.xy);
+                //     imageStore(colorimg7, texelPos, materialPack);
+                // 目的是把水坑改写后的 smoothness 回写给后续 pass。但本文件在那之后再也没有读过
+                // materialPack，而全仓唯一读 colortex7.z 的 SpecularFilter.comp（deferred30/31/32）
+                // 函数体是空 no-op、三个世界都已 enabled = false。于是这两行在雨天等于每像素
+                // 8B 读 + 8B 写的一次全屏往返（≈16.6MB/帧）却没有任何读者。
+                // 反射资格用的是内存里的 material.roughness / material.isWet（见下方几行），不受影响。
+                // 若将来重新启用 SpecularFilter，需要把这两行恢复。
             }
         }
     #endif
@@ -437,7 +445,12 @@ void main() {
             // PCF 平滑半影残留 ~3% 阳光的像素少乘一次 ≤1 的接触值，偏差 <1.5% 阳光），
             // 整段屏幕空间步进（约 SCREEN_SPACE_SHADOWS_SAMPLES 次深度采样/像素）可安全跳过。
             // 距离过渡区/阴影贴图外（distanceFade>0，rawShadow 恒 1）不受影响，保持原步进。
-            if (dot(rawShadow, vec3(1.0)) >= 0.03) {   // 平均亮度 ≥ 0.01 才需要接触阴影
+            // [2026-11-12 A10] 再加一道「这个像素到底需不需要接触阴影」的门槛：contactShadow 的两个
+            // 消费者分别是「直射光 ×= contactShadow」（直射已含 NdotL）和「SSS ×= mix(1, contactShadow)」。
+            // 背向太阳的面（NdotL≈0，墙背面/山背坡/方块底面，屏占比常年 20–40%）直射恒为 0，
+            // 只要 sssAmount 也是 0，整段 SCREEN_SPACE_SHADOWS_SAMPLES(10) 次深度步进就是纯白付。
+            // NdotL<0.002 时直射贡献 <0.2% 满照度，肉眼不可见。
+            if (dot(rawShadow, vec3(1.0)) >= 0.03 && (sssAmount > EPS || NdotL > 2e-3)) {
                 #if SUBSURFACE_SCATTERING_MODEL == 0
                     // [2026-09] 旧版模型：还原原有耦合 —— 把 sssAmount 换算成步进吸收系数
                     // （absorption = exp2(-0.125 / (viewDistInv * sssAmount))），

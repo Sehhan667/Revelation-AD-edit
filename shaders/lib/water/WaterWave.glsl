@@ -60,7 +60,10 @@ float CalculateWaterHeight(in vec2 position) {
 // ---------------------------------------------------------------------------
 // 全精度高度计算（用于水表面法线，仍保持 3 层）
 // ---------------------------------------------------------------------------
-float CalculateWaterHeightFull(in vec2 position) {
+// [2026-11-12 A11] lfNoise（大尺度噪声）由调用方算一次传进来：三个高度采样点只差 0.05 格
+// ⇒ 噪声坐标只差 7.5e-5 纹素（落在**同一个** texel 上），原来每个点各取一次等于白取 2 次。
+// 参数 lfNoise 在 PASS_SHADOW 下由调用方传 0（原实现同样整段编译剔除）。
+float CalculateWaterHeightFull(in vec2 position, in float lfNoise) {
     #if RENDER_MODE == 1
         float waveTime = 0.02 * WATER_WAVE_SPEED * frameTimeCounter;
     #else
@@ -70,7 +73,6 @@ float CalculateWaterHeightFull(in vec2 position) {
 
     float waveHeight = WATER_WAVE_HEIGHT * 0.4;
     #if !defined PASS_SHADOW
-        float lfNoise = texture(noisetex, pos * 0.2 + waveTime * 0.1).z;
         waveHeight *= saturate(lfNoise * 2.0 - 0.75) + 0.25;
         pos += lfNoise * 0.05;
     #endif
@@ -89,15 +91,31 @@ float CalculateWaterHeightFull(in vec2 position) {
     return waveHeight * waves;
 }
 
+// 大尺度噪声（供上面的三个采样点共用；与原来内联式子逐字一致）
+float WaterLargeScaleNoise(in vec2 position) {
+    #if RENDER_MODE == 1
+        float waveTime = 0.02 * WATER_WAVE_SPEED * frameTimeCounter;
+    #else
+        float waveTime = 0.0;
+    #endif
+    return texture(noisetex, 0.0075 * position * 0.2 + waveTime * 0.1).z;
+}
+
 // ---------------------------------------------------------------------------
 // 水面法线计算（使用全精度高度）
 // ---------------------------------------------------------------------------
 vec3 CalculateWaterNormal(in vec2 position) {
     const float delta = 0.05;
 
-    float height0 = CalculateWaterHeightFull(position);
-    float height1 = CalculateWaterHeightFull(position + vec2(delta, 0.0));
-    float height2 = CalculateWaterHeightFull(position + vec2(0.0, delta));
+    #if !defined PASS_SHADOW
+        float lfNoise = WaterLargeScaleNoise(position);
+    #else
+        const float lfNoise = 0.0;
+    #endif
+
+    float height0 = CalculateWaterHeightFull(position, lfNoise);
+    float height1 = CalculateWaterHeightFull(position + vec2(delta, 0.0), lfNoise);
+    float height2 = CalculateWaterHeightFull(position + vec2(0.0, delta), lfNoise);
 
     vec2 waveNormal = vec2(height0 - height1, height0 - height2);
     return normalize(vec3(waveNormal, delta * (1.0 + dot(fwidth(position), vec2(0.2)))));

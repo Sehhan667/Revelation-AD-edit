@@ -25,13 +25,17 @@
 
 #include "/lib/Utility.glsl"
 
-/* RENDERTARGETS: 1,4 */
+/* RENDERTARGETS: 1 */
 layout(location = 0) out vec4 temporalOut;
-layout(location = 1) out vec3 clearOut;
+// [2026-11-12 A5] 这里原来还有 `layout(location = 1) out vec3 clearOut;`（RENDERTARGETS 1,4），
+// main 里唯一赋值是 `clearOut = vec3(0.0)` —— 等于每帧把整张 colortex4（1632x918 R11G11B10F）
+// 写成 0，纯写 8.3MB/帧。而 colortex4 的所有消费者（LumHistogram / bloom Blur / GradeCore 的
+// 泛光混合 / Translucent 的反射）都只读它的**左上象限**，那个象限随后被 bloom/Downsample
+// (composite10) 从 colortex1 整块重写。所以这次整屏清零没有任何读者，直接删掉。
 
 #ifdef MOTION_BLUR
-    /* RENDERTARGETS: 1,4,3 */
-    layout(location = 2) out vec2 motionVectorOut;
+    /* RENDERTARGETS: 1,3 */
+    layout(location = 1) out vec2 motionVectorOut;
 #endif
 
 #include "/lib/universal/Uniform.glsl"
@@ -205,8 +209,8 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
 
 //======// 主函数入口 //==========================================================================//
 void main() {
-    clearOut = vec3(0.0);
-
+    // [2026-11-12 A5] 原来这里还有 `clearOut = vec3(0.0);`（把整张 colortex4 清 0），已随该
+    // RT 一起删除 —— 见文件头 RENDERTARGETS 处的说明。
     ivec2 screenTexel = ivec2(gl_FragCoord.xy);
     float depth = loadDepth0(screenTexel);
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
