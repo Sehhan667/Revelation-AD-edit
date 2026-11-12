@@ -1,5 +1,35 @@
 # Revelation-AD-edit — GI 调试进度 & 待办（2026-09-04）
 
+## 启动 logo 毛玻璃面板重做（2026-11-12）—— 修「面板整块全黑」
+
+现象：启动 logo 背后的毛玻璃背板在实机里**整块纯黑**，但无编译错、无 GL 报错、日志干净。
+
+改法（`program/post/StartupPanelBlur.comp` + `program/post/Final.frag` + `lib/post/StartupLogo.glsl`
++ `config.glsl` + `shaders.properties`）：
+
+1. **格式改到 config.glsl 声明**（`const int colortex27/28Format = RGBA16F` + Clear=false + Buffer Table）。
+   原 `shaders.properties` 的 `colortex27Format` 不是 Iris 接口（只认 GLSL 常量），静默无效 ⇒
+   缓冲实际是 RGBA8 而图像声称 `layout(rgba16f)` ⇒ 图像绑定失败、写读全 0。**首要修复**。
+2. **模糊链缓冲不再缩小**（防御性）：colortex27/28 保持全分辨率，1/8 结果只写在左上角「象限画布」里
+   （与 bloom 的 colortex4 左上半区、Translucent 的 colorimg3 同一套写法）；
+   Final 采样 UV 乘 1/8 并 clamp 在画布内。代价是两张全分辨率 RGBA16F（1080p 各约 15MB）。
+3. **面板色的显示变换改走 GradeScene**（原来是手写 `sqrt(saturate(blur * exposure))`，缺 tone map
+   ⇒ 面板比周围暗一截，看着就是暗块）。
+4. **兜底**：画布读回 ≈0 时退到 5 tap 十字轻度雾面，宁可糊得不够也不出黑块。
+
+坑与原因详见 `MEMO.md`「启动 logo 毛玻璃面板整块全黑的两个静默坑」。
+
+### 待实测（进游戏看启动那 4 秒）
+
+- [ ] 面板区域是**糊透的场景**（树叶/栅栏糊成色块），不是黑块、不是清晰画面。
+- [ ] 面板亮度与周围同量级（不是明显更暗/更亮的一块）。
+- [ ] 换分辨率（窗口化/全屏、改 GUI 缩放后重载）各看一次：面板内容与 logo 仍然同心居中对齐。
+- [ ] 面板右/下边缘没有一条来自画布外（清零值）的暗边或亮线。
+- [ ] 若症状变成「面板在但糊得不够」⇒ 说明模糊链仍没产出、走的是兜底路径，把现象反馈回来。
+
+（静态自检：`node scripts/preproc_check.js --all` 346 入口无新增命中；properties 纯 ASCII 且无 BOM；
+lang 无 BOM；入/退出码已核对。）
+
 ## 性能自测工具（2026-09-21）—— RenderDoc 抓帧解析 + A/B diff
 
 [2026-09-21] 落地 scripts/perf/ 一套"自动测性能"工具（用户要求 MCP 自测的可达折中——

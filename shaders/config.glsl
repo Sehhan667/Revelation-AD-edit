@@ -74,6 +74,15 @@
 	const int 	colortex22Format 			= RGBA16F;
 	const int 	colortex21Format 			= RGBA16F;
 
+	// [2026-11-12 启动面板] 模糊链 ping-pong 两张缓冲。**格式必须在这里声明**：
+	// shaders.properties 里的 colortexNFormat 不是 Iris 的接口（Iris 只认这种 GLSL 常量，
+	// 见 docs 的 Buffer Format 一页，且是逐行文本匹配），写在那里等于没声明。
+	// 若缓冲实际是 RGBA8、而图像声明是 layout(rgba16f)，glBindImageTexture 会失败且静默 ——
+	// imageStore 写了个寂寞、Final 采到清零值 = 面板全黑。这两张当初就是漏在这里声明，
+	// 所以 0~26 号缓冲都正常、只有启动面板黑。
+	const int 	colortex27Format 			= RGBA16F;
+	const int 	colortex28Format 			= RGBA16F;
+
 	// [2026-09-10] Iris 官方常量（location: composite/deferred/final/prepare）：
 	// shadow.culling = reversed 时，玩家周围这个半径内的几何在 shadow pass 里不剔除、
 	// 之外按正常视锥剔除；shadowDistance(64) 不能小于它。模式 0/1 下此常量不参与计算。
@@ -106,6 +115,11 @@
 	const bool 	colortex24Clear			= false;   // 2026-11-11 起：TS 历史快照，必须跨帧保留
 	const bool 	colortex25Clear			= false;  // EAWF 每遍全量覆盖，不需要清
 	const bool 	colortex26Clear			= false;  // 时域缓冲，必须保留
+	// [2026-11-12 启动面板] 27/28 只在启动 logo 的头 240 帧被写（全分辨率缓冲的左上角
+	// 1/8 画布），之后再也不被采样：清除标志保持 false，省掉每帧两次全屏 RGBA16F 清零。
+	// 画布每帧都由 composite32 => 33 => 34 覆盖一遍，不需要任何历史。
+	const bool 	colortex27Clear			= false;
+	const bool 	colortex28Clear			= false;
 
 	const vec4	colortex6ClearColor			= vec4(0.0, 0.0, 0.0, 1.0);
 
@@ -143,6 +157,8 @@
 	|	colortex18	|   rgba16f			|	Half res	|	SSS source (rgb = source x mask, a = mask), written by DeferredLight
 	|	colortex19	|   rgba16f			|	Half res	|	SSS horizontal blur result
 	|	colortex20	|   rgba16f			|	Half res	|	SSS vertical blur result (consumed by IntegrateScene)
+	|	colortex27	|   rgba16f			|	Full res	|	Startup panel blur ping-pong (only the top-left 1/8 canvas is used)
+	|	colortex28	|   rgba16f			|	Full res	|	Startup panel blur ping-pong (horizontal pass output)
 
 --------------------------------------------------------------------------------
 */

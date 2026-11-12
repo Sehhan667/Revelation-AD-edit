@@ -52,6 +52,32 @@ out vec3 finalOut;
     vec3 LoadGradedUV(in vec2 uv) { return GradeSceneUV(uv); }
 #endif
 
+// [2026-11-11 v2 启动面板 / 2026-11-12 v8] 毛玻璃背板来自 composite32/33/34 的 1/8 模糊链
+// （见 program/post/StartupPanelBlur.comp），这里只做读取 + 一次显示变换。
+// 输入是**未调色的线性 HDR**（colortex1 的 1/8 降采样高斯结果），
+// 所以调色（曝光 / tone map / gamma / 暗角）只在这里做一次，且必须走 GradeScene ——
+// 与面板外像素同一套参数，面板亮度才天然与周围一致（手写 sqrt 会缺 tone map，看着是暗块）。
+// v8：1/8 结果存在**全分辨率缓冲左上角的象限画布**里（不再用 size.buffer 缩小缓冲，
+// 那块在实机里读回来恒为 0 ⇒ 面板全黑），所以采样 UV 要乘 1/8。
+// 只声明在这一个 program 里：加进 Uniform.glsl 会让每个 pass 都多占一个纹理单元。
+uniform sampler2D colortex27;
+
+// 兜底：模糊链万一没产出（画布读回 0），用 5 tap 十字平均给一层轻度雾面。
+// 这个功能历史上反复栽在「面板变成一块纯黑」上，所以宁可糊得不够也不出黑块 ——
+// 真出问题时的症状是「糊得不够」而不是「全黑」，一眼就能分清是链路还是外观。
+// 采样源固定取 colortex1（TAA 输出的**未调色**线性 HDR），不按照 LoadGradedTexel 的口径
+// 切 colortex0：CAS 档下 colortex0 已是调过色的显示空间图，再喂给 GradeScene 会二次调色。
+// colortex1 两档下都还是未调色原图；兜底只求「不是黑块」，不追求与运动模糊逐像素一致。
+vec3 StartupPanelFallbackBlur(in vec2 uv) {
+    vec2 stepUV = viewPixelSize * 6.0;
+    vec3 color = textureLod(colortex1, uv, 0.0).rgb * 2.0;
+    color += textureLod(colortex1, uv + vec2(stepUV.x, 0.0), 0.0).rgb;
+    color += textureLod(colortex1, uv - vec2(stepUV.x, 0.0), 0.0).rgb;
+    color += textureLod(colortex1, uv + vec2(0.0, stepUV.y), 0.0).rgb;
+    color += textureLod(colortex1, uv - vec2(0.0, stepUV.y), 0.0).rgb;
+    return color / 6.0;
+}
+
 // [2026-09] 启动 logo 改为矢量绘制：形状与绘制动画都在 lib/post/StartupLogo.glsl 里，
 // 原来是采样 shaders/texture/logo.png（128x128 位图放大 5 倍，边缘全是方块）。
 // STARTUP_LOGO 关掉时整段不参与编译，与改动前一致。
@@ -174,6 +200,7 @@ vec3 LoadChromaticScene(in ivec2 texel) {
 #endif
 }
 
+
 float loop(float x) {
     x = mix(x, x - 1.0, float(x > 1.0));
     x = mix(x, x + 1.0, float(x < 0.0));
@@ -224,8 +251,10 @@ void main() {
     #ifdef STARTUP_LOGO
         // 时间轴（帧）：0 → LOGO_FADE_IN_FRAMES 淡入，(logoDuration - LOGO_FADE_OUT_FRAMES)
         // → logoDuration 淡出，中间是保持段。两条常量在 lib/post/StartupLogo.glsl 里（#ifndef 兜底）。
-        // 总时长 180 帧 = 3 秒 @60fps；默认淡入 24 帧、淡出 60 帧 ⇒ 保持 96 帧。
-        const int logoDuration = 180;
+        // 总时长 240 帧 = 4 秒 @60fps（原 180 = 3 秒）；淡入 32 帧、淡出 80 帧
+        // ⇒ 保持 128 帧。淡入/淡出都按 4/3 等比加长，节奏与原来一致。
+        // 帧率不同则实际秒数不同（50fps 下 4.8 秒），与原实现同一口径：按帧计数。
+        const int logoDuration = LOGO_DURATION_FRAMES;
         if (frameCounter < logoDuration) {
             float logoFrame = float(frameCounter);
             float fadeIn  = LOGO_FADE_IN_FRAMES  > 0.0 ? smoothstep(0.0, LOGO_FADE_IN_FRAMES, logoFrame) : 1.0;
@@ -233,7 +262,28 @@ void main() {
                                              float(logoDuration), logoFrame);
             float fade = fadeIn * fadeOut;
             vec2 screenUV = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
-            // 覆盖率：StartupLogoMask 现在返回"完整字形"（描画类动画时长都是 0）——
+
+            // 毛玻璃面板：区域内只显示重度模糊后的当前画面，不做任何染色。
+            // 顺序：面板先合成，logo 才是画在玻璃上的那张白字。
+            float panelCoverage = StartupLogoPanelMask(screenUV, vec2(viewWidth, viewHeight));
+            if (panelCoverage > 0.0 && fade > 0.0) {
+                // 1/8 结果在 colortex27 左上角的象限画布里：采样 UV 乘 1/8。
+                // clamp 到画布内 —— 画布右/下 1~2 个纹素不属于画布，双线性会带进来。
+                vec2 panelSize = vec2(viewWidth, viewHeight);
+                // 上限取 (tileSize - 1) * 纹素尺寸：采样点落在画布倒数第二列/行上，
+                // 双线性只用画布内的纹素，永远不会碰到画布外那一圈 Iris 的清零值。
+                vec2 canvasMax = max(StartupLogoPanelTileSize(panelSize) - 1.0, vec2(1.0)) * viewPixelSize;
+                vec3 panelHDR = textureLod(colortex27, min(screenUV * LOGO_PANEL_BLUR_INV, canvasMax), 0.0).rgb;
+                if (dot(panelHDR, vec3(1.0)) < 1e-5) panelHDR = StartupPanelFallbackBlur(screenUV);
+
+                // 与面板外像素走同一条显示变换（曝光 / tone map / gamma / 暗角 / 泛光叠加）：
+                // 面板亮度因此天然与周围同量级，不会出现「一块暗块 / 一块黑块」。
+                // CAS 档下 colortex0 已调过色，但面板色仍是未调色的 HDR，所以这里同样只调一次。
+                vec3 panelColor = saturate(GradeScene(panelHDR, screenUV, ActiveExposure()) * LOGO_PANEL_LIFT);
+                finalOut = mix(finalOut, panelColor, panelCoverage * fade);
+            }
+
+            // 覆盖率：StartupLogoMask 现在返回完整字形（描画类动画时长都是 0）——
             // 时间上的变化全部由上面的 fade 负责，两者相互独立。
             float logoCoverage = StartupLogoMask(screenUV, vec2(viewWidth, viewHeight), logoFrame).x;
             // 纯白（按需求：与截图里的白色一致）

@@ -83,13 +83,16 @@
 // 就是这个（当时 contentH 只算到基线），叠加之后包围盒余量只有 3px 又切掉几像素。
 #define LOGO_AD_INK_H 1.1667
 
-// 整体淡入 / 淡出时长（帧）。总时长与"开始淡出的帧"在 Final.frag 里（logoDuration=180）：
-// 淡出起点 = logoDuration - LOGO_FADE_OUT_FRAMES，所以两者之和必须小于 180 才有"保持"段。
+// 整体淡入 / 淡出时长（帧）。总时长是 LOGO_DURATION_FRAMES（240）：
+// 淡出起点 = logoDuration - LOGO_FADE_OUT_FRAMES，所以两者之和必须小于 240
+// 才有保持段（32 + 80 = 112 < 240，保持 128 帧）。
+// [2026-11-11] 总时长 180 -> 240（+1s @60fps），淡入/淡出按 4/3 等比加长，
+// 保持段与淡出的比例不变。
 #ifndef LOGO_FADE_IN_FRAMES
-    #define LOGO_FADE_IN_FRAMES 24.0      // 淡入 0.4s @60fps
+    #define LOGO_FADE_IN_FRAMES 32.0      // 淡入 0.53s @60fps
 #endif
 #ifndef LOGO_FADE_OUT_FRAMES
-    #define LOGO_FADE_OUT_FRAMES 60.0     // 淡出 1.0s @60fps
+    #define LOGO_FADE_OUT_FRAMES 80.0     // 淡出 1.33s @60fps
 #endif
 
 // 绘制速度曲线：先快后慢。
@@ -100,6 +103,80 @@
 // 注意它只影响"多久画到哪"，不改变总时长和终点（t=1 时 p 仍是 1）。
 #ifndef LOGO_DRAW_EASE
     #define LOGO_DRAW_EASE 2.0
+#endif
+
+//======// 面板：毛玻璃背板 ======================================================================//
+// [2026-11-11] 启动 logo 背后加一块矩形毛玻璃：区域内是重度模糊后的当前画面，
+// 区域外保持原样，边界轻微软化。
+// [2026-11-11 v2] 单 pass 的 64 tap 核在实机里糊得不够，改成 ROI 局限的
+// 1/8 降采样 + 可分离高斯（三个 composite32/33/34 计算 pass，见
+// program/post/StartupPanelBlur.comp）。这里只放几何与外观常量，方便一次调到位。
+//
+// 形状是**直角矩形**（不做圆角）；四条边只做几像素的软化带，避免锯齿硬边，
+// 不构成可见倒角。所以没有圆角半径这个常量。
+//
+// 尺寸：内边距 = 内容高的比例，四边等距 ⇒ 视觉上托住 logo。
+// 不按宽高分别加，否则宽屏/窄屏留白不均。
+// [2026-11-12 放大一圈] 0.28 -> 0.38：1080p 下内边距 92px -> 124px，面板 687x510 -> 752x576，
+// 占屏高 47% -> 53%。再放大就接近「整屏卡片」，所以先给这一档；只想微调就改这个数，
+// 边长增长 = 2 x 内边距 = 2 x 内容高 x 这个值，0.01 约等于每边 3px（1080p）。
+// 注意：内边距同时决定模糊半径的口径（sigma = 面板高 x LOGO_PANEL_BLUR_SIGMA_FRAC），
+// 面板变大 ⇒ 模糊等比变大，观感（「糊的程度」）不变，这是有意的。
+#ifndef LOGO_PANEL_PAD
+    #define LOGO_PANEL_PAD 0.38
+#endif
+// 边界软化半宽（像素，1080p 基准，随分辨率等比）。8px：比 1px 抗锯齿明显柔和，
+// 又远小于模糊半径，不会让面板边缘看起来化开。
+#ifndef LOGO_PANEL_FEATHER
+    #define LOGO_PANEL_FEATHER 8.0
+#endif
+// ---- 模糊链：1/8 降采样 + 可分离高斯 ----
+// 降采样倍率是三处共用的口径：本文件（区块尺寸 / sigma 折算）、
+// StartupPanelBlur.comp 的 workGroupsRender（那里是字面量 0.125，
+// 因为 Iris 只认源码里的字面量）、以及 Final 采样时的 UV 缩放。
+// 缓冲本身**不缩放**（不用 size.buffer）：1/8 结果写在全分辨率缓冲的左上角区块里，
+// 原因见 StartupPanelBlur.comp 文件头的 v8 说明。
+#define LOGO_PANEL_BLUR_DOWNSCALE 8.0
+#define LOGO_PANEL_BLUR_INV (1.0 / LOGO_PANEL_BLUR_DOWNSCALE)
+// 高斯 sigma = 面板高度 x 这个比例（面板块高度，跟分辨率无关）。
+// 0.11：1080p 面板高约 510px ⇒ sigma ≈ 56px，核的可见范围约 ±140px（面板高的 27%）。
+// 观感上树叶/草地/栅栏会糊成只剩极低频色块，属于重度毛玻璃。
+#ifndef LOGO_PANEL_BLUR_SIGMA_FRAC
+    #define LOGO_PANEL_BLUR_SIGMA_FRAC 0.11
+#endif
+// sigma 的上下限（单位 = 1/8 缓冲的纹素）。上限防止 4K/8K 下 tap 数爆掉，
+// 下限保证极小分辨率下面板也不会变回轻微模糊。
+#ifndef LOGO_PANEL_BLUR_MIN_SIGMA
+    #define LOGO_PANEL_BLUR_MIN_SIGMA 1.0
+#endif
+#ifndef LOGO_PANEL_BLUR_MAX_SIGMA
+    #define LOGO_PANEL_BLUR_MAX_SIGMA 10.0
+#endif
+// 单侧 tap 上限（总 tap = 2*TAPS-1）。截断在 2.5 sigma：够到 +-2.5 sigma 时
+// 残余权重 < 1.2%，肉眼看不出截断；上限 40 对应 sigma 16（8K 也够）。
+#ifndef LOGO_PANEL_BLUR_MAX_TAPS
+    #define LOGO_PANEL_BLUR_MAX_TAPS 40
+#endif
+
+// [2026-11-11 v6] 外观层全部撤掉，只保留纯模糊。
+// 不再有雾面白、tint、亮度层、去饱和、加性提亮、渐变、颗粒、边缘高光，
+// 也不再有背景全黑时的回退色 —— 所以这里没有对应的外观常量，
+// 避免留一堆不起作用的层。需要再做玻璃质感时，从 Git 历史取 v5 的实现，
+// 不要在 Final 里随手加常量。
+
+// [2026-11-11 v7] 面板唯一的显示层旋钮：整体增益，作用在 Final 已乘过曝光、
+// 已走完 gamma 尾巴（sqrt）的显示空间值上，不参与调色、不改变色相。
+// 1.0 = 中性（与面板外相邻区域同量级），略大于 1 是允许的小幅提亮。
+// 想更亮就调这个，不要回去加雾面层/亮度层。
+#ifndef LOGO_PANEL_LIFT
+    #define LOGO_PANEL_LIFT 1.0
+#endif
+
+// 启动画面（logo + 面板）总时长（帧）。240 帧 = 4s @60fps（原来是 180 = 3s）。
+// 帧率不同则实际秒数不同（50fps 下 4.8s），与原实现同一口径：按帧计数，不引入时间驱动。
+// 模糊链的三个 pass 也用这个常量做运行期门控（>= 就不干活）。
+#ifndef LOGO_DURATION_FRAMES
+    #define LOGO_DURATION_FRAMES 240
 #endif
 
 //======// 几何（设计框坐标，源像素）=============================================================//
@@ -466,6 +543,65 @@ float RenderStartupText(in vec2 p, in float opacity, in float pxPerUnit) {
 }
 
 //======// 合成入口 =============================================================================//
+// logo 内容（主字形 + 可选的一行字）在屏幕上的布局：
+// origin 左上角像素坐标，size 像素尺寸，contentH 设计框高度（翻 y 用）。
+// 面板与字形共用这一份布局 ⇒ 两者永远同心，改 LOGO_OFFSET_Y / LOGO_SHOW_TEXT 时不会错位。
+void StartupLogoLayout(in vec2 viewSize, out vec2 origin, out vec2 size, out float contentH) {
+    // 每源像素对应多少屏幕像素（主字形与文字共用同一个缩放，保证相对大小不变）
+    float pxPerUnit = LOGO_HEIGHT * viewSize.y / LOGO_BOX_H;
+
+    // 完整内容：主字形 + 间距 + 一行字（含基线以下 16.7% 的圆角墨迹，见 LOGO_AD_INK_H）
+    #if LOGO_SHOW_TEXT
+        contentH = LOGO_BOX_H + LOGO_AD_GAP + LOGO_AD_INK_H * LOGO_AD_H;
+    #else
+        contentH = LOGO_BOX_H;      // 只剩主字形：设计框高就是总高（居中也跟着变）
+    #endif
+    size = vec2(LOGO_BOX_W, contentH) * pxPerUnit;
+    origin = (viewSize - size) * 0.5;
+    origin.y += LOGO_OFFSET_Y * viewSize.y;
+}
+
+// 面板的全分辨率像素尺寸（宽, 高）。模糊链用它把 sigma 折算成面板高的百分比，
+// 与分辨率、宽高比都无关；Final 与 compute pass 共用，避免两处各算一套。
+vec2 StartupLogoPanelSize(in vec2 viewSize) {
+    vec2 origin, size;
+    float contentH;
+    StartupLogoLayout(viewSize, origin, size, contentH);
+    // 四边等距内边距：内边距 = 内容高 x LOGO_PANEL_PAD（不按各轴自身尺寸缩放，否则宽度会偏大）
+    float pad = size.y * LOGO_PANEL_PAD;
+    return size + 2.0 * pad;
+}
+
+// 模糊链区块（「象限画布」）的像素尺寸 = 屏幕 x 1/8，只有整数个纹素。
+// 两个消费方共用同一份口径：compute 用它做画布边界（缓冲是全分辨率，imageSize 是整屏），
+// Final 用它把采样 clamp 在画布内（画布右/下 1~2 个纹素不属于画布，双线性会带进来）。
+vec2 StartupLogoPanelTileSize(in vec2 viewSize) {
+    return vec2(ivec2(viewSize * LOGO_PANEL_BLUR_INV));
+}
+
+// 毛玻璃面板覆盖率：直角矩形有符号距离场。1 = 完全在面板内，0 = 完全在外，
+// 边界在 ±feather 像素内平滑过渡（见 LOGO_PANEL_FEATHER）。
+// 与 logo 同心，四边内边距相同（都是 size.y * LOGO_PANEL_PAD）。
+// 矩形 SDF 单独抽出来：覆盖率（向外羽化）与边缘折光（向内 1~2px）共用同一份几何。
+float StartupLogoPanelSDF(in vec2 screenUV, in vec2 viewSize) {
+    vec2 origin, size;
+    float contentH;
+    StartupLogoLayout(viewSize, origin, size, contentH);
+
+    vec2 halfSize = StartupLogoPanelSize(viewSize) * 0.5;
+    vec2 center = origin + size * 0.5;
+
+    // 矩形的 SDF：内部为负、外部为正，角落不参与任何倒角
+    vec2 q = abs(screenUV * viewSize - center) - halfSize;
+    return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0);
+}
+
+float StartupLogoPanelMask(in vec2 screenUV, in vec2 viewSize) {
+    // 软化宽度随分辨率等比：1080p 下就是常量本身，4K 下自动变宽，不会退化成硬像素线
+    float featherPx = LOGO_PANEL_FEATHER * viewSize.y * rcp(1080.0);
+    return 1.0 - smoothstep(-featherPx, featherPx, StartupLogoPanelSDF(screenUV, viewSize));
+}
+
 // screenUV  0..1 的屏幕坐标（左上为原点）
 // viewSize  屏幕像素尺寸
 // frame     自加载起的帧数
@@ -474,15 +610,9 @@ vec2 StartupLogoMask(in vec2 screenUV, in vec2 viewSize, in float frame) {
     // 每源像素对应多少屏幕像素（主字形与文字共用同一个缩放，保证相对大小不变）
     float pxPerUnit = LOGO_HEIGHT * viewSize.y / LOGO_BOX_H;
 
-    // 完整内容：主字形 + 间距 + 一行字（含基线以下 16.7% 的圆角墨迹，见 LOGO_AD_INK_H）
-    #if LOGO_SHOW_TEXT
-        float contentH = LOGO_BOX_H + LOGO_AD_GAP + LOGO_AD_INK_H * LOGO_AD_H;
-    #else
-        float contentH = LOGO_BOX_H;      // 只剩主字形：设计框高就是总高（居中也跟着变）
-    #endif
-    vec2 boxSize = vec2(LOGO_BOX_W, contentH) * pxPerUnit;
-    vec2 boxOrigin = (viewSize - boxSize) * 0.5;
-    boxOrigin.y += LOGO_OFFSET_Y * viewSize.y;
+    vec2 boxOrigin, boxSize;
+    float contentH;
+    StartupLogoLayout(viewSize, boxOrigin, boxSize, contentH);
 
     vec2 p = (screenUV * viewSize - boxOrigin) / pxPerUnit;   // 设计框内坐标（源像素）
 

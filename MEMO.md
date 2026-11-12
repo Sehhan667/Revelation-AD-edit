@@ -2852,3 +2852,50 @@ GUI（`screen.VXGI` / `sliders`）与双语 `lang` 条目一并移除。
 | 缓冲尺寸 | `resourceSize = rectSize` | 全分辨率共享缓冲的左上 1/4 | colortex3 是帧内共享暂存（TAA 会全分辨率重写），不能改尺寸 |
 | 命中距离存放 | `.a` 贯穿全链 | 独立 colortex26（时域平滑） | 我们的 `.a` 要存帧数 |
 | 反萤火虫 | TA 内 fireflySuppressor | 未实现（GUI 有可选中值） | 2.4 面积覆盖率已压掉大部分孤立亮点 |
+
+---
+
+# 备忘：启动 logo 毛玻璃面板「整块全黑」的两个静默坑（2026-11-12）
+
+背景：启动 logo 背后的毛玻璃背板（composite32/33/34 的 1/8 模糊链 + Final 采样）在实机里
+**整块纯黑**，可是没有编译错、没有 GL 报错、日志里也查不到 —— 只能靠「采样值恒为 0」定位。
+两个坑都属于「写错了不报错，只是读回 0」这一类，记下来别再踩。
+
+## 1. `shaders.properties` 的 `colortexNFormat` 不是 Iris 的接口（首要嫌疑）
+
+- Iris 只认 GLSL 常量 `const int colortexNFormat = RGBA16F;`（docs「Buffer Format」一页：
+  逐行文本匹配；写在块注释里也生效 —— 这正是本仓 `config.glsl` 整个文件就是一个块注释的原因）。
+- 写在 properties 里**静默无效** ⇒ 缓冲实际是默认 RGBA8，而图像声明是 `layout(rgba16f)`
+  ⇒ `glBindImageTexture` 失败、`imageStore` 写了个寂寞 ⇒ 消费端恒读清零值 = 全黑。
+  启动面板的 colortex27/28 当初就是这么写的，而包内其它缓冲（0~26）全在 config.glsl 里声明格式
+  —— 这正好解释「为什么只有它黑」。
+- 规矩：新缓冲一律在 `config.glsl` 加三件（Format 常量 / Clear 常量 / Buffer Table 一行），
+  `shaders.properties` 只留 `size.buffer`、`image.*`、`program.*.enabled` 这类真接口。
+
+## 2. 缓冲尺寸：half-res 是可以的，但低分辨率画布最好照泛光那套写
+
+- 先纠正一个容易过度的结论：本仓 **half-res 缓冲 + compute `imageStore` + 后续 fragment 采样
+  是能用的**（`GIHistoryStore` 写 `colorimg2`、`GIPrepass` 写 `colorimg22/26`、`Accumulate` 读回）。
+  所以「缩小缓冲必然读回 0」不成立。
+- 但确实有过失败先例（MEMO 2026-10-08 ①「片元 pass 里 imageStore 写半分辨率缓冲，读回来是空的」），
+  而启动面板这条链路没有实机验证基础，所以 v8 采取**与泛光完全同构**的写法把这个变量拿掉：
+  缓冲保持全分辨率、低分辨率结果写在缓冲左上角的「象限画布」里，消费端用 `uv * scale` 采样
+  并 clamp 在画布内。
+  - bloom：`Downsample.comp` 的 `workGroupsRender = 0.5` + `Blur.comp` 的
+    `canvasLimit = ceil(viewSize * 0.5) - 1`，画布在 colortex4 左上半区；
+  - `deferred1` 把半分辨率重投影历史写进 colortex4 左上象限；
+  - `composite4.csh`(Translucent) 用 `imageStore(colorimg3)` 写全分辨率 colortex3。
+- 代价：两张全分辨率 RGBA16F（1080p 各约 15MB，只在启动 4 秒用）。等这条链路被实机确认后，
+  可以换回 `size.buffer = 0.125` 的写法省掉这 30MB；改回去要同时改 workGroupsRender 与
+  Final 的 UV 缩放（三处口径见 `lib/post/StartupLogo.glsl` 的 LOGO_PANEL_BLUR_* 注释）。
+
+## 3. 面板色的亮度口径必须走 GradeScene
+
+`sqrt(saturate(blur * ActiveExposure()))` 少了 tone map（AcademyFit）那一段，面板会比面板外
+暗一截，观感就是「一块暗块」/「一块黑块」。改成 `GradeScene(blurHDR, screenUV, ActiveExposure())`
+后与面板外像素同一套曝光/tone map/gamma/暗角/泛光混合，亮度天然同量级；CAS 开/关两档都只调一次色。
+
+## 4. 兜底
+
+Final 里如果画布读回 ≈0（`dot(blur, 1) < 1e-5`），退到 5 tap 十字平均的轻度雾面。
+宁可糊得不够也不出黑块 —— 症状会变成「不够糊」而不是「全黑」，一眼能分清是链路问题还是外观问题。

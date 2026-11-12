@@ -1,0 +1,156 @@
+/*
+--------------------------------------------------------------------------------
+    启动 logo 的毛玻璃面板：1/8 降采样 + 可分离高斯（三个 composite pass）
+
+        composite32  8x8 均匀盒降采样 1/8   colortex1  -> colortex27
+        composite33  横向高斯               colortex27 -> colortex28
+        composite34  纵向高斯               colortex28 -> colortex27
+
+    [2026-11-12 v8 全黑修复] v2~v7 在实机里**面板整块全黑**：没有编译错、没有 GL 报错、
+    日志干净，只能靠「采样值恒为 0」定位。两个原因，按可能性排序：
+
+    (a) 首要：格式声明写错了地方。colortex27/28 的格式当时写在 shaders.properties 的
+        `colortex27Format = RGBA16F` —— 那**不是 Iris 的接口**（Iris 只认 GLSL 常量
+        `const int colortexNFormat`，见 docs「Buffer Format」；properties 里那行静默无效）。
+        于是缓冲实际是默认 RGBA8，而图像声明是 `layout(rgba16f)` ⇒ glBindImageTexture 失败
+        ⇒ imageStore 写了个寂寞 ⇒ Final 恒读清零值。现已改到 config.glsl 声明（+ Clear +
+        Buffer Table），与包内 0~26 号缓冲一致。
+
+    (b) 防御性：缓冲尺寸。本仓 half-res 缓冲 + compute imageStore 其实是有成功先例的
+        （GIHistoryStore 写 colorimg2、GIPrepass 写 colorimg22…），所以这条不一定是问题；
+        但为了让这条链路与泛光**完全同构**（同一套「全分辨率缓冲 + 左上角象限画布」），
+        这里把「缩小缓冲」这个变量整个拿掉：缓冲保持全分辨率，1/8 结果只写在左上角
+        1/8 区块里（bloom 的 colortex4 左上半区、Translucent 的 colorimg3 都是这么用的），
+        Final 用 `screenUV * (1/8)` 采样。代价 = 两张全分辨率 RGBA16F（1080p 各约 15MB），
+        只在启动那 4 秒用得到；等尺寸版本被实机确认后再收回来也不迟。
+
+    [2026-11-11 v4 保留] 模糊链只做模糊，全程在线性 HDR 里：源固定取 colortex1
+    （TAA 输出，composite7 写好），曝光 / tone map / gamma 全部留到 Final，
+    用 GradeScene 一次做完 —— compute 里调 GradeScene 拿不到可靠的曝光上下文
+    （v3 实机反馈发黑）；而手写 `sqrt(exposure * blur)` 又会因为少了 tone map
+    而和周围差一截亮度，看着像一块暗块。所以 Final 里那一层必须走 GradeScene。
+
+    sigma = 面板高 x LOGO_PANEL_BLUR_SIGMA_FRAC / 8（单位：1/8 纹素）
+          1080p: 510 x 0.11 / 8 = 7.0 纹素 = 56 个全分辨率像素，
+          核可见范围约 +-2.5 sigma = +-140px（面板高的 27%）。
+          这是树叶、草地、栅栏糊成几乎均匀色块的量级。
+
+    为什么在 1/8 上做：sigma 7 纹素的 1D 高斯只要 18 个单侧 tap，全分辨率则要
+    57 个 tap 且必然欠采样。1080p 下 1/8 画布只有 240x135，三个 pass 合计约 4M
+    次取样 —— 比单 pass 64 tap 的全分辨率核还便宜。
+
+    门控：三个 pass 的第一条指令都是 frameCounter 判断，超出 LOGO_DURATION_FRAMES
+    立即 return（不采样、不写图）。Iris 无法按 uniform 决定是否调度一个 pass，
+    所以 1/8 分辨率的空 dispatch 是能做到的最小开销。
+
+    缓冲：27/28 两张 RGBA16F，ping-pong —— 一个 pass 不读自己正在写的图。
+    图像声明保留 layout 格式限定符（与 bloom/Blur.comp 一致）：Iris 用它决定
+    缓冲内格式，也是「写进去的是 HDR 而不是 8bit 截断值」的保证。
+--------------------------------------------------------------------------------
+*/
+
+//======// 调度 ================================================================================//
+
+layout (local_size_x = 16, local_size_y = 16) in;
+
+// 1/8 屏：gl_NumWorkGroups = ceil(viewSize * 1/8 / localSize)。
+// 这里写字面量而不是宏：Iris 是从源码里解析这条 const 的，宏名不保证被认出来
+// （认不出就会退回默认 vec2(1,1) —— 靠下面的画布边界判断仍然正确，只是白跑 64 倍线程）。
+// 必须等于 1/LOGO_PANEL_BLUR_DOWNSCALE。
+const vec2 workGroupsRender = vec2(0.125, 0.125);
+
+//======// 输入 ================================================================================//
+
+// 只声明真正用到的（与 bloom/Downsample.comp 同一写法）：这里刻意不引入
+// Uniform.glsl / SSBO.glsl / GradeCore.glsl —— compute 里不需要也不该做调色。
+uniform sampler2D colortex1;   // TAA 输出的线性 HDR 场景（composite7 写好）
+uniform vec2 viewSize;
+uniform vec2 viewPixelSize;
+uniform int frameCounter;
+
+//======// 输出（按 pass 选择，三选一）=========================================================//
+
+#if STARTUP_PANEL_PASS == 0
+    layout (rgba16f) writeonly uniform image2D colorimg27;   // 降采样结果
+#elif STARTUP_PANEL_PASS == 1
+    layout (rgba16f) readonly  uniform image2D colorimg27;   // 降采样结果（读）
+    layout (rgba16f) writeonly uniform image2D colorimg28;   // 横向结果（写）
+#else
+    layout (rgba16f) readonly  uniform image2D colorimg28;   // 横向结果（读）
+    layout (rgba16f) writeonly uniform image2D colorimg27;   // 最终结果（写，Final 采样）
+#endif
+
+//======// 依赖 ================================================================================//
+
+#include "/lib/Utility.glsl"
+#include "/lib/post/StartupLogo.glsl"
+
+//======// 可分离高斯的读/写目标 ===============================================================//
+
+#if STARTUP_PANEL_PASS == 1
+    #define PANEL_SRC_IMAGE colorimg27
+    #define PANEL_DST_IMAGE colorimg28
+    #define PANEL_AXIS ivec2(1, 0)
+#elif STARTUP_PANEL_PASS == 2
+    #define PANEL_SRC_IMAGE colorimg28
+    #define PANEL_DST_IMAGE colorimg27
+    #define PANEL_AXIS ivec2(0, 1)
+#endif
+
+//======// 主函数 ==============================================================================//
+
+void main() {
+    // 门控：启动画面之外直接退出。放在第一行，logo 消失后本 pass 不做任何取样/写入。
+    if (frameCounter >= LOGO_DURATION_FRAMES) return;
+
+    ivec2 outPos = ivec2(gl_GlobalInvocationID.xy);
+
+    // 象限画布的尺寸 = 1/8 屏。缓冲本身是全分辨率，所以 imageSize 是整屏、
+    // 不能拿来当边界；越出画布的线程在这里退出。
+    ivec2 canvasLimit = ivec2(StartupLogoPanelTileSize(viewSize));
+    if (any(greaterThanEqual(outPos, canvasLimit))) return;
+
+#if STARTUP_PANEL_PASS == 0
+    // ---------- 第 1 级：8x8 均匀盒降采样到 1/8 ----------
+    // 4x4 个双线性 tap：每个覆盖 2x2 个全分辨率纹素，拼起来正好铺满 8x8 块。
+    // 采样点相对块中心的偏移是 +-1 / +-3 像素（1 个纹素间距 = 精确的 8x8 盒）。
+    // 全部在线性 HDR 里平均，不调色（调色放在 Final，见文件头 v4）。
+    vec2 blockCenter = (vec2(outPos) + 0.5) * LOGO_PANEL_BLUR_DOWNSCALE * viewPixelSize;
+    vec3 sum = vec3(0.0);
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            vec2 offset = vec2(float(x) * 2.0 - 3.0, float(y) * 2.0 - 3.0) * viewPixelSize;
+            sum += textureLod(colortex1, clamp(blockCenter + offset, vec2(0.0), vec2(1.0)), 0.0).rgb;
+        }
+    }
+    imageStore(colorimg27, outPos, vec4(sum * 0.0625, 1.0));
+#else
+    // ---------- 第 2/3 级：一维高斯（横向 / 纵向） ----------
+    // sigma 取自面板高度 ⇒ 换分辨率、换宽高比观感都不变
+    float sigma = clamp(StartupLogoPanelSize(viewSize).y * LOGO_PANEL_BLUR_SIGMA_FRAC / LOGO_PANEL_BLUR_DOWNSCALE,
+                        LOGO_PANEL_BLUR_MIN_SIGMA, LOGO_PANEL_BLUR_MAX_SIGMA);
+    int radius = int(min(ceil(2.5 * sigma), float(LOGO_PANEL_BLUR_MAX_TAPS)));
+
+    // exp2 版：exp(-i^2 / (2 sigma^2)) = exp2(-i^2 * (1/(2 sigma^2)) * log2(e))
+    float invTwoSigmaSq = 0.5 / (sigma * sigma);
+    const float LOG2_E = 1.4426950408889634;
+
+    vec3 sum = imageLoad(PANEL_SRC_IMAGE, outPos).rgb;
+    float weightSum = 1.0;
+
+    ivec2 lo = ivec2(0);
+    ivec2 hi = canvasLimit - 1;
+    for (int i = 1; i <= radius; ++i) {
+        float w = exp2(-float(i * i) * invTwoSigmaSq * LOG2_E);
+        ivec2 offset = PANEL_AXIS * i;
+        // clamp 到画布内 = 边缘延展：不会越界读到画布外（缓冲里那块是别的 pass 的残留），
+        // 也不会出现黑边
+        vec3 a = imageLoad(PANEL_SRC_IMAGE, clamp(outPos + offset, lo, hi)).rgb;
+        vec3 b = imageLoad(PANEL_SRC_IMAGE, clamp(outPos - offset, lo, hi)).rgb;
+        sum += (a + b) * w;
+        weightSum += 2.0 * w;
+    }
+
+    imageStore(PANEL_DST_IMAGE, outPos, vec4(sum / weightSum, 1.0));
+#endif
+}
