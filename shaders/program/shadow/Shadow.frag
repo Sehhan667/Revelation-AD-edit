@@ -146,8 +146,15 @@ void main() {
     // 光栅化器会自动拦截屏幕外的三角形，此处的片段着色器根本不会执行，无需重复计算。
 
     if (isWaterOut == 1u) {
-        vec3 waveNormal = CalculateWaterNormal(vectorDataOut.xz);
-        shadowcolor1Out.xy = OctEncodeUnorm(waveNormal.xzy);
+        // [2026-11-12 B6] 波法线只为水下焦散服务（消费者是 Render.glsl 的 CalculateWaterCaustics，
+        // 读 shadowcolor1.xy）。关掉「水面焦散」时整段免掉 3 次高度 × 3 倍频 = 9 次 noisetex。
+        // shadowcolor1.w 仍然要写：它是「这里被水挡」的标记，PCF 的透明遮挡分支靠它分辨水（不是玻璃）。
+        #ifdef WATER_CAUSTICS
+            vec3 waveNormal = CalculateWaterNormal(vectorDataOut.xz);
+            shadowcolor1Out.xy = OctEncodeUnorm(waveNormal.xzy);
+        #else
+            shadowcolor1Out.xy = vec2(0.0);
+        #endif
         shadowcolor1Out.w = 1.0;
         return;
     }
