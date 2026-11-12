@@ -187,3 +187,34 @@
 1) 实机验证 A 档（尤其 A8）与 P1（B1 色差、B3 半影、B7 云影、B9 天空 LUT、G1 已删）；
 3) 看实际场景决定 P2-2（远处实体阴影）与 P2-3①（海面 noisetex）；
 4) 仍缺帧数再上 C1，且先做「只写调试色」的半分辨率链路验证。
+
+## 2026-11-12 下午追加：水面/玻璃专项（静态检查后定的顺序）
+
+[x] W1  c12 去掉重复的波法线 + RG16 -> R16F                               [c83fc6a2]
+        （后来因 W2 又回到 RG16F：c12 要同时装哨兵与 8bit 法线）
+[x] W2  gbuffers_water 不再写 c8（水面/玻璃法线并入 c12；顺带修了
+        OctEncodeSnorm 被塞进 Packup2x8 的折返 bug）                        [4d02ca8f]
+        —— 水面/玻璃像素 G-buffer 写入 22 -> 16 B/px（-27%）
+[x] W3  玻璃像素在 DeferredLight 走廉价底色（跳过 PCSS/SSS/SSR/环境光）    [28d872c3]
+        —— 水面还没动：它的底色是 Translucent 水体着色的基础，需要先决定
+           「水面底色用什么」，见 W4。
+
+[ ] W4  水面像素的廉价底色（待定）
+        约束：Translucent.comp 第一行就是 sceneOut = loadSceneMain(texelPos)，并在此之上叠
+        水雾/折射/反射。所以 DeferredLight 若直接不写水面像素的 c0，Translucent 会读到**上一帧
+        自己写的水面色** ⇒ 每帧累积（反馈环）。可选方案：
+          (a) DeferredLight 给水面写「天光 SH + 水面 albedo 近似」的廉价底色（推荐，改动集中）；
+          (b) Translucent 不再读 c0，自己算底色（更彻底，但要动水体着色）。
+
+[ ] W5  GI 跳过水面/玻璃像素（P1）
+        判据已统一：colortex12.x != 0（>0 水、<0 玻璃）。要同时处理：上采样权重（现在
+        FetchGeometryNormal 会自动返回半透明法线，但仍应把水面 tap 权重压低）、时域缓冲空洞。
+
+[ ] W6  染色玻璃「没有颜色」（看起来像普通玻璃）—— 待定位
+        颜色链路：Water.frag 写 c7.zw = Packup2x8U(albedo) → IntegrateScene 解包 →
+        sceneColor *= exp2(log2(albedo) * approxSqrt(translucent.a))。
+        静态检查未发现必然错误，三个候选原因与一行验证：
+          ① translucent.a ≈ 0（指数≈0 ⇒ 不染色）：临时把 approxSqrt(translucent.a) 改成 1.0
+          ② 命中「回退 c6」分支（albedo 取成背景色）：把 fallbackAlbedo 换成 vec4(1,0,1,1)
+          ③ 玻璃像素的 materialID ≠ 2（没进 glassMask）：临时让 glassMask 恒真
+        下次进游戏时按 ①②③ 顺序各开一次即可定位。
