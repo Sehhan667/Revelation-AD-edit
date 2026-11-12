@@ -856,7 +856,10 @@ void main() {
 			float lightmapSky = Unpack2x8UY(loadMaterialPack(renderTexel).x);
 
 			// .a 同理：SSILVB 没有命中距离，写中性远值（此前 vec3 赋值 ⇒ .a=0 ⇒ 全画面按最近命中降权）
-			result = vec4(CalculateSSILVB(screenCoord, viewPos, worldNormal, lightmapSky), GI_HITDIST_NONTRACED);
+			// [2026-11-11 修复 C1068] CalculateSSILVB 现在返回 vec4（rgb = 辐照度，a = 可见度，
+			// 不是命中距离）⇒ 不能再 `vec4(CalculateSSILVB(...), 1024)` 整体包一层（5 个分量）。
+			// 只取 .rgb，.a 仍写 GI_HITDIST_NONTRACED（语义与旧实现一致）。
+			result = vec4(CalculateSSILVB(screenCoord, viewPos, worldNormal, lightmapSky).rgb, GI_HITDIST_NONTRACED);
 		#endif
 		#if defined GI_ACTIVE_VXGI && defined VOXEL_REUSE
 			// ---- ReSTIR：几何一致才与上帧均值合并，否则重置为新样本（避免转动/移动把旧几何混入残影）；随后记录本像素几何 ----
