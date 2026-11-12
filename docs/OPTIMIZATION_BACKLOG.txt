@@ -201,7 +201,8 @@
         —— 水面还没动：它的底色是 Translucent 水体着色的基础，需要先决定
            「水面底色用什么」，见 W4。
 
-[ ] W4  水面像素的廉价底色（待定）
+[x] W4  水面像素的廉价底色（按方案 a 实现）                          [907e2469]
+        —— 已实测：无异常（用户确认）。
         约束：Translucent.comp 第一行就是 sceneOut = loadSceneMain(texelPos)，并在此之上叠
         水雾/折射/反射。所以 DeferredLight 若直接不写水面像素的 c0，Translucent 会读到**上一帧
         自己写的水面色** ⇒ 每帧累积（反馈环）。可选方案：
@@ -212,7 +213,13 @@
         判据已统一：colortex12.x != 0（>0 水、<0 玻璃）。要同时处理：上采样权重（现在
         FetchGeometryNormal 会自动返回半透明法线，但仍应把水面 tap 权重压低）、时域缓冲空洞。
 
-[ ] W6  染色玻璃「没有颜色」（看起来像普通玻璃）—— 待定位
+[x] W6  染色玻璃「没有颜色」—— 已修                                  [06058286]
+        —— 定位结论：调试开关 mode 2 让玻璃变洋红 ⇒ 命中的是「c7.zw 取不到有效 albedo ⇒ 回退读
+           c6」分支，而 c6 在玻璃像素上是背景 albedo ⇒ 染色 ≈ 背景色。
+        修法：gbuffers_water 直接把玻璃 albedo 写进 c6（标准 albedo 缓冲），IntegrateScene 的
+        玻璃染色以 c6 为准（不再依赖 c7.zw 的 2x8bit 打包），染色指数固定 1。
+        代价 +4 B/px（水/玻璃 20 B/px，仍低于原来的 22–24）。已实测：无异常。
+        定位用的 GLASS_DEBUG 开关保留（默认 0，不影响性能）。
         颜色链路：Water.frag 写 c7.zw = Packup2x8U(albedo) → IntegrateScene 解包 →
         sceneColor *= exp2(log2(albedo) * approxSqrt(translucent.a))。
         静态检查未发现必然错误，三个候选原因与一行验证：
