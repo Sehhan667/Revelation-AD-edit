@@ -252,6 +252,27 @@ void main() {
         vec4 sssSourceOut = vec4(0.0);
     #endif
 
+    // ========== 半透明（玻璃，materialID == 2）：廉价底色 ==========
+    // [2026-11-12 P0] 玻璃像素的完整光照其实没人看：c0 随后由 composite4 的 Translucent(csh) +
+    // IntegrateScene(fsh) 用「折射背景 × 染色 + 反射」重写；这里算的 PCSS / SSS / SSR / 环境光 SH
+    // 全部白算。本分支只给 Translucent 留一个**带真实玻璃颜色的底色**（打包在 c7.zw 的 albedo ×
+    // lightmap），然后直接 return，省掉那一整套。
+    // 注意：水面（materialID == 3）不走这里 —— 它的底色是 Translucent 水体着色的基础，
+    // 要替换得先决定「水面底色用什么」，留作后续。
+    if (materialID == 2u) {
+        vec4 glassPack = ExtractSpecularTex(materialPack);      // 玻璃：c7.zw 存的是 albedo
+        vec3 glassAlbedo = sRGBToLinear(glassPack.rgb);
+        vec2 glassLightmap = Unpack2x8U(materialPack.x);
+        // 与 Translucent.comp 的「不透明贴图实体」同一条近似：15% 底 + 方块光，不跑阴影
+        sceneOut = glassAlbedo * (0.15 + 0.85 * glassLightmap.y);
+        #ifdef SUBSURFACE_SCATTERING_DIFFUSION
+            if (((texelPos.x & 1) == 0) && ((texelPos.y & 1) == 0)) {
+                imageStore(colorimg18, texelPos >> 1, vec4(0.0));
+            }
+        #endif
+        return;
+    }
+
     // ========== Sky ==========
     if (materialID == 0u) {
         vec3 transmittance = AtmosphereTransmittanceToPoint(atmosphereViewPos, worldDir);
