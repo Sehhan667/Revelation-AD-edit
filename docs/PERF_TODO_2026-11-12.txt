@@ -1,0 +1,68 @@
+性能审计 2026-11-12 —— 可优化清单（工作台账）
+================================================================
+详细分析（证据/改法/收益/风险/验证）见 docs/PERF_AUDIT_2026-11-12.md
+本文件只做勾选台账，按批次推进；一个批次一个提交，可单独 revert。
+
+范围排除：所有类型 GI（VXGI/SSILVB/DDGI/IRC/PTGI/RSM/SVGF/REBLUR/GI 历史）、CAS、体积云本体。
+
+抓帧基线（capture.rdc，1632x918，2026-11-12 08:11）
+  每帧写入 ≈1.30 GB：G-buffer 463MB(36%) / 阴影 336MB(26%) / 环境+模组侧 423MB(33%) / 包内照明+后处理 116MB(9%)
+  显存（带标签纹理，main+alt 各一份）≈188MB
+  注：RenderDoc XML 的 duration 是每次 GL 调用的 wall-time，不能当 GPU 时间；排序只用结构/字节/取样计数。
+
+
+A 档：低风险、纯代码、无观感变化（合计 ≈1.0–2.0 ms/帧）
+----------------------------------------------------------------
+[ ] A1  实体受击故障帧级门控（Final.frag ENTITY_AREA_GLITCH）        收益 0.2–0.7ms  风险 低
+[ ] A2  CalcSunScreenVisibility 提为帧常量（两份实现合一）            收益 0.05–0.3ms 风险 零
+[ ] A3  Translucent 早退顺序（深度短路写反）                          收益 0.06–0.15ms 风险 零
+[ ] A4  colortex15 RGBA16F -> RG16F（DOF CoC）                        收益 16.6MB/帧  风险 零
+[ ] A5  TAA 删除「每帧把整张 colortex4 写成 0」的 RT                  收益 8.3MB/帧   风险 低
+[ ] A6  DOF Gather 重复取同一 texel 的 CoC                            收益 5.3MB/帧   风险 零
+[ ] A7  DeferredLight 两处 colorimg7 死写（补偿已停用）               收益 雨天0.1–0.3 风险 低
+[ ] A8  SSR 天空命中后跳过 8 步二分（单独提交，便于目视回退）          收益 0.03–0.1ms 风险 中
+[ ] A9  焦散 4x / SSS blocker 2x 复用已算好的 shadow-screen 位置      收益 0.03–0.17ms 风险 极低
+[ ] A10 接触阴影对 NdotL≈0 像素不再跑 10 次深度步进                    收益 0.03–0.1ms 风险 极低
+[ ] A11 水面法线同一个 lfNoise 取 3 遍 -> 取 1 遍                      收益 0.01–0.03ms 风险 零
+[ ] A12 雾中光束的 sRGBToLinear 换 sRGBToLinearApprox                  收益 0.03–0.15ms 风险 极低
+[~] A13 启动面板缓冲缩回 1/8 + pass 合并                              暂缓：只省显存，改动有回归风险（面板刚修好）
+[ ] A14 直方图并进 Bloom Downsample                                    收益 0.05–0.08ms 风险 低
+[ ] A15 运动模糊恢复「半分辨率 + 2x2 块共享运动矢量」（51fb6dd8 丢失）  收益 0.05–0.15ms 风险 中
+
+
+B 档：需要 A/B 或观感裁定（未开工）
+----------------------------------------------------------------
+[ ] B1  色差三次 GradeScene -> 拆 GradeCtx 复用（0.2–0.3ms，风险低）
+[ ] B2  色差移到 tone map 之前（AcademyFit 只跑一次；高光色边会减弱；依赖 B1）
+[ ] B3  PCF：shadowtex0 点采样 vs shadowtex1 双线性判据不自洽（半影被 albedo 染色，性能+观感双修）
+[ ] B4  entityShadowDistanceMul = 0.5（32 格外的实体不进 shadow pass；实体多时 0.1–0.4ms）
+[ ] B5  shadow pass SOLID 阶段不写 shadowcolor0/1（依赖 B3 先修）
+[ ] B6  shadow pass 水片元 9 次 noisetex（海面视角 0.1–0.3ms；②结构性退役 shadowcolor1 波法线）
+[ ] B7  云影 ortho 范围 *32 -> *8（同成本白送 4x 云影锐度）
+[ ] B8  bloom 两趟就地读写 colortex4 且带 restrict（正确性 > 性能）
+[ ] B9  begin/SkyView 全屏 dispatch 服务 192x192 LUT（改前必须抓帧确认 LUT 非空）
+[ ] B10 视差二分后 3–4 次无信息增益（仅开 PARALLAX 时）
+[ ] B11 colortex10 仍是 RGBA16F（升格式的理由已被删）
+
+
+C 档：结构性改动（未开工）
+----------------------------------------------------------------
+[ ] C1  SSR 追踪搬半分辨率 compute + 命中缓冲 + 双边上采样（0.4–1.5ms；2–4 天；前科风险）
+[ ] C2  G-buffer 带宽收窄（colortex8 16->8bit；colortex7 位域压缩）（-20% G-buffer 写带宽）
+[ ] C3  DOF 不再把整张场景色复制进 colortex3（16.6MB/帧；跨 4 pass 改道）
+[ ] C4  bloom 横纵两趟合并成单 pass LDS（0.03–0.06ms，工作量 L）
+[ ] C5  雾噪声二八度烘成 128^3 R8 3D 纹理（12.4M -> 6.2M 采样/帧）
+
+
+D 档：已核实「已优化 / 不要再提」
+----------------------------------------------------------------
+天空三张 LUT（TLUT/MSLUT/SkyView）已有版本指纹门控；天空图 256^2 已 1/4 棋盘 + 历史累积；
+天空 SH 只 1 工作组 256 线程；雾是闭式积分无步进；云影生成是 1/16 棋盘 + 0.95 累积；
+半透明走 compute 后合成（不是 forward overdraw）；DOF Postfilter 已并入 Gather；
+硬件 PCF 已在用；deferred21 / deferred30-32 / composite11-15 已删或已关；
+Uniform.glsl 的 40 个 sampler 只绑 active（运行期收益≈0）；
+阴影贴图分辨率/级联与「静态几何阴影缓存」：Iris 无 pass 级门控，shadowtex 每帧清空，不可行。
+
+已核实被否决的两条子代理结论：
+  - setup 不是每帧跑（只在加载/改窗口时一次），GenSkyMap 的棋盘累积有效；
+  - TAA 清 colortex4 的真实作用域仍需确认（删之前看是否有人读下半区）。
