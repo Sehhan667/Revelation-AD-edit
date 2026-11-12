@@ -71,33 +71,33 @@
     风险：低；①会改变非 2.0 设定下的画面，需你决定
 
 
-四、P2：需要你拍板（观感取舍）
+四、P2：需要你拍板（观感取舍）（2026-11-12：B2/B4/B6①/B8 已做，B10 未做）
 --------------------------------------------------------------------------------
-[ ] P2-1 = B2  色差移到 tone map 之前
+[x] P2-1 = B2  色差移到 tone map 之前                              [d1f0c4b7]
     做法：先在 HDR 做 3 通道偏移，再统一走一次 AcademyFit（现在是每通道各 tonemap 一次）
     收益：0.1–0.2 ms/帧
     观感：高光边缘的色边会变弱（因为偏移在 tonemap 前）
     依赖：先做完 P1-1（共用 GradeCtx）
     需要：四角/高光对比截图再定
 
-[ ] P2-2 = B4  entityShadowDistanceMul = 0.5
+[x] P2-2 = B4  entityShadowDistanceMul = 0.5                         [e3610406]
     做法：shaders.properties 加 entityShadowDistanceMul
     收益：实体多时 0.1–0.4 ms/帧
     观感：约 32 格外实体不再进 shadow pass ⇒ 远处实体阴影消失
     需要：你拍板（"远处影子换帧数"值不值）
 
-[ ] P2-3 = B6  shadow pass 水片元的 9 次 noisetex
+[x] P2-3 = B6  shadow pass 水片元的 9 次 noisetex（只做①）           [db72c331]
     做法：① 水面不在视野/不需要焦散时把波法线整段编译剔除（无观感变化）；
           ② 结构性退役 shadowcolor1 的波法线通道，改屏幕空间焦散（工程量大、离屏折射会缺数据）
     收益：海面视角 0.1–0.3 ms/帧
     需要：先做①，②单独评估
 
-[ ] P2-4 = B8  bloom 两趟高斯就地读写 colortex4 且带 restrict
+[x] P2-4 = B8  bloom 两趟高斯改乒乓（colortex4 -> 19 -> 4）            [8a1022aa]
     性质：正确性问题（读写同一张纹理在 restrict 下是 UB，可能出现 128px 接缝）
     收益：接近 0，纯粹是排雷
     风险：改动小但会影响 bloom 观感；改完看亮部大面积渐变有没有接缝
 
-[ ] P2-5 = B10 视差二分后 3–4 次无信息增益
+[ ] P2-5 = B10 视差二分后 3–4 次无信息增益（未做：本机 !PARALLAX）
     位置：shaders/lib/surface/Parallax.glsl
     条件：只有开 PARALLAX 时才有意义（本机 profile 是 !PARALLAX）
     收益：仅开视差时

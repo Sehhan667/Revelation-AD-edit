@@ -48,13 +48,13 @@ A 档落地情况：12 项完成（A1–A12，其中 A9 只做零风险的①）
 B 档：需要 A/B 或观感裁定（未开工）
 ----------------------------------------------------------------
 [x] B1  色差三次 GradeScene -> 拆 GradeCtx 复用（0.2–0.3ms）            [a545ab49]
-[ ] B2  色差移到 tone map 之前（AcademyFit 只跑一次；高光色边会减弱；依赖 B1）
+[x] B2  色差移到 tone map 之前（AcademyFit 只跑一次；色边略淡）        [d1f0c4b7]
 [x] B3  PCF：透明遮挡判据口径统一（半影不再被 albedo 染色）              [4f427c3a]
-[ ] B4  entityShadowDistanceMul = 0.5（32 格外的实体不进 shadow pass；实体多时 0.1–0.4ms）
+[x] B4  entityShadowDistanceMul = 0.5（32 格外实体不进 shadow pass）  [e3610406]
 [ ] B5  shadow pass SOLID 阶段不写 shadowcolor0/1（依赖 B3 先修）
-[ ] B6  shadow pass 水片元 9 次 noisetex（海面视角 0.1–0.3ms；②结构性退役 shadowcolor1 波法线）
+[x] B6① 关闭水面焦散时省掉 9 次 noisetex（②按用户裁定不做）           [db72c331]
 [x] B7  云影 ortho 范围 *32 -> *8（同成本 4x 云影锐度）                  [5c64658c]
-[ ] B8  bloom 两趟就地读写 colortex4 且带 restrict（正确性 > 性能）
+[x] B8  bloom 两趟高斯改乒乓 colortex4 -> colortex19 -> colortex4      [8a1022aa]
 [x] B9  SkyView dispatch 全屏 -> 24x24 组 + 网格步进写 LUT              [0865d879]
 [ ] B10 视差二分后 3–4 次无信息增益（仅开 PARALLAX 时）
 [x] B11 击杀特效（kill-ripple）整条管线已删除                          [bdd0fcaf]
