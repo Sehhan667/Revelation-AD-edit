@@ -154,23 +154,6 @@ GradeCtx BuildGradeCtx(in vec3 sceneRef, in vec2 screenCoord, in float activeExp
     return ctx;
 }
 
-// 用上下文把一个通道推进到「tone map 之前」：只剩一个仿射变换。
-vec3 ApplyAffine(in GradeCtx ctx, in vec3 scene) {
-    return scene * ctx.mul + ctx.add;
-}
-
-// tone map + gamma。注意 AcademyFit 是**跨通道**的（AP0/AP1 矩阵 + 亮度去饱和），
-// 所以「先拼通道再 tonemap」与「分别 tonemap 再取通道」不等价 —— 见色差路径的用法。
-vec3 ToneMapGamma(in vec3 scene) {
-    scene = TONE_MAPPER(scene);
-    return saturate(sqrt(scene));
-}
-
-// 用上下文结算单个通道：仿射 -> tone map -> gamma。
-vec3 FinishGrade(in GradeCtx ctx, in vec3 scene) {
-    return ToneMapGamma(ApplyAffine(ctx, scene));
-}
-
 vec3 None(in vec3 x) { return x; }
 
 vec3 Lottes(in vec3 x) {
@@ -193,6 +176,27 @@ vec3 Lottes(in vec3 x) {
 #include "/lib/post/ACES.glsl"
 #include "/lib/post/AgX.glsl"
 #include "/lib/post/GT.glsl"
+
+// [2026-11-12 修复] 下面三个函数必须放在 tone mapper 的 include **之后**：它们会展开
+// TONE_MAPPER 宏（GT / AcademyFit / AgX_Full …），而对应函数定义在 ACES/AgX/GT.glsl 里。
+// 放在 include 之前时，选 GT 之类的 tone mapper 会报
+// 「error C1503: undefined variable "GT"」——final.fsh 直接编译失败。
+// 用上下文把一个通道推进到「tone map 之前」：只剩一个仿射变换。
+vec3 ApplyAffine(in GradeCtx ctx, in vec3 scene) {
+    return scene * ctx.mul + ctx.add;
+}
+
+// tone map + gamma。注意 AcademyFit 是**跨通道**的（AP0/AP1 矩阵 + 亮度去饱和），
+// 所以「先拼通道再 tonemap」与「分别 tonemap 再取通道」不等价 —— 见色差路径的用法。
+vec3 ToneMapGamma(in vec3 scene) {
+    scene = TONE_MAPPER(scene);
+    return saturate(sqrt(scene));
+}
+
+// 用上下文结算单个通道：仿射 -> tone map -> gamma。
+vec3 FinishGrade(in GradeCtx ctx, in vec3 scene) {
+    return ToneMapGamma(ApplyAffine(ctx, scene));
+}
 
 // Grade 主管线：输入未调色场景色，输出 bloom 混合 / 曝光 / Purkinje / 暗角 /
 // tone map / gamma 后的最终色。scene 原值来自 colortex0(MOTION_BLUR) 或 colortex1。
