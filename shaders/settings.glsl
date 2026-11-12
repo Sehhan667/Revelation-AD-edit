@@ -754,6 +754,11 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// #define DEBUG_CLOUD_NOISE
 	// #define DEBUG_CLOUD_SHADOWS
 	// #define DEBUG_TONE_MAPPING_PLOT
+	// [2026-11-12 W6 临时调试] 染色玻璃「没有颜色」。三种假设各开一次即可定位：
+	//   1 = 假设 translucent.a（纹理 alpha）接近 0 ⇒ 强制指数为 1
+	//   2 = 假设命中了「回退 colortex6」分支 ⇒ 回退值改成洋红
+	//   3 = 假设玻璃没进 glassMask（materialID != 2）⇒ glassMask 恒真
+	#define GLASS_DEBUG 0 // [0 1 2 3]
 	// #define FORCE_DISABLE_SUBGROUP_OPS
 	#define GI_MODE 0 // [0 1 2 3]
 	// Keep internal boolean aliases for Iris' program-toggle preprocessor.

@@ -271,6 +271,9 @@ void main() {
         uvec4 materialPack = loadMaterialPack(texelPos);
         uint materialID = materialPack.y;
         bool glassMask = materialID == 2u;
+        #if GLASS_DEBUG == 3
+            glassMask = true;            // W6③：验证「玻璃的 materialID 不是 2」
+        #endif
         bool waterMask = materialID == 3u;
 
         ivec2 refractedTexel = texelPos;
@@ -293,6 +296,9 @@ void main() {
             // 此时回退使用 colortex6 中的真实 albedo，保证物体至少可见。
             if (maxOf(translucent.rgb) < 0.001 || translucent.a < 0.001) {
                 vec4 fallbackAlbedo = texelFetch(colortex6, texelPos, 0);
+                #if GLASS_DEBUG == 2
+                    fallbackAlbedo = vec4(1.0, 0.0, 1.0, 1.0);   // W6②：验证「走了 c6 回退」
+                #endif
                 translucent = vec4(sRGBToLinear(fallbackAlbedo.rgb), max(fallbackAlbedo.a, 0.75));
                 albedo = translucent.rgb;
             }
@@ -304,7 +310,11 @@ void main() {
 
             if (glassMask || waterMask) {
                 if (glassMask) {
+                    #if GLASS_DEBUG == 1
+                        sceneColor *= exp2(log2(albedo));         // W6①：验证「alpha 接近 0」
+                    #else
                     sceneColor *= exp2(log2(albedo) * approxSqrt(translucent.a));
+                    #endif
                     sceneColor += (2.0 * EMISSIVE_BRIGHTNESS) * Unpack2x8UX(materialPack.x) * mean(albedo) * albedo;
                 }
                 vec4 specularLight = texelFetch(colortex3, texelPos, 0);

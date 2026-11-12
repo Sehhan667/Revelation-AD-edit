@@ -273,6 +273,23 @@ void main() {
         return;
     }
 
+    // ========== 水面（materialID == 3）：廉价底色 ==========
+    // [2026-11-12 W4(a)] 水面像素的完整光照（PCSS / SSS / SSR / 环境光细节）同样会被 composite4
+    // 的 Translucent(csh) 覆盖：它以 c0 为底色，叠水体雾/折射/反射后再写回。这里只保留一个廉价
+    // 环境项（天空 SH 在波法线上的漫反射 × 0.05），既让 Translucent 有一个合理底色（不会出现
+    // 「读回上一帧自己写的水面色」的反馈环），又跳过整段细节光照。
+    // 注意不要给这条分支写 0：Translucent 会把它当水体底色叠雾，0 会让水面变成纯雾色。
+    if (materialID == 3u) {
+        vec3 waterNormal = FetchSurfaceNormal(texelPos);     // c12.y 里的波法线（1 次取样）
+        sceneOut = ConvolvedReconstructSH3(global.skySH, waterNormal) * 0.05;
+        #ifdef SUBSURFACE_SCATTERING_DIFFUSION
+            if (((texelPos.x & 1) == 0) && ((texelPos.y & 1) == 0)) {
+                imageStore(colorimg18, texelPos >> 1, vec4(0.0));
+            }
+        #endif
+        return;
+    }
+
     // ========== Sky ==========
     if (materialID == 0u) {
         vec3 transmittance = AtmosphereTransmittanceToPoint(atmosphereViewPos, worldDir);

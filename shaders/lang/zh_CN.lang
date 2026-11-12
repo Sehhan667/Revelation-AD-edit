@@ -947,3 +947,5 @@ option.UW_VOXEL_SKY_WATER_FLOOR.comment=体素 GI 的解析天光下限在水下
 
 option.entityShadowDistanceMul=实体阴影距离倍率
 option.entityShadowDistanceMul.comment=只对实体生效（地形/方块仍按「阴影距离」）。0.5 = 32 格外实体不进阴影 pass，实体多时省 0.1–0.4 ms，代价是远处实体没有影子；1.0 = 旧行为。
+option.GLASS_DEBUG=玻璃染色调试（临时）
+option.GLASS_DEBUG.comment=0=正常；1=强制染色指数为 1（验证纹理 alpha 假设）；2=回退色改成洋红（验证是否走了回退分支）；3=glassMask 恒真（验证 materialID 假设）。定位完就改回 0。

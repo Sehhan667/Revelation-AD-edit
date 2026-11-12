@@ -852,3 +852,5 @@ option.UW_VOXEL_SKY_WATER_FLOOR.comment=Underwater value of the analytic sky-lig
 
 option.entityShadowDistanceMul=Entity Shadow Distance Multiplier
 option.entityShadowDistanceMul.comment=Entities only (terrain still uses Shadow Distance). 0.5 = entities beyond 32 blocks are skipped in the shadow pass: saves 0.1-0.4 ms with many entities, at the cost of no shadows on distant entities. 1.0 = old behaviour.
+option.GLASS_DEBUG=Glass Tint Debug (temporary)
+option.GLASS_DEBUG.comment=0 = normal; 1 = force the tint exponent to 1 (tests the alpha hypothesis); 2 = paint the c6 fallback magenta (tests whether the fallback branch is hit); 3 = force glassMask true (tests the materialID hypothesis). Set back to 0 when done.
