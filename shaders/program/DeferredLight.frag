@@ -193,6 +193,30 @@ uniform sampler2D atlas2D;
 
 
 //======// Main //================================================================================//
+// [2026-11-12] 取本像素的体素漫反射 GI（入射光 × albedo）。抽成函数是为了让
+// 「反射命中」与「反射未命中」两条分支都能拿到同一份 GI：之前只在未命中分支里加，
+// 于是阴影里的反光表面（冰/石英/金属）底色拿不到 GI ⇒ 只剩反射（用户实测）。
+vec3 FetchVoxelDiffuseGI(in vec2 texelPos, in float viewDepth, in vec3 albedo) {
+    vec3 gi = vec3(0.0);
+    #ifdef GI_ACTIVE_VXGI
+        #ifdef VOXEL_GI_DENOISE
+            #ifdef SVGF_ENABLED
+                #ifdef VOXEL_GI_NRD_ACTIVE
+                    gi = YCoCgToRGB(UpscaleDiffuseIndirectFrom(colortex23, ivec2(texelPos), viewDepth));
+                #else
+                    gi = YCoCgToRGB(UpscaleDiffuseIndirect(ivec2(texelPos), viewDepth));
+                #endif
+            #else
+                gi = YCoCgToRGB(texelFetch(colortex3, GICanvasCoord(ivec2(texelPos)), 0).rgb);
+            #endif
+        #else
+            gi = YCoCgToRGB(UpscaleDiffuseIndirectAccum(ivec2(texelPos), viewDepth));
+        #endif
+        gi *= albedo;
+    #endif
+    return gi;
+}
+
 void main() {
     
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
@@ -1041,6 +1065,9 @@ void main() {
         bool isReflective = (material.metalness >= 0.5 || materialID == 10050u);
     #endif
     bool reflectHit = false;
+    // [2026-11-12] 金属反射的实际混入比例（0 = 纯底色，0.9 = 几乎纯反射）。
+    // 用于让体素 GI（漫反射替身）按「被反射替代了多少」同比例淡出，避免两者同时全额叠加。
+    float metalMixUsed = 0.0;
     if (isReflective) {
         reflection = CalculateSpecularReflections(material, materialID, worldNormal, screenPos, worldDir, viewPos, lightmap.y, dither);
         // [2026-11-11] 湿区天空回退：SSR 出屏/未命中时 Reflection.glsl 只填天空色，并用 FP16_MAX
@@ -1059,10 +1086,18 @@ void main() {
         // clampedFresnel(≤0.5) 权重，展开 mix(sceneOut*albedo, 反射色, F) = sceneOut*albedo*(1-F)
         // + reflection.rgb；并补回直射高光 specularDirect —— 否则光亮的湿面一命中反射就丢掉太阳高光。
         if (material.metalness >= 0.5 || materialID == 10050u) {
-            sceneOut = mix(sceneOut * albedo, reflection.rgb, REFLECTION_METAL_MIX);
+            // [2026-11-12] 原来是固定 REFLECTION_METAL_MIX(0.9) 混合，metalness 刚过 0.5 的表面
+            // 也会被反射吃掉 90% 底色（用户实测：「原本只能隐约看到反射的表面变成只剩反射」）。
+            // 改成随 metalness 连续：metalness=1 仍是 0.9（镜面金属），0.5 只有 0.45（底色为主）。
+            metalMixUsed = REFLECTION_METAL_MIX * saturate(material.metalness);
+            sceneOut = mix(sceneOut * albedo, reflection.rgb, metalMixUsed);
+            // 底色里同样要含 GI（按保留比例），否则阴影里只剩反射
+            sceneOut += FetchVoxelDiffuseGI(vec2(texelPos), viewPos.z, albedo) * (1.0 - metalMixUsed);
         } else {
             float Fd = min(FresnelDielectricN(abs(dot(worldNormal, worldDir)), 1.5), 0.5);
             sceneOut = sceneOut * albedo * (1.0 - Fd) + reflection.rgb + specularDirect;
+            // 电介质（冰/石英/湿面）：反射是全量叠加的，底色那部分必须有 GI 才不至于「只剩反射」
+            sceneOut += FetchVoxelDiffuseGI(vec2(texelPos), viewPos.z, albedo) * (1.0 - Fd);
         }
     } else {
         // 反射未命中或非反射块：标准光照
@@ -1097,32 +1132,7 @@ void main() {
                 // 追踪已迁到 DiffuseIndirect.comp：棋盘半分辨率每帧 1 SPP（1/4 像素），
                 // 经 SVGF 时域累积 + 边缘保持滤波后在此读回；此处补乘 albedo×强度，
                 // 与旧全分辨率路径（VoxelTracePixel × albedo × STRENGTH）视觉语义一致。
-                vec3 voxelGI = vec3(0.0);
-                #ifdef GI_ACTIVE_VXGI
-                    #ifdef VOXEL_GI_DENOISE
-                        #ifdef SVGF_ENABLED
-                            // UpscaleDiffuseIndirect 返回 YCoCg 空间信号（全链路 YCoCg），须显式转回 RGB
-                            #ifdef VOXEL_GI_NRD_ACTIVE
-                                // 官方 REBLUR 的最终输出是稳定化结果（maxStabilizedFrameNum=63），
-                                // 不是空间滤波输出：后者仍带残余时域起伏（静止小闪的直接来源）。
-                                voxelGI = YCoCgToRGB(UpscaleDiffuseIndirectFrom(colortex23, texelPos, viewPos.z));
-                            #else
-                                voxelGI = YCoCgToRGB(UpscaleDiffuseIndirect(texelPos, viewPos.z));
-                            #endif
-                        #else
-                            voxelGI = YCoCgToRGB(texelFetch(colortex3, GICanvasCoord(texelPos), 0).rgb);
-                        #endif
-                    #else
-                        // 光追降噪关闭：只跳过空间滤波（VarianceEstimate/EAWF），仍读时域累积结果
-                        // （colortex2，Accumulate 写入，含 4 相位棋盘重建）→ 未降噪 = 收敛后的原始信号
-                        voxelGI = YCoCgToRGB(UpscaleDiffuseIndirectAccum(texelPos, viewPos.z));
-                    #endif
-                    // [2026-09-30 去重复乘] 这里原本是 `voxelGI *= albedo * VOXEL_GI_TRACE_STRENGTH`，
-                    // 但信号在 DiffuseIndirect.comp 写出时已经乘过一次（result = traceAcc * rcp(SPP)
-                    // * VOXEL_GI_TRACE_STRENGTH）→ GUI 滑条实际是平方（1.0 时看不出来，一调就是 ×N²）。
-                    // 只保留 albedo 转换（信号是入射光，上屏要乘当前像素反照率）。
-                    voxelGI *= albedo;
-                #endif
+                vec3 voxelGI = FetchVoxelDiffuseGI(vec2(texelPos), viewPos.z, albedo);
                 #ifdef DEBUG_VOXEL_GI
                     // [2026-08-19] 调试：按像素所在体素直读 voxelID，定位"目标方块有没有进体素 + ID 对不对 + 在不在正确格"。
                     // [2026-10-07 判读去歧义] 旧口径把"透明格(z<0)"和"真空气(z==0)"都画成蓝色，而两者语义完全
@@ -1161,7 +1171,7 @@ void main() {
                     // 以镜面反射为主，此时再叠一层平滑、低频的漫反射 GI，会在阴影里（镜面反射本身很暗）
                     // 直接把反射盖住 —— 表现就是「金属/反光物体在阴影里异常光滑、像塑料」。
                     // 按 (1 - metalness) 衰减：纯金属不再吃漫反射 GI，电介质与非金属保持原样。
-                    sceneOut += voxelGI * (1.0 - saturate(material.metalness));
+                    sceneOut += voxelGI * (1.0 - metalMixUsed);
                     #ifdef DEBUG_SUNBOUNCE_VIS
                     // [2026-10-02] 角落读数已挪到 /program/post/Final.frag（最后一 pass）——
                     // 画在这里会被"天空像素提前返回 / 曝光 / 色调映射"搅得忽深忽浅、颜色不准。
