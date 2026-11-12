@@ -21,7 +21,9 @@
 #include "/lib/surface/SSRT.glsl"
 
 #ifndef METAL_SSR_MODE
-    #define METAL_SSR_MODE 1 // [0 1 2]
+    // [2026-11-12] 0 = 只天空反射，1 = SSRT。旧的「快速 SSR」（原 2 档）已删除：
+    // 残留的 2 会走下面 `METAL_SSR_MODE >= 1` 分支，自动落到 SSRT，等价于 1。
+    #define METAL_SSR_MODE 1 // [0 1]
 #endif
 
 // ====== 反射判定模式 ======
@@ -123,53 +125,11 @@
 // 不再每次使用；需要时置 1 即可。
 #define SSR_DEBUG_SOURCE_MAP 0
 
-// ---------- 快速 SSR 追踪器（模式 2）----------
-#if METAL_SSR_MODE == 2
-#ifdef SSRT_REFINEMENT
-    const uint rayTraceBiSteps = uint(SSRT_REFINEMENT_STEPS);
-#else
-    const uint rayTraceBiSteps = 0u;
-#endif
-
-// [2026-10-08] 快速 SSR（模式 2）的深度采样：改用**不透明**深度 depthtex2 + texelFetch。
-// 原来用 `textureLod(depthtex0, uv, 0)`：depthtex0 含半透明（水/玻璃会被当成实体 ⇒ 假命中），
-// 且双线性会在轮廓处插值出中间深度（同样假命中）。模式 1 一直用 loadDepth2，现在两者一致。
-float ssrSampleOpaqueDepth(in vec2 screenUv) {
-    return loadDepth2(ivec2(screenUv * viewSize));
-}
-
-// 修改为动态接收 steps，以便常规反射和粗糙反射使用不同的步数
-vec3 rayTraceScene(in vec3 screenPos, in vec3 viewPos, in vec3 rayDir, in float dither, in uint steps) {
-    if (rayDir.z > -viewPos.z) return vec3(0.0);
-    vec3 targetScreen = ViewToScreenPosRaw(viewPos + rayDir);
-    float stepInv = 1.0 / float(steps);
-    vec3 screenPosRayDir = normalize(targetScreen - screenPos) * stepInv;
-    vec3 startPos = screenPos + screenPosRayDir * dither;
-    
-    for (uint i = 0u; i < steps; i++) {
-        startPos += screenPosRayDir;
-        if (startPos.x < 0.0 || startPos.y < 0.0 || startPos.x > 1.0 || startPos.y > 1.0) return vec3(0.0);
-        float currDepth = ssrSampleOpaqueDepth(startPos.xy);
-        if (currDepth <= 0.56) return vec3(0.0);
-        bool intersection = currDepth < startPos.z;
-        if (intersection) {
-            #if rayTraceBiSteps > 0
-                for (uint j = 0u; j < rayTraceBiSteps; j++) {
-                    if (ssrSampleOpaqueDepth(startPos.xy) >= 1.0) return vec3(0.0);
-                    screenPosRayDir *= 0.5;
-                    startPos += intersection ? -screenPosRayDir : screenPosRayDir;
-                    currDepth = ssrSampleOpaqueDepth(startPos.xy);
-                    intersection = currDepth < startPos.z;
-                }
-            #else
-                if (ssrSampleOpaqueDepth(startPos.xy) >= 1.0) return vec3(0.0);
-            #endif
-            return vec3(startPos.xy, 1.0);
-        }
-    }
-    return vec3(0.0);
-}
-#endif
+// [2026-11-12] 旧的「快速 SSR 追踪器（模式 2）」已删除：它用 textureLod(depthtex0) 采深度
+// （含半透明 ⇒ 水/玻璃会被当成实体，假命中；双线性还会插出假深度），没有视空间厚度过滤、
+// 命中点插值，也没有天空解析求交 —— 只是每步少几次视深换算，收益远小于画质损失。
+// 现在 METAL_SSR_MODE 只剩 0（只天空反射）/ 1（SSRT）。用户配置里残留的 2 走下面 `>= 1` 分支，
+// 会自动落到 SSRT，行为等价于 1。
 
 #ifdef REFLECTION_SKY
 // [2026-11-11 只算用得到的] 天空回退抽成函数，调用点必须先判定结果真的会被消费：
@@ -325,13 +285,7 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
                     dirK = normalize(mat3(gbufferModelView) * LwK);
                 }
                 vec3 lobePos = screenPos;
-                bool hitK = false;
-                #if METAL_SSR_MODE == 1
-                    hitK = ScreenSpaceRaytrace(viewPos, dirK, ssrDither, currentSteps, lobePos);
-                #elif METAL_SSR_MODE == 2
-                    vec3 trK = rayTraceScene(screenPos, viewPos, dirK, ssrDither, currentSteps);
-                    if (trK.z > 0.5) { hitK = true; lobePos = trK; }
-                #endif
+                bool hitK = ScreenSpaceRaytrace(viewPos, dirK, ssrDither, currentSteps, lobePos);
                 if (!hitK) continue;
                 vec2 uvK = clamp(lobePos.xy, vec2(0.0), vec2(1.0) - viewPixelSize) * 0.5;
                 lobeAvgColor += texture(colortex4, uvK).rgb;
@@ -344,19 +298,11 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
         #endif
         #endif
         {   // ← 原单射线路径（DIR_SAMPLES == 1 或不粗糙时，行为与旧版逐位一致）
-        #if METAL_SSR_MODE == 1
             vec3 ssrScreenPos = screenPos;
             if (ScreenSpaceRaytrace(viewPos, viewReflectDir, ssrDither, currentSteps, ssrScreenPos)) {
                 traceHit = true;
                 hitCoord = ssrScreenPos.xy;
             }
-        #elif METAL_SSR_MODE == 2
-            vec3 traceResult = rayTraceScene(screenPos, viewPos, normalize(viewReflectDir), ssrDither, currentSteps);
-            if (traceResult.z > 0.5) {
-                traceHit = true;
-                hitCoord = traceResult.xy;
-            }
-        #endif
         }
 
         float edgeFade = 0.0;

@@ -2953,3 +2953,14 @@ Final 里如果画布读回 ≈0（`dot(blur, 1) < 1e-5`），退到 5 tap 十�
 - preproc_check --all：346 入口无新增命中；properties 纯 ASCII / LF / 无 BOM；lang 无 BOM。
 - 进游戏看：启动日志不再出现 Unable to resolve shader pack option menu element；
   反射页两个选项名称与三档值可读；被摘掉的开关不再出现在任何页面（原位是空槽）。
+
+## 5. 顺带删除的两个「反射追踪器」旧实现（同一天）
+
+- `METAL_SSR_MODE` / `TRANSLUCENT_SSR_MODE` 的 **2 档（快速 SSR）已删除**：那是两份早期复制的
+  `rayTraceScene`，用 `textureLod(depthtex0)` 采深度（含半透明 ⇒ 水/玻璃假命中；双线性插出假深度），
+  半透明那份还把抖动写死关掉，而且两份都缺 SSRT 的厚度过滤 / 命中插值 / 天空解析求交 —— 只省每步
+  几次视深换算，收益远小于画质损失，且任何反射改动都要同步三份实现。
+- 现在两个选项只有 `[0 1]`：0 = 只看天空反射，1 = SSRT。**用户配置里残留的 2 会自动走 `>= 1`
+  分支落到 SSRT**（等价于 1），不需要清配置。
+- 以后要「低配档」不要再复制追踪器：让 2 = 「SSRT + 更少步数」即可，保持只有一份实现。
+

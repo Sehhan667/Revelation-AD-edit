@@ -453,20 +453,18 @@ option.SSRT_REFINEMENT_STEPS=Raytrace Refinement Steps
 option.SSRT_SKY_TRACING=Raytrace Sky
 
 option.METAL_SSR_MODE=Reflection Tracing (Opaque)
-option.METAL_SSR_MODE.comment=Which screen-space tracer opaque surfaces (metals, ice, polished stone, wet ground, ...) use. High quality (SSRT) applies view-space thickness filtering so rays are not falsely blocked behind leaves/fences/glass. Raytrace Sky only affects SSRT, while Raytrace Samples / Raytrace Refinement Steps affect both modes. Fast (legacy SSR) skips the per-step view-depth conversion, so it is slightly cheaper, but it streaks through thin geometry and has no analytic sky tracing.
+option.METAL_SSR_MODE.comment=Which screen-space tracer opaque surfaces (metals, ice, polished stone, wet ground, ...) use: 0 = sky reflection only (no tracing), 1 = high quality SSRT (view-space thickness filtering, so rays are not falsely blocked behind leaves/fences/glass). Raytrace Samples / Refinement Steps / Raytrace Sky all apply to this mode. The old fast (legacy SSR) tracer has been removed.
 value.METAL_SSR_MODE.0=Sky only (no tracing)
 value.METAL_SSR_MODE.1=High quality (SSRT)
-value.METAL_SSR_MODE.2=Fast (legacy SSR)
 option.METAL_REFLECT_MODE=Which Surfaces Reflect
 option.METAL_REFLECT_MODE.comment=Eligibility test: by metalness, by roughness, or either one (widest coverage, most expensive). Only pixels that pass this test are actually traced.
 value.METAL_REFLECT_MODE.0=Metalness only
 value.METAL_REFLECT_MODE.1=Roughness only
 value.METAL_REFLECT_MODE.2=Metalness or roughness (costlier)
 option.TRANSLUCENT_SSR_MODE=Reflection Tracing (Transparent)
-option.TRANSLUCENT_SSR_MODE.comment=Same as above, for water / glass / ice / stained-glass entities. Keep high quality: the fast mode still samples the depth buffer that includes translucent surfaces and disables dithering, which produces false hits and banding on water.
+option.TRANSLUCENT_SSR_MODE.comment=Same as above, for water / glass / ice / stained-glass entities. Only 0 (sky only) and 1 (SSRT) remain; keep 1. The old fast (legacy SSR) tracer has been removed (it sampled a depth buffer that includes translucent surfaces and disabled dithering, causing false hits and banding on water).
 value.TRANSLUCENT_SSR_MODE.0=Sky only (no tracing)
 value.TRANSLUCENT_SSR_MODE.1=High quality (SSRT)
-value.TRANSLUCENT_SSR_MODE.2=Fast (legacy SSR)
 
 option.SPECULAR_IMPORTANCE_SAMPLING_BIAS=Importance Sampling Bias
 

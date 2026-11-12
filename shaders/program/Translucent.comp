@@ -19,22 +19,20 @@
         - Minor branch simplification.
     SSR: Use TRANSLUCENT_SSR_MODE to select algorithm:
          0 = Sky reflections only
-         1 = Original SSRT (ScreenSpaceRaytrace) – default
-         2 = Fast SSR (Belmu/Shadax style) — legacy, see note below
+         1 = SSRT (ScreenSpaceRaytrace) – default and the only traced mode
+         (the old "fast SSR" / Belmu-Shadax style tracer was removed 2026-11-12)
 --------------------------------------------------------------------------------
 
 */
 
 #define PASS_TRANSLUCENT
 
-// 反射模式：0 = 仅天空反射，1 = 原版 SSRT（默认），2 = 快速 SSR（旧版）
-// [2026-11-12] 模式 2 这一份追踪器仍在用 `textureLod(depthtex0)` 采深度 —— depthtex0 含半透明，
-// 水/玻璃会被当成实体挡住射线（假命中），双线性还会在轮廓处插值出假深度；且下面这一版**关掉了抖动**。
-// 不透明那套已在 2026-10-08 改成 loadDepth2（见 lib/surface/Reflection.glsl 的 ssrSampleOpaqueDepth），
-// 这份没跟上。GUI 默认也是 1，所以只有手动切到 2 才会踩到；要修就把它一起改成 loadDepth2 + 打开抖动，
-// 要删就把两份 mode-2 追踪器一起删（审计报告 B 档）。
+// 反射模式：0 = 仅天空反射，1 = SSRT（默认）。
+// [2026-11-12] 旧的「快速 SSR」（原 2 档）已删除：它用 textureLod(depthtex0) 采深度（含半透明 ⇒
+// 水/玻璃被当成实体、假命中；双线性还会插出假深度），并且关掉了抖动，也没有 SSRT 的厚度过滤 /
+// 命中插值 / 天空解析求交。用户配置里残留的 2 会自动落到 `>= 1` 的 SSRT 路径，等价于 1。
 #ifndef TRANSLUCENT_SSR_MODE
-    #define TRANSLUCENT_SSR_MODE 1 // [0 1 2]
+    #define TRANSLUCENT_SSR_MODE 1 // [0 1]
 #endif
 
 //#define TRANSLUCENT_SKY_REF       // [开关] 是否启用半透明与水面的天空盒静态反射
@@ -87,59 +85,11 @@ writeonly uniform image2D colorimg3; // Lighting output
 // 提供 SSRT_MAX_SAMPLES、ScreenSpaceRaytrace 等
 #include "/lib/surface/SSRT.glsl"
 
-// ---- 快速 SSR 光线追踪器（仅模式 2 编译） ----
-#if TRANSLUCENT_SSR_MODE == 2
-const uint rayTraceSteps     = uint(SSRT_MAX_SAMPLES);
-#ifdef SSRT_REFINEMENT
-    const uint rayTraceBiSteps   = uint(SSRT_REFINEMENT_STEPS);
-#else
-    const uint rayTraceBiSteps   = 0u;
-#endif
-const float rayTracerStepsInv = 1.0 / float(rayTraceSteps);
-
-vec3 rayTraceScene(in vec3 screenPos, in vec3 viewPos, in vec3 rayDir, in float dither) {
-    if (rayDir.z > -viewPos.z) return vec3(0.0);
-
-    // 使用 ViewToScreenPosRaw 避免 TAA 偏移
-    vec3 targetScreen = ViewToScreenPosRaw(viewPos + rayDir);
-    vec3 screenPosRayDir = normalize(targetScreen - screenPos) * rayTracerStepsInv;
-
-    // 完全禁用抖动：起始位置固定为 screenPos
-    vec3 startPos = screenPos;
-
-    for (uint i = 0u; i < rayTraceSteps; i++) {
-        startPos += screenPosRayDir;
-
-        if (startPos.x < 0.0 || startPos.y < 0.0 || startPos.x > 1.0 || startPos.y > 1.0)
-            return vec3(0.0);
-
-        float currDepth = textureLod(depthtex0, startPos.xy, 0).x;
-        if (currDepth <= 0.56) return vec3(0.0);
-
-        bool intersection = currDepth < startPos.z;
-
-        if (intersection) {
-            #if rayTraceBiSteps > 0
-                for (uint j = 0u; j < rayTraceBiSteps; j++) {
-                    if (textureLod(depthtex0, startPos.xy, 0).x >= 1.0) return vec3(0.0);
-
-                    screenPosRayDir *= 0.5;
-                    startPos += intersection ? -screenPosRayDir : screenPosRayDir;
-
-                    currDepth = textureLod(depthtex0, startPos.xy, 0).x;
-                    intersection = currDepth < startPos.z;
-                }
-            #else
-                if (textureLod(depthtex0, startPos.xy, 0).x >= 1.0) return vec3(0.0);
-            #endif
-
-            return vec3(startPos.xy, 1.0);
-        }
-    }
-
-    return vec3(0.0);
-}
-#endif
+// [2026-11-12] 旧的「快速 SSR 光线追踪器（模式 2）」已删除。它用 textureLod(depthtex0) 采深度
+// （depthtex0 含半透明 ⇒ 水/玻璃会被当成实体、假命中；双线性还会插出假深度），而且**完全关掉了
+// 抖动**；也没有 SSRT 的视空间厚度过滤 / 命中点插值 / 天空解析求交 —— 只是每步少几次视深换算，
+// 收益远小于画质损失。现在 TRANSLUCENT_SSR_MODE 只剩 0（只天空反射）/ 1（SSRT）；
+// 用户配置里残留的 2 走下面的 `>= 1` 分支，自动落到 SSRT，行为等价于 1。
 
 // ---- 反射计算函数 ----
 // [2026-08-20] 屏幕上太阳可见性（与 IntegrateScene 同款、同平滑逻辑）：世界太阳方向投影到屏幕，
@@ -209,21 +159,11 @@ vec4 CalculateSpecularReflections(in vec3 screenPos, in vec3 viewPos, in vec3 wo
         bool traceHit = false;
         vec2 hitCoord;
 
-        #if TRANSLUCENT_SSR_MODE == 1
-            // 原版 SSRT
-            if (ScreenSpaceRaytrace(viewPos, mat3(gbufferModelView) * rayDir, dither, raySteps, screenPos)) {
-                traceHit = true;
-                hitCoord = screenPos.xy;
-            }
-        #elif TRANSLUCENT_SSR_MODE == 2
-            // 快速 SSR
-            vec3 viewReflectDir = normalize(mat3(gbufferModelView) * rayDir);
-            vec3 traceResult = rayTraceScene(screenPos, viewPos, viewReflectDir, dither);
-            if (traceResult.z > 0.5) {
-                traceHit = true;
-                hitCoord = traceResult.xy;
-            }
-        #endif
+        // [2026-11-12] 只剩 SSRT 一条路径（旧的快速 SSR 已删除；残留的 2 会落到这里）
+        if (ScreenSpaceRaytrace(viewPos, mat3(gbufferModelView) * rayDir, dither, raySteps, screenPos)) {
+            traceHit = true;
+            hitCoord = screenPos.xy;
+        }
 
         if (traceHit) {
             float edgeFade = hitCoord.x * hitCoord.y * oms(hitCoord.x) * oms(hitCoord.y);
