@@ -223,8 +223,10 @@ void main() {
     vec3 worldDir = worldPos * invWorldDist;
     worldPos += gbufferModelViewInverse[3].xyz;
 
-    vec2 waterData = texelFetch(colortex12, texelPos, 0).xy;
-    bool waterMask = waterData.x > 0.0;
+    // [2026-11-12] c12 收窄成 R16F 后只有 .x（水深/255）；波法线改从 c8.zw 读
+    // （Water.frag 写的是同一个方向、精度更高，因此天空反射分支不再需要第二份打包值）。
+    float waterData = texelFetch(colortex12, texelPos, 0).x;
+    bool waterMask = waterData > 0.0;
 
     vec2 lightmap = Unpack2x8U(materialPack.x);
     float dither = BlueNoise(texelPos, frameCounter + 4);
@@ -248,12 +250,12 @@ void main() {
         }
 
         if (waterMask) {
-            mat2x3 waterFog = AnalyticWaterFog(lightmap.y, waterData.x * 255.0, dot(worldLightDir, worldDir), CalcSunScreenVisibility());
+            mat2x3 waterFog = AnalyticWaterFog(lightmap.y, waterData * 255.0, dot(worldLightDir, worldDir), CalcSunScreenVisibility());
             sceneOut = ApplyFog(sceneOut, waterFog);
 
             #ifdef TRANSLUCENT_SKY_REF
             if (materialID == 2u) {
-                vec3 worldNormal = OctDecodeUnorm(Unpack2x8(waterData.y));
+                vec3 worldNormal = FetchSurfaceNormal(texelPos);   // 同一个波法线，来自 c8.zw（16bit，比原来的 8bit 打包更准）
 
                 float NdotV = abs(dot(worldNormal, worldDir));
                 vec3 rayDir = worldDir + worldNormal * (NdotV * 2.0);

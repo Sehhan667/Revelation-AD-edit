@@ -31,7 +31,8 @@
 	// [2026-11-12] colortex10 已随击杀特效（kill-ripple）整条删除：它只被 composite5(HurtTimer)
 	// 写、被 Final 的 #ifdef KILL_RIPPLE 段读，而那条链默认关、打开还会因为内部常量被注释掉而
 	// 编译失败。实体受击故障的帧级门控现在走 SSBO 的 global.hurtEntitySeen，不再需要这个缓冲。
-	const int 	colortex12Format 			= RG16;
+	// [2026-11-12] RG16 -> R16F：c12 只存水深/255（波法线已改由 c8.zw 提供，见 Water.frag）
+	const int 	colortex12Format 			= R16F;
 	const int 	colortex13Format 			= R8I;
 	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
 	// [2026-09-11 DoF 移植] colortex15 原为 Voxel GI propagation 输出（RGBA8），
@@ -150,7 +151,7 @@
 	|	colortex7	|   rgba16ui        |	Full res  	|	Material data
 	|	colortex8	|   rgba16_snorm    |	Full res  	|	Normal data
 	|	colortex9	|   rgba16f     	|	Full res	|	Cloud history
-	|	colortex12	|   rg16          	|	Full res	|	Water data
+	|	colortex12	|   r16f          	|	Full res	|	Water data: x = water depth / 255 (wave normal moved to colortex8.zw)
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)
 	|	colortex15	|   rg16f		    |	Full res  	|	DoF CoC data: x = centerCoc, y = gatherRadius (written by Prepare, read by Gather; Postfilter merged into Gather 2026-09-21, filtered color no longer staged here)

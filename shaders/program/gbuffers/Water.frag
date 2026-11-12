@@ -117,7 +117,10 @@ void main() {
         vec2 encodedNormal = OctEncodeSnorm(worldNormal);
         normalOut.zw = encodedNormal;
 
-        waterOut = vec4(distance(worldPos, worldPos1) * rcp255, Packup2x8(encodedNormal), 0.0, 1.0);
+        // [2026-11-12] c12 只留 .x（水深/255）：波法线原本在这里再打包一遍（Packup2x8），
+        // 但唯一的读者（Translucent 的天空反射分支）可以直接读 c8.zw 里同一方向、更高精度的
+        // 值 ⇒ 删掉重复写入后 c12 可以从 RG16 收窄到 R16F（水面每像素少 2 字节）。
+        waterOut = vec4(distance(worldPos, worldPos1) * rcp255, 0.0, 0.0, 1.0);
     } else { // 不透明 / 半透明物体
         vec4 albedo = texture(tex, texCoord) * vertColor;
 
