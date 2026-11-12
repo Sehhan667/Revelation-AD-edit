@@ -197,9 +197,11 @@ vec3 LoadChromaticScene(in ivec2 texel) {
             LoadGradedUV(uv - off).b
         );
     #else
-        // [2026-11-12 B1] 调色上下文只算一次：泛光/雨幕/曝光/Purkinje/暗角是同一个仿射变换，
-        // 三个通道各自只剩 tone map + gamma（原来每通道各跑一遍完整 GradeScene）。
-        // 色差偏移只有几个像素，泛光/暗角这类低频项按中心 uv 取样视觉上无差异。
+        // [2026-11-12 B1] 调色上下文只算一次：泛光/雨幕/曝光/Purkinje/暗角是同一个仿射变换。
+        // [2026-11-12 B2] 色差改到 tone map **之前**：三个偏移点各自只做仿射，再按通道拼成一个
+        // HDR 色，最后只跑一次 tone map + gamma（原来是每个偏移点各 tonemap 一次、再取一个通道）。
+        // 这样省掉 3 分之 2 的 tonemap（AcademyFit 是跨通道的，所以观感上高光色边会变弱一点，
+        // 这也更接近真实镜头：色差发生在成像之前，去饱和会部分吸收色边）。
         vec2 uv = (vec2(texel) + 0.5) * viewPixelSize;
         vec2 c = uv - 0.5;
         float dist = length(c);
@@ -208,11 +210,10 @@ vec3 LoadChromaticScene(in ivec2 texel) {
         vec2 off = dir * (CHROMATIC_ABERRATION_STRENGTH * distNorm) * viewPixelSize;
         vec3 center = SceneColorUV(uv);
         GradeCtx ctx = BuildGradeCtx(center, uv, ActiveExposure(), texel, false);
-        return vec3(
-            FinishGrade(ctx, SceneColorUV(uv + off)).r,
-            FinishGrade(ctx, center).g,
-            FinishGrade(ctx, SceneColorUV(uv - off)).b
-        );
+        vec3 shiftedR = ApplyAffine(ctx, SceneColorUV(uv + off));
+        vec3 shiftedB = ApplyAffine(ctx, SceneColorUV(uv - off));
+        vec3 centered = ApplyAffine(ctx, center);
+        return ToneMapGamma(vec3(shiftedR.r, centered.g, shiftedB.b));
     #endif
 #else
     return FFXCasFilter(texel, CAS_STRENGTH);

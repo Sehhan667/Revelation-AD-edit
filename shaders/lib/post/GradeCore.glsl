@@ -154,11 +154,21 @@ GradeCtx BuildGradeCtx(in vec3 sceneRef, in vec2 screenCoord, in float activeExp
     return ctx;
 }
 
-// 用上下文结算单个通道：仿射 -> tone map -> gamma。逐通道只剩这两个非线性环节。
-vec3 FinishGrade(in GradeCtx ctx, in vec3 scene) {
-    scene = scene * ctx.mul + ctx.add;
+// 用上下文把一个通道推进到「tone map 之前」：只剩一个仿射变换。
+vec3 ApplyAffine(in GradeCtx ctx, in vec3 scene) {
+    return scene * ctx.mul + ctx.add;
+}
+
+// tone map + gamma。注意 AcademyFit 是**跨通道**的（AP0/AP1 矩阵 + 亮度去饱和），
+// 所以「先拼通道再 tonemap」与「分别 tonemap 再取通道」不等价 —— 见色差路径的用法。
+vec3 ToneMapGamma(in vec3 scene) {
     scene = TONE_MAPPER(scene);
     return saturate(sqrt(scene));
+}
+
+// 用上下文结算单个通道：仿射 -> tone map -> gamma。
+vec3 FinishGrade(in GradeCtx ctx, in vec3 scene) {
+    return ToneMapGamma(ApplyAffine(ctx, scene));
 }
 
 vec3 None(in vec3 x) { return x; }
