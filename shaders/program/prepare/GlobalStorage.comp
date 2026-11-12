@@ -60,23 +60,6 @@ void main() {
 			: frameTime;
 	}
 
-	// [2026-11-12 logo 跟随] 相机朝向低通（yaw, pitch）。启动 logo 用「低通 - 当前」的差
-	// 做「浮在镜头前、慢半拍跟上的板子」。LOGO_FOLLOW_DELAY = 0 时直接跟随（旧行为）。
-	{
-		vec3 camForward = -gbufferModelViewInverse[2].xyz;
-		vec2 camView = vec2(atan(camForward.z, camForward.x), asin(clamp(camForward.y, -1.0, 1.0)));
-		#if LOGO_FOLLOW_DELAY > 0.0
-			// 首帧 SSBO 里还是 0，直接对齐当前朝向，避免 logo 从「yaw=0」慢慢爬过来
-			if (frameCounter <= 1) global.logoLaggedView = camView;
-			float followAlpha = 1.0 - exp(-max(frameTime, 1e-4) / LOGO_FOLLOW_DELAY);
-			vec2 dView = global.logoLaggedView - camView;
-			dView.x = mod(dView.x + PI, TAU) - PI;      // 处理 ±π 环绕（跨过 -180/180 度时不会甩一圈）
-			global.logoLaggedView = global.logoLaggedView - dView * followAlpha;
-		#else
-			global.logoLaggedView = camView;
-		#endif
-	}
-
 	// [2026-11-12 logo 计时] 按秒累计（frameTime 是秒）；暂停/加载时 frameTime<=0 不推进。
 	if (frameTime > 0.0) global.logoElapsed += frameTime;
 

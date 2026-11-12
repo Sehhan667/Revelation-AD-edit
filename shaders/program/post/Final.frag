@@ -292,8 +292,16 @@ void main() {
             {
                 vec3 camForward = -gbufferModelViewInverse[2].xyz;
                 vec2 camView = vec2(atan(camForward.z, camForward.x), asin(clamp(camForward.y, -1.0, 1.0)));
-                vec2 deltaView = global.logoLaggedView - camView;
+                // 滞后值由**本 pass 上一帧**写回（见下方 (0,0) 线程）—— 不用 prepare 阶段，
+                // 那里的相机矩阵可能落后一帧，会把这个效果压成「只滞后 1 帧」而看不出来。
+                vec2 lagged = (frameCounter <= 1) ? camView : global.logoLaggedView;
+                vec2 deltaView = lagged - camView;
                 deltaView.x = mod(deltaView.x + PI, TAU) - PI;
+                // 写回给下一帧：只有 (0,0) 线程写，避免全屏竞争
+                if (all(equal(texelPos, ivec2(0)))) {
+                    float followAlpha = 1.0 - exp(-max(frameTime, 1e-4) / max(LOGO_FOLLOW_DELAY, 1e-3));
+                    global.logoLaggedView = lagged - deltaView * followAlpha;
+                }
                 // 焦距（像素）= 0.5 * 屏高 * (1/tan(fovY/2))；透视投影下 P[1][1] 就是这个倒数
                 float focalPx = 0.5 * float(viewHeight) * gbufferProjection[1][1];
                 vec2 followOffset = vec2(-deltaView.x, deltaView.y) * focalPx
