@@ -58,7 +58,16 @@ B 档：需要 A/B 或观感裁定（未开工）
 [ ] B8  bloom 两趟就地读写 colortex4 且带 restrict（正确性 > 性能）
 [ ] B9  begin/SkyView 全屏 dispatch 服务 192x192 LUT（改前必须抓帧确认 LUT 非空）
 [ ] B10 视差二分后 3–4 次无信息增益（仅开 PARALLAX 时）
-[ ] B11 colortex10 仍是 RGBA16F（升格式的理由已被删）
+[ ] B11 colortex10 的处置：**kill-ripple 整条管线已死**（见下），正确做法是整条删除而不是收窄格式
+        —— KillRipple.glsl 里 `//#define KILL_RIPPLE` 默认关，profile 也是 `!KILL_RIPPLE`；
+        而它引用的 KILL_RIPPLE_RANGE / KILL_RIPPLE_HIGHLIGHT 在 Iris 里**根本没注册成选项**
+        （日志的 Unable to resolve 就是这俩），所以一旦有人打开 KILL_RIPPLE，Final 的
+        `#ifdef KILL_RIPPLE` 段会引用未定义宏 ⇒ 编译失败、整包掉回原版。
+        删除范围：lib/post/KillRipple.glsl、program/post/HurtTimer.frag、3 个世界的 composite5.*、
+        config.glsl 的 colortex10（Format/Clear/缓冲表）、Uniform.glsl 的 sampler、
+        properties 的 program.*/composite5.enabled + screen/sliders/profile 里的 KILL_RIPPLE*、
+        Final.frag 的两段（#ifdef KILL_RIPPLE 约 45 行 + DEBUG_KILL_RIPPLE_GRID）、lang 文案。
+        收益：−11.4MB 显存、去一个被 properties 引用的死 pass、排掉「开了就编译失败」的雷。
 
 
 C 档：结构性改动（未开工）
