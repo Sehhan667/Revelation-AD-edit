@@ -285,7 +285,8 @@ value.BLINDNESS_STRENGTH.0.0=关闭
 
 # Weather
 option.RAIN_PUDDLES=雨水坑
-option.RAIN_PUDDLE_SCALE=雨水坑缩放
+option.RAIN_PUDDLE_SCALE=雨水坑尺寸倍率
+option.RAIN_PUDDLE_SCALE.comment=水坑尺寸倍率：1 = 默认大小，越大水坑越连成片。覆盖率由降雨湿度与噪声阈值决定，与尺寸相互独立；倍率过大时边缘过渡会变宽（看起来更糊）。
 option.RAIN_PUDDLE_SMOOTHNESS=雨水坑平滑度
 
 option.RAIN_VISIBILITY=雨雪能见度
@@ -362,6 +363,8 @@ option.HANDHELD_LIGHTING=手持光照
 option.HELD_LIGHT_BRIGHTNESS=手持光照亮度
 
 option.NIGHT_BRIGHTNESS=夜间亮度
+option.NIGHT_AMBIENT_RATIO=夜间环境光比例
+option.NIGHT_AMBIENT_RATIO.comment=夜间环境光 = 该比例 × 月光直射亮度（同受夜间亮度与月相缩放）。0 时阴影面只剩天空光与基础环境光，越大阴面越亮。
 option.MINIMUM_AMBIENT_BRIGHTNESS=基础环境光亮度
 
 option.AO_ENABLED=环境光遮蔽

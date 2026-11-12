@@ -171,6 +171,25 @@ vec3 rayTraceScene(in vec3 screenPos, in vec3 viewPos, in vec3 rayDir, in float 
 }
 #endif
 
+#ifdef REFLECTION_SKY
+// [2026-11-11 只算用得到的] 天空回退抽成函数，调用点必须先判定结果真的会被消费：
+//   SSR 未命中时只有湿区（material.isWet）会被消费端放行；
+//   SSR 命中时只有屏幕边缘混合权重 <1 的那一带才需要天空参与 mix。
+// 采样成本：主世界是 textureBicubic（4 次 textureLod）+ ProjectSky；末地/下界是解析 AtmosphereSkyView。
+vec3 ComputeSkyReflection(vec3 skyLightDir, float skylight, float weight) {
+    vec3 skyReflection;
+    #if defined(DIMENSION_THE_END) || defined(DIMENSION_NETHER)
+        skyReflection = AtmosphereSkyView(atmosphereViewPos, skyLightDir, worldSunDir);
+    #else
+        skyReflection = textureBicubic(skyMapTex, saturate(ProjectSky(skyLightDir))).rgb;
+    #endif
+    // 乘法顺序与旧内联实现一致，保证同一输入的逐位结果不变。
+    skyReflection *= smoothstep(0.3, 0.7, skylight) * REFLECTION_FALLBACK_BRIGHTNESS;
+    skyReflection *= weight;
+    return skyReflection;
+}
+#endif
+
 vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 worldNormal, vec3 screenPos, vec3 worldDir, vec3 viewPos, float skylight, float dither) {
     #ifndef REFLECTION_GLOBAL
         return vec4(vec3(skylight * 1.3), 1.0);
@@ -178,9 +197,12 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
 
     // ---- 反射资格判定 ----
     bool isCustom = (materialID == 10050u);
-    bool isReflective = isCustom;
+    // [2026-11-11] 脚本化湿面（雨水坑）与自定义反射 ID 同级：它的 F0 只有 DEFAULT_DIELECTRIC_F0，
+    // 不参与 METAL_REFLECT_MODE=0 的金属度门槛，否则水坑平滑度会变成无效参数。
+    bool isWetMirror = material.isWet && material.roughness <= ROUGHNESS_THRESHOLD;
+    bool isReflective = isCustom || isWetMirror;
 
-    if (!isCustom) {
+    if (!isReflective) {
         #if METAL_REFLECT_MODE == 0
             isReflective = (material.metalness >= METALNESS_THRESHOLD);
         #elif METAL_REFLECT_MODE == 1
@@ -220,31 +242,48 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
 
     float fresnel = FresnelDielectricN(NdotV, 1.5);
 
+    // ---- 反射权重（SSR 命中色与天空回退共用，必须在天空分支之前算好）----
+    // [2026-11-11 修反射边缘白边] 这段原来只写在 SSR 命中分支内部：天空回退（REFLECTION_SKY）
+    // 乘的是常量 1，于是 L464 的 mix 把两个**不同权重**的量混在一起
+    // （SSR 命中色 × clampedFresnel vs 天空 × 1）。以冰面/石英（materialID 10050）常见的
+    // 俯视视角为例，F≈0.05~0.35、乘非金属增强后反射权重只有 0.08~0.5；而天空回退恒为
+    // REFLECTION_FALLBACK_BRIGHTNESS × NONMETAL_REFLECTION_BRIGHTNESS（本机配置 = 0.9）。
+    // 于是「命中点落在屏幕边缘」的那几像素（edgeFade < 1 的边缘带）立刻跳成天空的绝对亮度
+    // ⇒ 反射画面外侧一圈白边，且比反射内容亮数倍；掠射角 F 抬到 0.5 时差距缩小，所以是「有时」。
+    // 现在两条分支同权重：边缘带只剩内容差异（天空 vs 反射内容），不再有能量跳变。
+    // [2026-10-08] 粗糙反射亮度衰减：**粗糙度越高越暗**（用户要求「粗糙反射应比普通反射更暗」）。
+    // 曲线 = (1-roughness)^ROUGH_REFLECTION_DIM：
+    //   DIM = 1.0 与原实现等价（电介质那条 `max(1-roughness, 0.1)`）；
+    //   DIM > 1 更暗（「粗糙 = 只留一点光泽」）；DIM < 1 更亮。
+    // 关键修正：衰减对**金属也生效** —— 原实现只乘在电介质分支上，于是粗糙金属与光滑金属一样亮
+    // （配合大半径模糊就显得「糊而刺眼」）。
+    float roughDim = pow(max(1.0 - material.roughness, 0.0), ROUGH_REFLECTION_DIM);
+    float clampedFresnel = fresnel;
+    if (material.metalness >= METALNESS_THRESHOLD) {
+        // 金属：固定衰减，透出金属本身纹理
+        clampedFresnel = fresnel * REFLECTION_METAL_ATTENUATION;
+        if (isRoughReflective) clampedFresnel *= roughDim;
+    } else {
+        clampedFresnel = min(fresnel, 0.5);
+        if (isRoughReflective) {
+            clampedFresnel *= roughDim;
+        }
+        // 下面统一乘 NONMETAL_REFLECTION_BRIGHTNESS（非金属增强），这里按那个倍率预先折算，
+        // 使画布项的最终权重不超过上限 —— 否则增强会把权重顶到 1.25 而自激（见该宏处注释）。
+        clampedFresnel = min(clampedFresnel, REFLECTION_LOOP_WEIGHT_MAX * rcp(NONMETAL_REFLECTION_BRIGHTNESS));
+    }
+
     vec3 reflection = vec3(0.0);
     float reflectionDist = FP16_MAX;
     bool hasSky = false;
     bool hasSSR = false;
     float debugBlurRadiusPx = 0.0;   // 仅诊断用（见 SSR_DEBUG_SOURCE_MAP）：粗糙路径实际算出的模糊半径
 
-    // ---- 天空反射 ----
-    #ifdef REFLECTION_SKY
-        if (skylight > EPS && isEyeInWater == 0 ) {
-            #if defined(DIMENSION_THE_END) || defined(DIMENSION_NETHER)
-                reflection = AtmosphereSkyView(atmosphereViewPos, skyLightDir, worldSunDir);
-            #else
-                reflection = textureBicubic(skyMapTex, saturate(ProjectSky(skyLightDir))).rgb;
-            #endif
-            // [2026-09-03 方案1] 彻底移除 sunFace：此前用它压太阳光斑，但它按
-            // dot(normal, sunDir) 把竖向墙面（法线水平，dot≈0）的天空反射也压成 0，
-            // 导致"开启天空反射也不出天空"（半透明+不透明都有该问题）。恢复 1.0.2b
-            // 的纯 skylight 门控，保证天空反射在任何角度可见。
-            reflection *= smoothstep(0.3, 0.7, skylight) * REFLECTION_FALLBACK_BRIGHTNESS;
-            
-            if (isRoughReflective) reflection *= max(1.0 - material.roughness * 1.5, 0.1);
-            
-            hasSky = true;
-        }
-    #endif
+    // [2026-11-11 只算用得到的] 天空回退已移到命中判定之后（ComputeSkyReflection）：
+    // 仅湿区未命中、或 SSR 命中点靠近屏幕边缘（saturate(edgeFade) < 1）时才采样。
+    // 旧实现在此无条件计算，非湿区未命中会在消费端被 FP16_MAX 哨兵丢弃，属于纯浪费。
+    // 保留原观感要点：不乘 sunFace（避免竖墙天空反射被压成 0），且与 SSR 命中色共用
+    // clampedFresnel 权重（白边修复）。
 
     // ---- 屏幕空间反射 (SSR) ----
     #if METAL_SSR_MODE >= 1
@@ -320,10 +359,23 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
         #endif
         }
 
+        float edgeFade = 0.0;
         if (traceHit) {
-            float edgeFade = hitCoord.x * hitCoord.y * oms(hitCoord.x) * oms(hitCoord.y);
+            edgeFade = hitCoord.x * hitCoord.y * oms(hitCoord.x) * oms(hitCoord.y);
             edgeFade *= 1e2 + cube(saturate(1.0 - gbufferModelViewInverse[2].y)) * 1e3;
+        }
 
+        // [2026-11-11 只算用得到的] 天空回退只在会被消费时采样：
+        //   SSR 命中 → 仅当 saturate(edgeFade) < 1（否则 mix 权重为 1，天空色被完全替换）；
+        //   SSR 未命中 → 仅湿区（消费端只对 material.isWet 放行纯天空结果）。
+        #ifdef REFLECTION_SKY
+        if ((traceHit ? edgeFade < 1.0 : material.isWet) && skylight > EPS && isEyeInWater == 0) {
+            reflection = ComputeSkyReflection(skyLightDir, skylight, clampedFresnel);
+            hasSky = true;
+        }
+        #endif
+
+        if (traceHit) {
             // [2026-10-08 P0-2] 深度与视图位置必须用**屏幕**坐标（depthtex0 是全分辨率、全屏），
             // 只有采样 colortex4 才需要 ×0.5 —— 它的左上象限是半分辨率画布（ReprojectScene.comp
             // 用 workGroupsRender=0.5 写入）。
@@ -420,27 +472,7 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
             }
             #endif
 
-            // [2026-10-08] 粗糙反射亮度衰减：**粗糙度越高越暗**（用户要求"粗糙反射应比普通反射更暗"）。
-            // 曲线 = (1-roughness)^ROUGH_REFLECTION_DIM：
-            //   DIM = 1.0 与原实现等价（电介质那条 `max(1-roughness, 0.1)`）；
-            //   DIM > 1 更暗（"粗糙 = 只留一点光泽"）；DIM < 1 更亮。
-            // 关键修正：衰减对**金属也生效** —— 原实现只乘在电介质分支上，于是粗糙金属与光滑金属一样亮
-            // （配合大半径模糊就显得"糊而刺眼"）。
-            float roughDim = pow(max(1.0 - material.roughness, 0.0), ROUGH_REFLECTION_DIM);
-            float clampedFresnel = fresnel;
-            if (material.metalness >= METALNESS_THRESHOLD) {
-                // 金属：固定衰减，透出金属本身纹理
-                clampedFresnel = fresnel * REFLECTION_METAL_ATTENUATION;
-                if (isRoughReflective) clampedFresnel *= roughDim;
-            } else {
-                clampedFresnel = min(fresnel, 0.5);
-                if (isRoughReflective) {
-                    clampedFresnel *= roughDim;
-                }
-                // 下面统一乘 NONMETAL_REFLECTION_BRIGHTNESS（非金属增强），这里按那个倍率预先折算，
-                // 使画布项的最终权重不超过上限 —— 否则增强会把权重顶到 1.25 而自激（见该宏处注释）。
-                clampedFresnel = min(clampedFresnel, REFLECTION_LOOP_WEIGHT_MAX * rcp(NONMETAL_REFLECTION_BRIGHTNESS));
-            }
+            // 反射权重 roughDim / clampedFresnel 已上提到函数开头（天空回退与 SSR 共用同一权重）。
             
             // SSR 颜色：叶瓣多方向平均 / 粗糙圆盘模糊 / 常规单次采样
             #ifdef ROUGH_REFLECTIONS
@@ -451,6 +483,16 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
             #endif
             reflection = mix(reflection, ssrColor, saturate(edgeFade));
             hasSSR = true;
+        }
+    #endif
+
+    // [2026-11-11 只算用得到的] 关闭 SSR（METAL_SSR_MODE = 0）时没有命中判定可依附：
+    // 只有湿区会消费纯天空结果，其余反射像素的返回值都会被消费端的 FP16_MAX 哨兵丢弃，
+    // 所以这里同样只在湿区采样天空。
+    #if defined(REFLECTION_SKY) && (METAL_SSR_MODE < 1)
+        if (material.isWet && skylight > EPS && isEyeInWater == 0) {
+            reflection = ComputeSkyReflection(skyLightDir, skylight, clampedFresnel);
+            hasSky = true;
         }
     #endif
 

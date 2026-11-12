@@ -206,7 +206,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 /* Weather */
 	#define RAIN_PUDDLES // Enables rain puddles
-	#define RAIN_PUDDLE_SCALE 0.03 // Scale of the rain puddles. [0.001 0.002 0.005 0.007 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5]
+	// [2026-11-11] 水坑尺寸倍率（不是频率）：1 = 旧默认观感，越大水坑越大。
+	// 旧版该值是直接乘进噪声 UV 的频率，越大越碎（旧上限 0.5 只剩米粒），故改为尺寸正比、内部取倒数。
+	// 覆盖率由 noise 阈值与降雨湿度决定，与尺寸解耦；调大不会让整片地面变湿。
+	#define RAIN_PUDDLE_SCALE 1.0 // 水坑尺寸倍率：1 = 默认，越大越成片（下限 1.0，旧配置的 0.5 会按 1.0 处理）。 [1.0 1.25 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0]
 	#define RAIN_PUDDLE_SMOOTHNESS 0.9 // Smoothness of the rain puddles. [0.0 0.1 0.2 0.3 0.4 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99 1.0]
 
 	#define RAIN_VISIBILITY	0.5 // Visibility of the rain particles. [0.0 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
@@ -225,7 +228,13 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 /* Lighting Brightness */
 	#define MINIMUM_AMBIENT_BRIGHTNESS 0.05 // Minimum brightness of the ambient light. [0.0 0.00001 0.00002 0.00003 0.00005 0.00007 0.0001 0.0002 0.0003 0.0004 0.0005 0.0006 0.0007 0.0008 0.0009 0.001 0.0015 0.002 0.0025 0.003 0.004 0.005 0.006 0.007 0.01 0.05 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
+	// 夜间总增益：月光直射与环境光各乘一次（同幂次），不影响月相与月面亮度。
 	#define NIGHT_BRIGHTNESS 1.3 // Brightness of the night. [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.7 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
+	// [2026-11-11] 夜间环境光地板 = 该比例 × 月光直射亮度（消费点：program/DeferredLight.frag）。
+	// 夜里天空 SH 仅约 1e-4，环境光原本由 MINIMUM_AMBIENT_BRIGHTNESS 常量提供、与月相无关，
+	// 所以夜间阴面偏亮；本项随月光直射亮度联动，与直射同为 NIGHT_BRIGHTNESS 的一次幂。
+	// 0 = 阴面只保留天空光与常量底光；0.07 为实测默认（满月夜 环境光/直射 ≈ 0.10）。
+	#define NIGHT_AMBIENT_RATIO 0.07 // 夜间环境光 = 该比例 × 月光直射亮度。 [0.0 0.03 0.05 0.07 0.10 0.15 0.22 0.30]
 	// [2026-09-04 加到 GUI] 月光亮度（月盘/月光强度）。原只定义在 DeferredLight.frag（非 GUI 选项）。
 	#define MOON_BRIGHTNESS_MULTIPLIER 1.0 // Brightness of the moon. [0.0 0.5 1.0 1.5 2.0 3.0 5.0]
 	// [2026-09 夜空修复] 月光大气散射（Hillaire 天空 LUT 的月光项）标定系数：
@@ -235,6 +244,16 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// [2026-09] 夜空色偏修正：本包 Rayleigh 配比偏蓝（实测 B/R≈3.4，dev≈2.2），
 	// 用偏暖的中性 tint 压蓝、略提红，把夜空蓝度对齐 dev。
 	#define MOON_SKY_TINT vec3(1.25, 0.90, 0.62)
+
+	// [2026-11-11] 天空环境光衰减标定（唯一消费点：program/prepare/GenSkySH.comp）。
+	// 直射项有两重衰减：大气透射（随太阳高度角）与雨天 cloudShadow = 1 - wetness*0.96；
+	// 而天空 SH 过去两者都没有，于是清晨/雨天的 环境光 / 直射 比反而上升。
+	// 这里把两条衰减集中成一条曲线：正午晴天 = 1.0（不改既有白天标定），
+	// 太阳没入地平线下不压（夜间由月光项驱动）。0.30 / 1.45 拟合天空水平辐照度
+	// 随太阳高度角的下降（10 度约 0.36、30 度约 0.56、60 度约 0.87，正午 1.0）。
+	#define SKY_AMBIENT_SUN_MIN 0.30 // 太阳贴地平线时天空辐照度倍率（1.0 = 关闭本修正）
+	#define SKY_AMBIENT_SUN_POW 1.45 // 随 worldSunDir.y 上升的指数
+	#define SKY_AMBIENT_RAIN_ATTEN 0.60 // 全雨天时天空辐照度降幅（0 = 原行为，0.96 = 与直射同深度）
 
 /* Global Illumination */
 	#define SVGF_ENABLED // Enables spatiotemporal variance-guided filtering（SSILVB 降噪）

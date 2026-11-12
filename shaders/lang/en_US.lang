@@ -273,7 +273,8 @@ value.BLINDNESS_STRENGTH.0.0=OFF
 
 # Weather
 option.RAIN_PUDDLES=Rain Puddles
-option.RAIN_PUDDLE_SCALE=Rain Puddle Scale
+option.RAIN_PUDDLE_SCALE=Rain Puddle Size
+option.RAIN_PUDDLE_SCALE.comment=Puddle size multiplier: 1 = default, higher merges puddles into larger sheets. Coverage is controlled by rain wetness and the noise threshold, independent of size; very high values widen the edge transition (softer edges).
 option.RAIN_PUDDLE_SMOOTHNESS=Rain Puddle Smoothness
 
 option.RAIN_VISIBILITY=Rain/Snow Visibility
@@ -338,6 +339,8 @@ option.HANDHELD_LIGHTING=Handheld Lighting
 option.HELD_LIGHT_BRIGHTNESS=Held Light Brightness
 
 option.NIGHT_BRIGHTNESS=Night Brightness
+option.NIGHT_AMBIENT_RATIO=Night Ambient Ratio
+option.NIGHT_AMBIENT_RATIO.comment=Night ambient light = this ratio x moonlight direct brightness, scaled with Night Brightness and moon phase. 0 leaves shadowed surfaces on sky light only.
 option.MINIMUM_AMBIENT_BRIGHTNESS=Minimum Ambient Brightness
 
 option.AO_ENABLED=AO

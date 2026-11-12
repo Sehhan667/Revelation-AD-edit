@@ -75,6 +75,18 @@ void main() {
 		skyRadiance *= step(0.0, direction.y) * 0.8 + 0.2;
 	#endif
 
+	// [2026-11-11] 天空辐照度统一衰减（太阳高度角 x 天气）。这是天空光的唯一生成点，
+	// 一处即可覆盖地形/雾/云/反射/水面等全部消费者。直射项已有大气透射与雨天
+	// cloudShadow 两重衰减，天空 SH 过去两者皆无，导致清晨与雨天的 环境光/直射 比失衡。
+	// 正午晴天乘数 = 1.0；太阳没入地平线下不压，夜间照明仍由天空图的月光项决定。
+	// 只作用于主世界：下界/末地没有昼夜太阳，worldSunDir 不能当环境光门控。
+	#if !defined DIMENSION_NETHER && !defined DIMENSION_THE_END
+		float skySunHeight = saturate(worldSunDir.y);
+		float skyElevationScale = mix(SKY_AMBIENT_SUN_MIN, 1.0, pow(skySunHeight, SKY_AMBIENT_SUN_POW));
+		skyElevationScale = mix(1.0, skyElevationScale, smoothstep(-0.08, 0.0, worldSunDir.y));
+		skyRadiance *= skyElevationScale * (1.0 - wetness * SKY_AMBIENT_RAIN_ATTEN);
+	#endif
+
 	vec3[9] shCoeff;
 	float[9] basis = BasisSH3(direction);
 

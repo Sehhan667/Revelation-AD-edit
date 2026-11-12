@@ -25,6 +25,7 @@ struct Material {
 	float emissiveness;
 	bool specularMask;
 	bool isRough;
+	bool isWet; // 脚本化湿面（雨水坑）：反射资格不受 METAL_REFLECT_MODE 的金属度门槛限制
 };
 
 // https://shaderlabs.org/wiki/LabPBR_Material_Standard
@@ -89,6 +90,7 @@ Material GetMaterialData(in vec4 specTex) {
 
 	material.specularMask = saturate(0.4 - material.roughness) + material.metalness > 1e-2;
 	material.isRough = material.roughness + wetnessCustom > ROUGH_REFLECTIONS_THRESHOLD;
+	material.isWet = false;
 
 	return material;
 }
@@ -101,6 +103,7 @@ Material GetMaterialData(in vec2 specTex) {
 
 	material.specularMask = saturate(0.4 - material.roughness) + material.metalness > 1e-2;
 	material.isRough = material.roughness + wetnessCustom > ROUGH_REFLECTIONS_THRESHOLD;
+	material.isWet = false;
 
 	return material;
 }

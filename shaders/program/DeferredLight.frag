@@ -302,10 +302,11 @@ void main() {
         vec4 specularTex = vec4(0.0);
     #endif
 
+    float puddleMask = 0.0;
     #ifdef RAIN_PUDDLES
         if (wetnessCustom > EPS) {
             if (materialID < 1000u || materialID > 1002u) {
-                CalculateRainPuddles(albedo, worldNormal, specularTex.rgb, worldPos, geoNormal, lightmap.y);
+                puddleMask = CalculateRainPuddles(albedo, worldNormal, specularTex.rgb, worldPos, geoNormal, lightmap.y);
                 materialPack.z = Packup2x8U(specularTex.xy);
                 imageStore(colorimg7, texelPos, materialPack);
             }
@@ -313,6 +314,8 @@ void main() {
     #endif
 
     Material material = GetMaterialData(specularTex);
+    // [2026-11-11] 标记脚本化湿面，供水坑绕过 METAL_REFLECT_MODE 的金属度门槛。
+    material.isWet = puddleMask > 0.0;
 
 
     float sssAmount = 0.0;
@@ -367,9 +370,8 @@ void main() {
         #endif
     }
     sunlightBase *= SUN_BRIGHTNESS_MULTIPLIER; // 阳光亮度控制
-    // [2026-09-04] 夜晚亮度：把 NIGHT_BRIGHTNESS 也作用到月光/直射（跟着月光一起亮）。
-    // 白天(nightAmt=0)不变；可单独用 MOON_BRIGHTNESS_MULTIPLIER 调月面本身。
-    sunlightBase *= mix(1.0, NIGHT_BRIGHTNESS, nightAmt);
+    // [2026-11-11] 夜间增益不再在此重复：moonlightMult 已含 NIGHT_BRIGHTNESS，
+    // 再乘一次会让月光直射按 N^2 变化，与只乘一次的夜间环境光不同比例。
 
     vec3 specularDirect = vec3(0.0);
     float worldDistSquared = sdot(worldPos);
@@ -591,6 +593,16 @@ void main() {
         activeMinAmbient = MINIMUM_AMBIENT_BRIGHTNESS + COMPENSATION_BOOST * compensationAlpha;
     #endif
 
+    // [2026-11-11] 夜间环境光与月光同源：夜间天空 SH 只有约 1e-4 量级（LUT 月光项 ×5.7e-3），
+    // 环境光实际由上面的常量地板提供、与月相和月光强度无关，所以夜里环境光偏亮。
+    // 夜间改用月光直射亮度的固定比例作地板，随 moonlightMult（含 NIGHT_BRIGHTNESS）与月相自动同步；
+    // nightAmt=0 的白天与清晨完全走原常量，两项互不影响。
+    #if !defined DIMENSION_NETHER && !defined DIMENSION_THE_END
+        float nightAmbientFloor = NIGHT_AMBIENT_RATIO * luminance(global.directIlluminance)
+                                * (1.0 - wetness * SKY_AMBIENT_RAIN_ATTEN);
+        activeMinAmbient = mix(activeMinAmbient, nightAmbientFloor, nightAmt);
+    #endif
+
     // 环境光累积
     vec3 ambientAccum = vec3((worldNormal.y * 0.4 + 0.6) * max(activeMinAmbient, 5e-3 * nightVision));
     // [2026-09-21 水下环境光豁免] 下面所有**环境光**的天光门控都用这个，而不是 lightmap.y
@@ -732,10 +744,9 @@ void main() {
     #endif
 
     // 应用环境光亮度与颜色控制（还原旧版：完整 AO，无 mix 门控，无额外 skySH 叠加）
-    // [2026-09-04 修"夜晚整体偏暗 + NIGHT_BRIGHTNESS 宏没效果"] 该宏在两版都只是空定义（一直没接上）。
-    // 已接到夜晚环境光(下方)与月光直射(上面 sunlightBase)。想更亮/更暗直接调 NIGHT_BRIGHTNESS（GUI MiscLighting）。
-    sceneOut += ambientAccum * finalAo * AMBIENT_BRIGHTNESS_MULTIPLIER * AMBIENT_COLOR_TINT
-              * mix(1.0, NIGHT_BRIGHTNESS, nightAmt);
+    // [2026-11-11] 不再在此乘 NIGHT_BRIGHTNESS：夜间地板与假反弹已各自含该增益，
+    // 再乘一次会变成 N^2，与月光直射（moonlightMult 只含一次）不同比例。
+    sceneOut += ambientAccum * finalAo * AMBIENT_BRIGHTNESS_MULTIPLIER * AMBIENT_COLOR_TINT;
 
     // ====== 次表面散射（SSS）======
     // [2026-09] 两套模型，由 GUI 选项 SUBSURFACE_SCATTERING_MODEL 选择：
@@ -965,13 +976,23 @@ void main() {
             isReflective = isReflective || (material.roughness > ROUGHNESS_THRESHOLD && material.roughness <= ROUGH_REFLECTIONS_MAX);
         #endif
         isReflective = isReflective || (materialID == 10050u);
+        // [2026-11-11] 雨水坑是脚本化湿面镜面：其 F0 只写入 DEFAULT_DIELECTRIC_F0（默认 0.01），
+        // 在 METAL_REFLECT_MODE=0 的「仅金属度」下永远够不到 METALNESS_THRESHOLD，
+        // 于是「雨水坑平滑度」拉满也不会追踪任何反射。这里与 materialID 10050 一样绕过该模式，
+        // 由平滑度换算出的粗糙度单独把关（粗糙度不够依然不反射）。
+        isReflective = isReflective || (material.isWet && material.roughness <= ROUGHNESS_THRESHOLD);
     #else
         bool isReflective = (material.metalness >= 0.5 || materialID == 10050u);
     #endif
     bool reflectHit = false;
     if (isReflective) {
         reflection = CalculateSpecularReflections(material, materialID, worldNormal, screenPos, worldDir, viewPos, lightmap.y, dither);
-        reflectHit = (reflection.a < FP16_MAX && any(greaterThan(reflection.rgb, vec3(0.0))));
+        // [2026-11-11] 湿区天空回退：SSR 出屏/未命中时 Reflection.glsl 只填天空色，并用 FP16_MAX
+        // 标记「无命中距离」，原来的 < FP16_MAX 会把这个结果整块丢弃，于是水坑看起来完全不反光。
+        // 这里仅对湿区放行纯天空结果（rgb>0 说明已乘过 clampedFresnel/fallback，见天空分支）；
+        // 非湿区仍用原判定，避免变成全局的「未命中就回退天空」而整体改观感。
+        bool hasReflectionColor = any(greaterThan(reflection.rgb, vec3(0.0)));
+        reflectHit = hasReflectionColor && (reflection.a < FP16_MAX || material.isWet);
     }
 
     // ====== 最终合成 ======
