@@ -288,8 +288,10 @@ void main() {
             // 换算成屏幕位移（乘焦距）与滚转。转角越大板子偏得越多，松手后平滑归位。
             // GUI：LOGO_FOLLOW_DELAY（延迟）/ LOGO_FOLLOW_STRENGTH（位移）/ LOGO_FOLLOW_ROLL（滚转）。
             vec2 panelUV = screenUV;
-            #if LOGO_FOLLOW_STRENGTH > 0.0
-            {
+            // [2026-11-12] 这里**不能**用 #if LOGO_FOLLOW_STRENGTH > 0.0：Iris 的 jcpp 比较浮点时
+            // 只取整数部分 ⇒ 0.25 / 0.5 都会被当成 0，整段被编译掉（表现就是「调到 0.25 就不动」）。
+            // 改成运行期判断（代价可忽略）。
+            if (LOGO_FOLLOW_STRENGTH > 0.0) {
                 vec3 camForward = -gbufferModelViewInverse[2].xyz;
                 vec2 camView = vec2(atan(camForward.z, camForward.x), asin(clamp(camForward.y, -1.0, 1.0)));
                 // 滞后值由**本 pass 上一帧**写回（见下方 (0,0) 线程）—— 不用 prepare 阶段，
@@ -316,7 +318,6 @@ void main() {
                 centered = mat2(cs, -sn, sn, cs) * centered;
                 panelUV = centered + 0.5;
             }
-            #endif
 
             // 毛玻璃面板：区域内只显示重度模糊后的当前画面，不做任何染色。
             // 顺序：面板先合成，logo 才是画在玻璃上的那张白字。
