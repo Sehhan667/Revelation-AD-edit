@@ -38,7 +38,9 @@
     风险：低（纯重构；要求输出与改前逐位一致）
     验证：F3 中位数 + 改前/改后同机位截图逐像素对比（应无差异）
 
-[x] P1-2 = B3  PCF 的 shadowtex0 / shadowtex1 判据不自洽              [4f427c3a]
+[~] P1-2 = B3  已 revert（e7f69063）：把染色条件收紧后彩色阴影整片发亮、半影也不染色
+        ⇒ 观感回退比它修的瑕疵更糟。重做前提：新判据必须保持染色玻璃的染色强度，
+        只能对「非透明遮挡物的半影」做淡出，需实机对比。
     位置：shaders/lib/lighting/shadow/Render.glsl（CalculatePCSS / 半影采样）
     现状：shadowtex0 用 texelFetch 点采样、shadowtex1 用硬件双线性，两者用 != 比较，
           半影像素会被误判成「透明遮挡」，于是走彩色分支，用遮挡物 albedo 给半影染色/压暗
