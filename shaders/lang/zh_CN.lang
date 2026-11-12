@@ -662,8 +662,6 @@ option.DEBUG_BLOOM_TILES=DEBUG_BLOOM_TILES
 option.DEBUG_CLOUD_SHADOWS=DEBUG_CLOUD_SHADOWS
 option.DEBUG_CLOUD_MAP=DEBUG_CLOUD_MAP
 option.DEBUG_NORMALS=DEBUG_NORMALS
-option.DEBUG_KILL_RIPPLE_GRID=显示击杀特效采样点
-option.DEBUG_KILL_RIPPLE_GRID.comment=在屏幕上以颜色显示击杀特效的 16x16 稀疏采样点：绿色=受伤时长低，越接近/超过触发阈值越红
 option.DEBUG_SKY_MAP=DEBUG_SKY_MAP
 option.DEBUG_VOXEL_GI=体素 GI 调试可视化
 option.DEBUG_VOXEL_GI.comment=压暗其余光照并放大体素 GI 贡献，直观查看 GI 生效区域（火把光晕、天空渗入、岩浆泛光等）
@@ -770,12 +768,6 @@ option.GLITCH_TEAR_FADE_DISTANCE=撕裂距离衰减·外圈
 option.GLITCH_TEAR_FADE_DISTANCE.comment=超过这个距离（米）完全不出现实体撕裂位移（远处小物体不再被拖走）。设为 0 或不超过内圈 = 关闭衰减（回到远近一样大的旧行为）
 option.DEBUG_GLITCH_TEAR=撕裂距离衰减读数
 option.DEBUG_GLITCH_TEAR.comment=整屏读数：红=视距（越红越远，满值 64 m），绿=撕裂位移系数（亮=满幅、黑=此处完全不撕），蓝=材质标志位（0.5=实体位、再+0.5=受伤位）。用来确认衰减是否作用到你看的那块像素
-option.KILL_RIPPLE=击杀特效
-option.KILL_RIPPLE.comment=实体被杀死倒地期间会持续变红，超过触发阈值后手部物品出现泛白提亮与扩散涟漪，模拟击杀反馈
-option.KILL_RIPPLE_TRIGGER_TIME=击杀触发阈值
-option.KILL_RIPPLE_TRIGGER_TIME.comment=实体持续变红达到该秒数判定为击杀（普通受击约 0.3~0.5 秒）
-option.KILL_RIPPLE_DURATION=特效脉冲时长
-option.KILL_RIPPLE_DURATION.comment=击杀特效单次脉冲的持续时间（秒）
 screen.R!G!B!.comment=一些有关故障效果的神秘特效（闪烁注意！）
 
 

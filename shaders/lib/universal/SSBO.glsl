@@ -57,8 +57,9 @@ layout (std430, binding = 0) SSBO_DECLARED_TPYE buffer GlobalData {
     // Final.frag 的 ENTITY_AREA_GLITCH 段据此整段跳过 —— 那段每像素 7 次 sin 链 + 10 层撕裂
     // 循环 + 2 次深度读，常态（场上无受伤实体）产出恒 0，属于纯白付。
     // 为什么不用 colortex10.b：那个标志由 composite5(HurtTimer) 写，而该 pass 被 KILL_RIPPLE
-    // 门控（默认关）⇒ 2026-09-22 门控恒假、特效整个消失，最后只能把门控撤掉。SSBO 方案不依赖
-    // 任何可以关掉的 pass。std430 追加在结构体尾部，不影响既有字段偏移。
+    // 门控（默认关）⇒ 2026-09-22 门控恒假、特效整个消失，最后只能把门控撤掉；2026-11-12 整条
+    // kill-ripple 管线（含该 pass 与 colortex10）已删除，这条历史只作背景。SSBO 方案不依赖任何
+    // 可以关掉的 pass。std430 追加在结构体尾部，不影响既有字段偏移。
     uint hurtEntitySeen;
     // [2026-11-12 A2] 屏幕上的太阳可见度（0..1）。只依赖太阳方向 / 相机矩阵 / 太阳屏幕位置那 5 个
     // texel，对整帧所有像素都是同一个标量，却原来在 IntegrateScene 里被逐像素重算（每像素 5 次

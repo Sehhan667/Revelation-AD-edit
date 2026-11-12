@@ -28,10 +28,9 @@
 	const int 	colortex7Format 			= RGBA16UI;
 	const int 	colortex8Format 			= RGBA16_SNORM;
 	const int 	colortex9Format 			= RGBA16F;
-	// [2026-09-20 实体故障门控] RG16F -> RGBA16F：新增 B 通道 = (0,0) 处的「上一帧屏幕上
-	// 存在受伤实体」标志（HurtTimer 稀疏采样聚合），Final 的 ENTITY_AREA_GLITCH 段据此
-	// 帧级跳过整段 sin 链 + 撕裂循环。代价 = 该全屏缓冲每像素 +2 字节读写。
-	const int 	colortex10Format 			= RGBA16F;
+	// [2026-11-12] colortex10 已随击杀特效（kill-ripple）整条删除：它只被 composite5(HurtTimer)
+	// 写、被 Final 的 #ifdef KILL_RIPPLE 段读，而那条链默认关、打开还会因为内部常量被注释掉而
+	// 编译失败。实体受击故障的帧级门控现在走 SSBO 的 global.hurtEntitySeen，不再需要这个缓冲。
 	const int 	colortex12Format 			= RG16;
 	const int 	colortex13Format 			= R8I;
 	const int 	colortex14Format 			= RGBA16F;	// 原 RGB16F；alpha 存 disocclusion 标记（去遮挡修复用）
@@ -103,7 +102,6 @@
 	const bool	colortex7Clear				= true;
 	const bool	colortex8Clear				= false;
 	const bool	colortex9Clear				= false;
-	const bool 	colortex10Clear				= false;
 	const bool 	colortex12Clear				= true;
 	const bool 	colortex13Clear				= false;
 	const bool 	colortex14Clear				= false;
@@ -152,7 +150,6 @@
 	|	colortex7	|   rgba16ui        |	Full res  	|	Material data
 	|	colortex8	|   rgba16_snorm    |	Full res  	|	Normal data
 	|	colortex9	|   rgba16f     	|	Full res	|	Cloud history
-	|	colortex10	|   RG16F           |	Full res	|	Hurt timer/ripple phase
 	|	colortex12	|   rg16          	|	Full res	|	Water data
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)

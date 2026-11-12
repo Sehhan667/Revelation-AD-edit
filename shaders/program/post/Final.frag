@@ -38,7 +38,6 @@ out vec3 finalOut;
 #include "/lib/universal/Transform.glsl"
 
 #include "/lib/post/GradeCore.glsl"
-#include "/lib/post/KillRipple.glsl"
 #include "/lib/post/StartupLogo.glsl"
 
 // [2026-09-21 Grade+Final 合并] CAS 关闭档（默认）下 composite31 不调度，本 pass
@@ -299,7 +298,8 @@ void main() {
         // 2 次 colortex7 取样和 2 次深度读（Firefox 抓帧里这是 final pass 的主要固定成本）。
         // 历史：2026-09-20 曾用 colortex10.b 做过同样的门控，2026-09-22 因为该标志的写入者
         // composite5(HurtTimer) 被 KILL_RIPPLE 门控（默认关）⇒ 标志恒 0 ⇒ **特效整个消失**，
-        // 只能把门控整段撤掉。现在标志改走 SSBO，不依赖任何可关的 pass。
+        // 只能把门控整段撤掉。现在标志改走 SSBO，不依赖任何可关的 pass（2026-11-12 整条
+        // kill-ripple 管线已删除，colortex10 也不再存在）。
         // 门控只能是帧级：`:srcIsEntity` 判的是被位移的**源**像素（背景像素承载拖拽条带与补洞），
         // 按当前像素的 isEntity/isHurt 门控会把补洞那半效果丢掉。
     #endif
@@ -441,56 +441,11 @@ void main() {
         }
     #endif
 
-    // ========== 击杀特效：实体持续变红超时 → 手部物品脉冲 ==========
-    #ifdef KILL_RIPPLE
-    float killPulse = texelFetch(colortex10, ivec2(0, 0), 0).g;
-    if (killPulse > 0.0) {
-        // 手部识别：materialID==1u（手）且深度足够近（排除近处雨雪）
-        uvec4 handPack = texelFetch(colortex7, texelPos, 0);
-        bool isHand = (handPack.y == 1u) && (loadDepth0(texelPos) < KILL_RIPPLE_HAND_DEPTH);
-
-        // 脉冲进度 0→1，fade 用二次曲线让末尾快速消失
-        float killProgress = 1.0 - clamp(killPulse / KILL_RIPPLE_DURATION, 0.0, 1.0);
-        float killFade = (1.0 - killProgress) * (1.0 - killProgress);
-
-        // 1) 手部物品整体泛白提亮
-        if (isHand) {
-            finalOut = mix(finalOut, vec3(1.0), KILL_RIPPLE_HIGHLIGHT * killFade);
-        }
-
-        // 2) 扩散涟漪：以当前半径为距离向 8 个方向采样手部 mask，命中即为环上的点
-        int ringR = int(round(killProgress * KILL_RIPPLE_RANGE));
-        if (ringR > 0) {
-            const ivec2 ringDir[8] = ivec2[8](
-                ivec2( 1,  0), ivec2(-1,  0), ivec2( 0,  1), ivec2( 0, -1),
-                ivec2( 1,  1), ivec2( 1, -1), ivec2(-1,  1), ivec2(-1, -1)
-            );
-            for (int i = 0; i < 8; ++i) {
-                ivec2 ringTexel = texelPos + ringDir[i] * ringR;
-                if (clamp(ringTexel, ivec2(0), ivec2(int(viewWidth), int(viewHeight)) - 1) == ringTexel) {
-                    uvec4 rp = texelFetch(colortex7, ringTexel, 0);
-                    if (rp.y == 1u && loadDepth0(ringTexel) < KILL_RIPPLE_HAND_DEPTH) {
-                        finalOut = mix(finalOut, vec3(1.0), killFade);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    #endif
-
-    // ========== 调试：显示击杀特效稀疏采样点 ==========
-    #ifdef DEBUG_KILL_RIPPLE_GRID
-        const int debugGrid = KILL_RIPPLE_GRID;
-        int dgx = clamp(int(floor(float(texelPos.x) * float(debugGrid) / viewWidth)), 0, debugGrid - 1);
-        int dgy = clamp(int(floor(float(texelPos.y) * float(debugGrid) / viewHeight)), 0, debugGrid - 1);
-        int dsx = min(int((dgx + 0.5) * viewWidth / float(debugGrid)), int(viewWidth) - 1);
-        int dsy = min(int((dgy + 0.5) * viewHeight / float(debugGrid)), int(viewHeight) - 1);
-        if (all(lessThanEqual(abs(texelPos - ivec2(dsx, dsy)), ivec2(1)))) {
-            float debugT = clamp(texelFetch(colortex10, texelPos, 0).r / KILL_RIPPLE_TRIGGER_TIME, 0.0, 1.0);
-            finalOut = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), smoothstep(0.5, 1.0, debugT));
-        }
-    #endif
+    // [2026-11-12] 击杀特效（kill-ripple）整条管线已删除：它的开关默认关、内部常量
+    // （KILL_RIPPLE_RANGE / HIGHLIGHT / HAND_DEPTH / TIMER_CAP / GRID）全是注释掉的、没有
+    // #ifndef 兜底 ⇒ 一旦在 GUI 里打开就会引用未定义宏、整包编译失败。它的消费者只有这里，
+    // 写端是 composite5(HurtTimer) + 全分辨率 colortex10（11.4MB 显存），一并删掉。
+    // 实体受击故障的帧级门控现在走 SSBO 的 global.hurtEntitySeen（见本文件上方），与它无关。
 
     // [2026-09 A/B 结论] 静态 Bayer(bayer16/64) 会在雾这类平滑渐变上留下固定
     // 矩阵条纹（等亮度轮廓沿矩阵阈值线排列，静止不动、随雾亮度场锚定）。

@@ -661,12 +661,6 @@ option.GLITCH_TEAR_FADE_DISTANCE=Tear Distance Falloff - Outer
 option.GLITCH_TEAR_FADE_DISTANCE.comment=No entity tear offset at all beyond this distance (meters), so small distant objects are no longer dragged away. Set to 0 (or not more than the inner radius) to disable the falloff (old behavior: same offset at any distance)
 option.DEBUG_GLITCH_TEAR=Tear Distance Falloff Readout
 option.DEBUG_GLITCH_TEAR.comment=Full-screen readout: red = view distance (brighter = farther, saturates at 64 m), green = tear offset scale (bright = full strength, black = no tearing here), blue = material flags (0.5 = entity bit, +0.5 = hurt bit). Use it to check whether the falloff reaches the pixels you are looking at
-option.KILL_RIPPLE=Kill Ripple
-option.KILL_RIPPLE.comment=While a killed entity is toppling it keeps turning red; past the trigger time the held item gets a whitening pulse and an outward ripple as kill feedback
-option.KILL_RIPPLE_TRIGGER_TIME=Kill Trigger Time
-option.KILL_RIPPLE_TRIGGER_TIME.comment=Seconds an entity has to stay red before it counts as killed (a normal hit is about 0.3-0.5 s)
-option.KILL_RIPPLE_DURATION=Pulse Duration
-option.KILL_RIPPLE_DURATION.comment=Duration of a single kill pulse (seconds)
 
 
 # Compatibility
