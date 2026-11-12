@@ -304,9 +304,12 @@ void main() {
                 }
                 // 焦距（像素）= 0.5 * 屏高 * (1/tan(fovY/2))；透视投影下 P[1][1] 就是这个倒数
                 float focalPx = 0.5 * float(viewHeight) * gbufferProjection[1][1];
-                vec2 followOffset = vec2(-deltaView.x, deltaView.y) * focalPx
-                                  * LOGO_FOLLOW_STRENGTH * viewPixelSize;
-                float followRoll = -deltaView.x * LOGO_FOLLOW_ROLL;
+                // [2026-11-12 方向/增益修正] 左右方向与直觉相反 ⇒ 取 +deltaView.x；
+                // 另外用户反馈「强度调小就完全不动、倾斜太小」，把内部增益放大：位移 ×2、滚转 ×3，
+                // 并把滑条上限放宽（STRENGTH 到 8、ROLL 到 3）。
+                vec2 followOffset = vec2(deltaView.x, deltaView.y) * focalPx
+                                  * (LOGO_FOLLOW_STRENGTH * 2.0) * viewPixelSize;
+                float followRoll = deltaView.x * (LOGO_FOLLOW_ROLL * 3.0);
                 vec2 centered = screenUV - 0.5 - followOffset;
                 float cs = cos(followRoll);
                 float sn = sin(followRoll);

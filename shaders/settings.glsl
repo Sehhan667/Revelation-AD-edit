@@ -772,10 +772,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
     #define LOGO_FOLLOW_DELAY 0.12 // [0.0 0.04 0.06 0.08 0.1 0.12 0.15 0.2 0.3 0.5] 跟随延迟（秒，0=固定跟随）
 #endif
 #ifndef LOGO_FOLLOW_STRENGTH
-    #define LOGO_FOLLOW_STRENGTH 1.0 // [0.0 0.5 1.0 1.5 2.0 2.5 3.0 4.0] 滞后量→屏幕位移（焦距倍率，0=不位移）
+    #define LOGO_FOLLOW_STRENGTH 1.5 // [0.0 0.25 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 滞后量→屏幕位移（焦距倍率，0=不位移；内部再 ×2）
 #endif
 #ifndef LOGO_FOLLOW_ROLL
-    #define LOGO_FOLLOW_ROLL 0.35 // [0.0 0.15 0.3 0.45 0.6 0.8 1.0] 滞后量→滚转角（弧度/弧度）
+    #define LOGO_FOLLOW_ROLL 0.5 // [0.0 0.2 0.35 0.5 0.75 1.0 1.5 2.0 2.5 3.0] 滞后量→滚转角（弧度/弧度；内部再 ×3）
 #endif
 
 	// #define FORCE_DISABLE_SUBGROUP_OPS
