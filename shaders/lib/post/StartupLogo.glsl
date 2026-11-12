@@ -88,6 +88,19 @@
 // 才有保持段（32 + 80 = 112 < 240，保持 128 帧）。
 // [2026-11-11] 总时长 180 -> 240（+1s @60fps），淡入/淡出按 4/3 等比加长，
 // 保持段与淡出的比例不变。
+// [2026-11-12 logo 跟随] 让启动 logo 像「浮在镜头前、略微延迟跟上视角」的板子：
+// 相机的转向先低通，再用「低通朝向 - 当前朝向」的差换算成屏幕位移与滚转。
+// 0 延迟 = 完全固定跟随（旧行为）；延迟越大，快速转身时板子越明显地「甩在后面」。
+#ifndef LOGO_FOLLOW_DELAY
+    #define LOGO_FOLLOW_DELAY 0.12 // [0.0 0.04 0.06 0.08 0.1 0.12 0.15 0.2 0.3 0.5] 跟随延迟（秒，0=固定跟随）
+#endif
+#ifndef LOGO_FOLLOW_STRENGTH
+    #define LOGO_FOLLOW_STRENGTH 1.0 // [0.0 0.5 1.0 1.5 2.0 2.5 3.0 4.0] 滞后量→屏幕位移（焦距倍率，0=不位移）
+#endif
+#ifndef LOGO_FOLLOW_ROLL
+    #define LOGO_FOLLOW_ROLL 0.35 // [0.0 0.15 0.3 0.45 0.6 0.8 1.0] 滞后量→滚转角（弧度/弧度）
+#endif
+
 #ifndef LOGO_FADE_IN_FRAMES
     #define LOGO_FADE_IN_FRAMES 32.0      // 淡入 0.53s @60fps
 #endif

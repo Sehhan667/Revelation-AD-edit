@@ -953,3 +953,9 @@ option.UW_SUN_GLOW_STRENGTH=水下太阳光晕强度
 option.UW_SUN_GLOW_STRENGTH.comment=水下正对太阳时的前向散射光晕强度（0 = 只保留均匀散射、没有光晕）。
 option.UW_SUN_GLOW_FALLOFF=光晕随太阳高度的衰减
 option.UW_SUN_GLOW_FALLOFF.comment=太阳低于该「仰角正弦值」附近光晕几乎消失：数值越小，太阳稍低一点就变暗；越大则低太阳时仍然亮。0.35 约对应 20 度仰角。
+option.LOGO_FOLLOW_DELAY=启动logo跟随延迟（秒）
+option.LOGO_FOLLOW_DELAY.comment=启动 logo 像浮在镜头前的板子那样跟视角：数值越大，快速转身时它越明显地「甩在后面」，松手后平滑归位。0 = 完全固定跟随（旧行为）。
+option.LOGO_FOLLOW_STRENGTH=启动logo跟随位移强度
+option.LOGO_FOLLOW_STRENGTH.comment=把「滞后角」换算成屏幕位移的倍率（按焦距计算）。0 = 只旋转不位移。
+option.LOGO_FOLLOW_ROLL=启动logo跟随滚转强度
+option.LOGO_FOLLOW_ROLL.comment=横向转身时板子的倾斜量（弧度/弧度）。0 = 不倾斜。

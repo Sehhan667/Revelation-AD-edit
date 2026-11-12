@@ -858,3 +858,9 @@ option.UW_SUN_GLOW_STRENGTH=Underwater Sun Glow Strength
 option.UW_SUN_GLOW_STRENGTH.comment=Forward-scattering glow when looking straight at the sun from underwater (0 = uniform scattering only, no glow).
 option.UW_SUN_GLOW_FALLOFF=Glow Falloff With Sun Height
 option.UW_SUN_GLOW_FALLOFF.comment=The glow fades out near this sine-of-elevation: smaller = dims as soon as the sun gets low, larger = stays bright at low sun. 0.35 is roughly 20 degrees of elevation.
+option.LOGO_FOLLOW_DELAY=Startup Logo Follow Delay (s)
+option.LOGO_FOLLOW_DELAY.comment=Makes the startup logo feel like a board floating in front of the camera: the larger the value, the more it lags behind when you turn quickly, then eases back. 0 = rigid follow (old behaviour).
+option.LOGO_FOLLOW_STRENGTH=Startup Logo Follow Offset
+option.LOGO_FOLLOW_STRENGTH.comment=How strongly the lag angle is converted into a screen-space offset (scaled by focal length). 0 = rotate only, no offset.
+option.LOGO_FOLLOW_ROLL=Startup Logo Follow Roll
+option.LOGO_FOLLOW_ROLL.comment=Tilt applied when turning sideways (radians per radian). 0 = no tilt.

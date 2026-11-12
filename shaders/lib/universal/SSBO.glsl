@@ -66,6 +66,9 @@ layout (std430, binding = 0) SSBO_DECLARED_TPYE buffer GlobalData {
     // 深度读 ⇒ 1080p 每帧 10.4M 次）。现在由 composite4.csh(Translucent) 的 (0,0) 线程每帧算一次，
     // composite4.fsh 直接读标量；同一 composite pass 内 compute 先于 fragment，跨阶段可见。
     float sunScreenVisibility;
+    // [2026-11-12 logo 跟随] 相机朝向的低通值（yaw, pitch，弧度）：启动 logo 用它和当前朝向
+    // 的差做「浮在镜头前、慢半拍跟上的板子」。由 prepare(GlobalStorage) 每帧更新一次。
+    vec2 logoLaggedView;
 } global;
 
 layout (std430, binding = 1) SSBO_DECLARED_TPYE buffer ExposureData {

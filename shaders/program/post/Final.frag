@@ -283,9 +283,33 @@ void main() {
             float fade = fadeIn * fadeOut;
             vec2 screenUV = (vec2(texelPos) + 0.5) / vec2(viewWidth, viewHeight);
 
+            // [2026-11-12 logo 跟随] 把面板当成「浮在镜头前、慢半拍跟上视角的板子」：
+            // 相机朝向先在 prepare(GlobalStorage) 里低通，这里取「低通 - 当前」的角差，
+            // 换算成屏幕位移（乘焦距）与滚转。转角越大板子偏得越多，松手后平滑归位。
+            // GUI：LOGO_FOLLOW_DELAY（延迟）/ LOGO_FOLLOW_STRENGTH（位移）/ LOGO_FOLLOW_ROLL（滚转）。
+            vec2 panelUV = screenUV;
+            #if LOGO_FOLLOW_STRENGTH > 0.0
+            {
+                vec3 camForward = -gbufferModelViewInverse[2].xyz;
+                vec2 camView = vec2(atan(camForward.z, camForward.x), asin(clamp(camForward.y, -1.0, 1.0)));
+                vec2 deltaView = global.logoLaggedView - camView;
+                deltaView.x = mod(deltaView.x + PI, TAU) - PI;
+                // 焦距（像素）= 0.5 * 屏高 * (1/tan(fovY/2))；透视投影下 P[1][1] 就是这个倒数
+                float focalPx = 0.5 * float(viewHeight) * gbufferProjection[1][1];
+                vec2 followOffset = vec2(-deltaView.x, deltaView.y) * focalPx
+                                  * LOGO_FOLLOW_STRENGTH * viewPixelSize;
+                float followRoll = -deltaView.x * LOGO_FOLLOW_ROLL;
+                vec2 centered = screenUV - 0.5 - followOffset;
+                float cs = cos(followRoll);
+                float sn = sin(followRoll);
+                centered = mat2(cs, -sn, sn, cs) * centered;
+                panelUV = centered + 0.5;
+            }
+            #endif
+
             // 毛玻璃面板：区域内只显示重度模糊后的当前画面，不做任何染色。
             // 顺序：面板先合成，logo 才是画在玻璃上的那张白字。
-            float panelCoverage = StartupLogoPanelMask(screenUV, vec2(viewWidth, viewHeight));
+            float panelCoverage = StartupLogoPanelMask(panelUV, vec2(viewWidth, viewHeight));
             if (panelCoverage > 0.0 && fade > 0.0) {
                 // 1/8 结果在 colortex27 左上角的象限画布里：采样 UV 乘 1/8。
                 // clamp 到画布内 —— 画布右/下 1~2 个纹素不属于画布，双线性会带进来。
@@ -293,8 +317,8 @@ void main() {
                 // 上限取 (tileSize - 1) * 纹素尺寸：采样点落在画布倒数第二列/行上，
                 // 双线性只用画布内的纹素，永远不会碰到画布外那一圈 Iris 的清零值。
                 vec2 canvasMax = max(StartupLogoPanelTileSize(panelSize) - 1.0, vec2(1.0)) * viewPixelSize;
-                vec3 panelHDR = textureLod(colortex27, min(screenUV * LOGO_PANEL_BLUR_INV, canvasMax), 0.0).rgb;
-                if (dot(panelHDR, vec3(1.0)) < 1e-5) panelHDR = StartupPanelFallbackBlur(screenUV);
+                vec3 panelHDR = textureLod(colortex27, min(panelUV * LOGO_PANEL_BLUR_INV, canvasMax), 0.0).rgb;
+                if (dot(panelHDR, vec3(1.0)) < 1e-5) panelHDR = StartupPanelFallbackBlur(panelUV);
 
                 // 与面板外像素走同一条显示变换（曝光 / tone map / gamma / 暗角 / 泛光叠加）：
                 // 面板亮度因此天然与周围同量级，不会出现「一块暗块 / 一块黑块」。
@@ -305,7 +329,7 @@ void main() {
 
             // 覆盖率：StartupLogoMask 现在返回完整字形（描画类动画时长都是 0）——
             // 时间上的变化全部由上面的 fade 负责，两者相互独立。
-            float logoCoverage = StartupLogoMask(screenUV, vec2(viewWidth, viewHeight), logoFrame).x;
+            float logoCoverage = StartupLogoMask(panelUV, vec2(viewWidth, viewHeight), logoFrame).x;
             // 纯白（按需求：与截图里的白色一致）
             finalOut = mix(finalOut, vec3(1.0), logoCoverage * fade);
         }
