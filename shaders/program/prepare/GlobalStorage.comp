@@ -69,7 +69,12 @@ void main() {
 	global.directIlluminance *= smoothstep(0.0, 0.01, worldLightDir.y);
 
 	#ifdef CLOUD_SHADOWS
-		mat4 projMat = BuildOrthoMat(CLOUD_SHADOW_DISTANCE * 32.0, CLOUD_SHADOW_DISTANCE * 32.0, 0.0, cumulusTopRadius);
+		// [2026-11-12 B7] 正交范围 *32 -> *8。这张图是 512^2（cloudShadowImg 512x512）：
+		// 原来范围 = CLOUD_SHADOW_DISTANCE*32 = 2048（半宽）⇒ 4096 格压进 512 纹素 = 8 格/纹素，
+		// 而可见范围只有渲染距离那 ~200 格 —— 也就是 97% 的纹素根本没被采样到。
+		// 收到 *8（默认 64 ⇒ 半宽 512 格，仍有余量）后同成本拿到 4 倍分辨率。
+		// 采样侧（WorldToCloudShadowScreenPos）用同一个矩阵，所以只改这里即可。
+		mat4 projMat = BuildOrthoMat(CLOUD_SHADOW_DISTANCE * 8.0, CLOUD_SHADOW_DISTANCE * 8.0, 0.0, cumulusTopRadius);
 		cloud.shadowViewProj = projMat * shadowModelView;
 		cloud.shadowViewProjInv = inverse(cloud.shadowViewProj);
 	#endif
