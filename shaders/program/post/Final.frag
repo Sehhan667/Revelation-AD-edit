@@ -288,35 +288,45 @@ void main() {
             // 换算成屏幕位移（乘焦距）与滚转。转角越大板子偏得越多，松手后平滑归位。
             // GUI：LOGO_FOLLOW_DELAY（延迟）/ LOGO_FOLLOW_STRENGTH（位移）/ LOGO_FOLLOW_ROLL（滚转）。
             vec2 panelUV = screenUV;
-            // [2026-11-12] 这里**不能**用 #if LOGO_FOLLOW_STRENGTH > 0.0：Iris 的 jcpp 比较浮点时
-            // 只取整数部分 ⇒ 0.25 / 0.5 都会被当成 0，整段被编译掉（表现就是「调到 0.25 就不动」）。
-            // 改成运行期判断（代价可忽略）。
+            // [2026-11-12 v2：真 3D 偏转] 之前的版本只是 2D 平移+旋转，看起来像「贴纸滑动」。
+            // 现在按「一块浮在镜头前的板子」做透视：把屏幕像素反投影成相机空间视线，按
+            // 滞后角（yaw/pitch 差）反向旋转，再与板平面求交，得到板上的 UV。
+            // 好处：板子会真的「转」——近边大、远边小（透视收缩）+ 转角时整块面板偏出中心，
+            // 而不是简单平移；且 delta=0 时严格等于原来的屏幕 UV（逐像素一致）。
             if (LOGO_FOLLOW_STRENGTH > 0.0) {
                 vec3 camForward = -gbufferModelViewInverse[2].xyz;
                 vec2 camView = vec2(atan(camForward.z, camForward.x), asin(clamp(camForward.y, -1.0, 1.0)));
-                // 滞后值由**本 pass 上一帧**写回（见下方 (0,0) 线程）—— 不用 prepare 阶段，
-                // 那里的相机矩阵可能落后一帧，会把这个效果压成「只滞后 1 帧」而看不出来。
                 vec2 lagged = (frameCounter <= 1) ? camView : global.logoLaggedView;
                 vec2 deltaView = lagged - camView;
                 deltaView.x = mod(deltaView.x + PI, TAU) - PI;
-                // 写回给下一帧：只有 (0,0) 线程写，避免全屏竞争
                 if (all(equal(texelPos, ivec2(0)))) {
                     float followAlpha = 1.0 - exp(-max(frameTime, 1e-4) / max(LOGO_FOLLOW_DELAY, 1e-3));
                     global.logoLaggedView = lagged - deltaView * followAlpha;
                 }
-                // 焦距（像素）= 0.5 * 屏高 * (1/tan(fovY/2))；透视投影下 P[1][1] 就是这个倒数
-                float focalPx = 0.5 * float(viewHeight) * gbufferProjection[1][1];
-                // [2026-11-12 方向/增益修正] 左右方向与直觉相反 ⇒ 取 +deltaView.x；
-                // 另外用户反馈「强度调小就完全不动、倾斜太小」，把内部增益放大：位移 ×2、滚转 ×3，
-                // 并把滑条上限放宽（STRENGTH 到 8、ROLL 到 3）。
-                vec2 followOffset = vec2(deltaView.x, deltaView.y) * focalPx
-                                  * (LOGO_FOLLOW_STRENGTH * 2.0) * viewPixelSize;
-                float followRoll = deltaView.x * (LOGO_FOLLOW_ROLL * 3.0);
-                vec2 centered = screenUV - 0.5 - followOffset;
-                float cs = cos(followRoll);
-                float sn = sin(followRoll);
-                centered = mat2(cs, -sn, sn, cs) * centered;
-                panelUV = centered + 0.5;
+
+                // 偏转角：滞后量 × 强度（弧度）。上下方向沿用 deltaView.y。
+                float dy = -deltaView.x * LOGO_FOLLOW_STRENGTH;
+                float dp =  deltaView.y * LOGO_FOLLOW_STRENGTH;
+
+                vec2 projScale = vec2(gbufferProjection[0][0], gbufferProjection[1][1]);
+                vec3 rayView = vec3((screenUV * 2.0 - 1.0) / projScale, -1.0);
+
+                // 反向旋转（绕 Y 再绕 X），等价于「板子相对相机转转了 (dy, dp)」
+                float cy = cos(dy), sy = sin(dy);
+                float cp = cos(dp), sp = sin(dp);
+                vec3 r = rayView;
+                r = vec3(cy * r.x + sy * r.z, r.y, -sy * r.x + cy * r.z);
+                r = vec3(r.x, cp * r.y - sp * r.z, sp * r.y + cp * r.z);
+
+                if (r.z < -1e-4) {
+                    vec2 boardNdc = (r.xy / (-r.z)) * projScale;
+                    panelUV = 0.5 + 0.5 * boardNdc;
+                    // 额外的一点点滚转（保持原来的手感旋钮可用）
+                    float roll = -deltaView.x * LOGO_FOLLOW_ROLL;
+                    vec2 c2 = panelUV - 0.5;
+                    float cr = cos(roll), sr = sin(roll);
+                    panelUV = mat2(cr, -sr, sr, cr) * c2 + 0.5;
+                }
             }
 
             // 毛玻璃面板：区域内只显示重度模糊后的当前画面，不做任何染色。
