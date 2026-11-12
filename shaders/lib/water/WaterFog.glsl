@@ -12,11 +12,16 @@
 // [2026-11-12 水下太阳光晕] 空气→水的界面透射（Fresnel 透射的近似）：太阳越高、进入水体的
 // 直射光越多；太阳压向地平线时几乎全反射 ⇒ 水下的前向散射光晕应当明显变暗。
 // 之前只有水柱消光（mix(4,1,worldLightDir.y)）在起作用，实测「水下太阳光晕过亮、且几乎
-// 不随太阳高度变化」，这里补上这一项；UW_SUN_GLOW_STRENGTH 是整体强度系数（想更亮就调大）。
-const float UW_SUN_GLOW_STRENGTH = 0.6;
+// 不随太阳高度变化」，这里补上这一项。两个旋钮都在「透明/水」页。
+#ifndef UW_SUN_GLOW_STRENGTH
+	#define UW_SUN_GLOW_STRENGTH 0.6 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5] 水下太阳光晕强度（0 = 关掉前向散射光晕）
+#endif
+#ifndef UW_SUN_GLOW_FALLOFF
+	#define UW_SUN_GLOW_FALLOFF 0.35 // [0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.45 0.6 0.8] 太阳高度衰减终点（越小 = 太阳稍低就变暗）
+#endif
 
 float WaterSunInterfaceTransmittance() {
-	return mix(0.05, 1.0, smoothstep(-0.02, 0.35, worldLightDir.y));
+	return mix(0.05, 1.0, smoothstep(-0.02, UW_SUN_GLOW_FALLOFF, worldLightDir.y));
 }
 
 mat2x3 AnalyticWaterFog(in float skylight, in float waterDepth, in float LdotV, in float sunVisFactor) {

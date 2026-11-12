@@ -949,3 +949,7 @@ option.entityShadowDistanceMul=实体阴影距离倍率
 option.entityShadowDistanceMul.comment=只对实体生效（地形/方块仍按「阴影距离」）。0.5 = 32 格外实体不进阴影 pass，实体多时省 0.1–0.4 ms，代价是远处实体没有影子；1.0 = 旧行为。
 option.GLASS_DEBUG=玻璃染色调试（临时）
 option.GLASS_DEBUG.comment=0=正常；1=强制染色指数为 1（验证纹理 alpha 假设）；2=回退色改成洋红（验证是否走了回退分支）；3=glassMask 恒真（验证 materialID 假设）。定位完就改回 0。
+option.UW_SUN_GLOW_STRENGTH=水下太阳光晕强度
+option.UW_SUN_GLOW_STRENGTH.comment=水下正对太阳时的前向散射光晕强度（0 = 只保留均匀散射、没有光晕）。
+option.UW_SUN_GLOW_FALLOFF=光晕随太阳高度的衰减
+option.UW_SUN_GLOW_FALLOFF.comment=太阳低于该「仰角正弦值」附近光晕几乎消失：数值越小，太阳稍低一点就变暗；越大则低太阳时仍然亮。0.35 约对应 20 度仰角。
