@@ -46,9 +46,21 @@
 |---|---:|---:|---|
 | **G-buffer** | **463** | 36% | colortex7 (RGBA16UI) 183 + colortex8 (RGBA16_SNORM) 183 + colortex6 (RGBA8) 74 + colortex12 (RG16) 23；16 个 gbuffer draw |
 | **阴影** | **336** | 26% | shadowcolor0 112 + shadowcolor1 112 + 深度 112；28 个 shadow draw（4 个 shadow 程序） |
-| **环境/模组侧** | **423** | 33% | Iris labPBR 精灵图集 mip（tex19797/tex21913/tex1351）192 + 原版/呈现目标 231；**不是光影包代码** |
+| **环境/模组侧** | **423** | 33% | Iris labPBR 精灵图集 mip（tex19797/tex21913/tex1351，按 viewport 计的上限）+ 原版/呈现目标 231（1920×1080 主帧缓冲 blit 等）；**不是光影包代码** |
 | **光影包照明+后处理** | **116** | 9% | colortex0 69 + colortex3 25 + colortex1 11 + colortex4 9 + 面板 1 + 天空 0.6 |
 | 合计 | **≈1.30 GB/帧** | | 60fps ≈ 78 GB/s 写流量（1050 理论 112、可达约 80–90 GB/s） |
+
+**2026-11-12 二次核对（rdc 逐 pass 分组，见 rdc_analysis/capture_feature_cost2.txt）**：
+- 上表「labPBR 图集 192 MB」是**按 viewport 满覆盖算的上限**，实际每次 draw 只光栅化一个精灵的小
+  矩形 ⇒ 真实带宽可忽略；这块的成本是**每帧 24 次（本次抓帧）微小 draw 的固定开销**，
+  不是带宽。9 月复核过 130 次那份（`rdc_analysis/sprite_animation_pass.md`）：真实约 1–2 ms，
+  且用户实测关 PBR 帧率不变。
+- 计入字节的**包内**写入合计约 **1041 MB/帧**（阴影 336 / 地形 G-buffer 274 / 半透明 137 / 实体 103 /
+  手部粒子天空 80 / composite4 34 / TAA 29 / GI 16 / deferred20 11 / 运动模糊 11 / final 6 / bloom 2 /
+  面板 1），带宽下限 ≈ 9.1 ms（112 GB/s）。
+- 该 rdc **没有 GPU 计时**（RenderDoc 未记录 timer query）：XML 的 duration 是 CPU wall-time，
+  不能当 GPU 时间；排行只能靠「字节数 + 代码侧 ALU 估计」，真实 ms 必须 A/B 实测。
+
 
 ### 2.2 显存占用（带标签纹理，main+alt 各一份）
 
