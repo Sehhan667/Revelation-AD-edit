@@ -28,9 +28,9 @@
 - 不要重复提「D 档」里已经核实过的东西（见文件末尾）。
 
 
-三、P1：低风险、收益明确（建议按序做）
+三、P1：低风险、收益明确（**已完成 2026-11-12**）
 --------------------------------------------------------------------------------
-[ ] P1-1 = B1  色差复用：GradeScene x3 -> 拆 GradeCtx
+[x] P1-1 = B1  色差复用：GradeScene x3 -> 拆 GradeCtx                     [a545ab49]
     位置：shaders/program/post/Final.frag（CHROMATIC_ABERRATION 段）
     现状：R/G/B 三个通道各调一次 GradeScene，而它内部要算泛光/体积雾/雨/暗角/曝光
     做法：抽 GradeCtx（这些项各算一次），三通道只做采样+通道选择
@@ -38,7 +38,7 @@
     风险：低（纯重构；要求输出与改前逐位一致）
     验证：F3 中位数 + 改前/改后同机位截图逐像素对比（应无差异）
 
-[ ] P1-2 = B3  PCF 的 shadowtex0 / shadowtex1 判据不自洽
+[x] P1-2 = B3  PCF 的 shadowtex0 / shadowtex1 判据不自洽              [4f427c3a]
     位置：shaders/lib/lighting/shadow/Render.glsl（CalculatePCSS / 半影采样）
     现状：shadowtex0 用 texelFetch 点采样、shadowtex1 用硬件双线性，两者用 != 比较，
           半影像素会被误判成「透明遮挡」，于是走彩色分支，用遮挡物 albedo 给半影染色/压暗
@@ -47,7 +47,7 @@
     风险：低；改完专门看树叶/栅栏投下的半影颜色
     验证：半影近景截图 + F3
 
-[ ] P1-3 = B7  云影正交范围 *32 -> *8
+[x] P1-3 = B7  云影正交范围 *32 -> *8                                  [5c64658c]
     位置：云影生成（GenCloudShadow / 云影投影矩阵）
     现状：把 2048 格压进 512²，约 4 格/纹素，97% 的纹素根本采样不到
     做法：范围收 4 倍（*32 -> *8），同成本
@@ -55,7 +55,7 @@
     风险：零（但要确认远处云影边缘没有硬切）
     验证：抬头看云影边缘清晰度对比
 
-[ ] P1-4 = B9  SkyView 全屏 dispatch 服务 192x192 的 LUT
+[x] P1-4 = B9  SkyView 全屏 dispatch 服务 192x192 的 LUT              [0865d879]
     位置：shaders/program/atmosphere/SkyView.comp（workGroupsRender）+ 调用处
     现状：全屏 dispatch，每个线程进来先做 SSBO 判据才决定要不要算（163x 超额线程）
     做法：dispatch 收到 LUT 尺寸（如 192/8 组）
@@ -63,7 +63,7 @@
     风险：低，但**改前必须先抓帧确认 LUT 非空**（本仓有「改了之后 LUT 全黑」的前科）
     验证：RenderDoc 看输出纹理内容 + 天空外观
 
-[ ] P1-5 = G1  GAMMA_CORRECTION 滑条无效（点了没反应）
+[x] P1-5 = G1  GAMMA_CORRECTION 滑条无效（点了没反应）          [a545ab49] 已删滑条
     位置：shaders/lib/post/GradeCore.glsl（POTATO_GAMMA_APPROX 恒定义 ⇒ gamma 走 sqrt）
     做法：两选一：① `#if GAMMA_CORRECTION != 2.0` 时回落 pow（让滑条真的能用）；
           ② 直接删滑条
@@ -174,8 +174,6 @@
 
 八、推荐路线
 --------------------------------------------------------------------------------
-1) 实机验证 A 档（尤其 A8）；
-2) P1 五项一起做完（约 0.3–0.5 ms + 修半影观感 + 4x 云影锐度 + 一个空旋钮）——
-   B1/B3/B7/B9 各一个提交；
+1) 实机验证 A 档（尤其 A8）与 P1（B1 色差、B3 半影、B7 云影、B9 天空 LUT、G1 已删）；
 3) 看实际场景决定 P2-2（远处实体阴影）与 P2-3①（海面 noisetex）；
 4) 仍缺帧数再上 C1，且先做「只写调试色」的半分辨率链路验证。
