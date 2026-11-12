@@ -9,6 +9,16 @@
     #define UW_SUN_OCCLUSION // [OFF ON] 水雾太阳光晕受太阳是否被遮挡影响
 #endif
 
+// [2026-11-12 水下太阳光晕] 空气→水的界面透射（Fresnel 透射的近似）：太阳越高、进入水体的
+// 直射光越多；太阳压向地平线时几乎全反射 ⇒ 水下的前向散射光晕应当明显变暗。
+// 之前只有水柱消光（mix(4,1,worldLightDir.y)）在起作用，实测「水下太阳光晕过亮、且几乎
+// 不随太阳高度变化」，这里补上这一项；UW_SUN_GLOW_STRENGTH 是整体强度系数（想更亮就调大）。
+const float UW_SUN_GLOW_STRENGTH = 0.6;
+
+float WaterSunInterfaceTransmittance() {
+	return mix(0.05, 1.0, smoothstep(-0.02, 0.35, worldLightDir.y));
+}
+
 mat2x3 AnalyticWaterFog(in float skylight, in float waterDepth, in float LdotV, in float sunVisFactor) {
 	vec3 sunTransmittance = exp2(-rLOG2 * waterExtinction * mix(4.0, 1.0, worldLightDir.y));
 
@@ -23,7 +33,8 @@ mat2x3 AnalyticWaterFog(in float skylight, in float waterDepth, in float LdotV, 
 
 	const vec3 msV = waterAlbedo * 0.99;
 	vec3 scattering = phase + uniformPhase * msV / oms(msV);
-	scattering *= oms(wetnessCustom * 0.8) * global.directIlluminance * sunTransmittance;
+	scattering *= oms(wetnessCustom * 0.8) * global.directIlluminance * sunTransmittance
+	            * (WaterSunInterfaceTransmittance() * UW_SUN_GLOW_STRENGTH);
 
 	vec3 transmittance = exp2(-rLOG2 * waterExtinction * waterDepth);
 	scattering *= oms(transmittance) * skylight;
@@ -62,7 +73,8 @@ vec3 WaterFogPointSource(in float pointDepth, in float LdotV, in float sunVisFac
 
 	const vec3 msV = waterAlbedo * 0.99;
 	vec3 source = phase * vis + uniformPhase * msV / oms(msV);
-	source *= oms(wetnessCustom * 0.8) * lightEnergy * sunTransmittance;
+	source *= oms(wetnessCustom * 0.8) * lightEnergy * sunTransmittance
+	          * (WaterSunInterfaceTransmittance() * UW_SUN_GLOW_STRENGTH);
 
 	// 深水增浓：散射源随深度增强（透射侧的增浓在 RaymarchWaterFog 里按相机深度定标）
 	source *= mix(1.0, UW_FOG_DEEP_DENSITY, saturate(pointDepth / UW_FOG_DEEP_RANGE));
