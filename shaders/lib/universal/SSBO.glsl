@@ -60,6 +60,11 @@ layout (std430, binding = 0) SSBO_DECLARED_TPYE buffer GlobalData {
     // 门控（默认关）⇒ 2026-09-22 门控恒假、特效整个消失，最后只能把门控撤掉。SSBO 方案不依赖
     // 任何可以关掉的 pass。std430 追加在结构体尾部，不影响既有字段偏移。
     uint hurtEntitySeen;
+    // [2026-11-12 A2] 屏幕上的太阳可见度（0..1）。只依赖太阳方向 / 相机矩阵 / 太阳屏幕位置那 5 个
+    // texel，对整帧所有像素都是同一个标量，却原来在 IntegrateScene 里被逐像素重算（每像素 5 次
+    // 深度读 ⇒ 1080p 每帧 10.4M 次）。现在由 composite4.csh(Translucent) 的 (0,0) 线程每帧算一次，
+    // composite4.fsh 直接读标量；同一 composite pass 内 compute 先于 fragment，跨阶段可见。
+    float sunScreenVisibility;
 } global;
 
 layout (std430, binding = 1) SSBO_DECLARED_TPYE buffer ExposureData {

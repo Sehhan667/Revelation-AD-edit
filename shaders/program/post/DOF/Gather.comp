@@ -44,7 +44,9 @@ const vec2 workGroupsRender = vec2(1.0, 1.0);
 // [2026-09-21 B4] 原 Postfilter pass（composite6_b）合并进本 pass：colortex15 只剩
 // Prepare 数据的只读消费，最终 DOF 结果直接写 colortex0，省一个全分辨率 compute
 // dispatch 与 colortex15 一次全屏读 + colortex0 一次全屏写的往返。
-layout(rgba16f) readonly restrict uniform image2D colorimg15;
+// [2026-11-12 A4] 格式从 rgba16f 收窄到 rg16f（只用到 .x/.y），必须与 config.glsl 的
+// colortex15Format 一致：限定符与缓冲实际格式不符会让 glBindImageTexture 静默失败、imageLoad 恒 0。
+layout(rg16f) readonly restrict uniform image2D colorimg15;
 writeonly restrict uniform image2D colorimg0;
 
 //======// Uniform //==============================================================================//
@@ -203,13 +205,16 @@ vec3 DofGatherDisk(
 	return mix(resolvedCenter, resolvedCovering, saturate(coveringOpacity));
 }
 
-vec4 DofFilter(ivec2 texelPos) {
+vec4 DofFilter(ivec2 texelPos, out float outCoc) {
 	vec4 centerData = texelFetch(colortex3, texelPos, 0);
 	float fogMask = texelFetch(colortex0, texelPos, 0).a;
 
 	vec2 centerUv = texelToUv(texelPos);
 
 	float centerCoc = centerData.a;
+	// [2026-11-12 A6] 顺手把 CoC 带出去：调用方原来在这一步之后又对**同一个 texel 同一通道**
+	// 取了一次 colortex3.a（Gather.comp 的 sharedCoc 装载）。逐位等价，省一次全屏 fetch。
+	outCoc = centerCoc;
 	vec2 kernelNoise = SampleStbnVec2(texelPos, frameCounter + 6);
 	float jitterAngle = TAU * kernelNoise.x;
 	vec2 initialDir = vec2(cos(jitterAngle), sin(jitterAngle));
@@ -341,8 +346,9 @@ void main() {
 		if (loadIndex < sharedArea) {
 			uvec2 localTexel = uvec2(loadIndex % sharedSize.x, loadIndex / sharedSize.x);
 			ivec2 sourceTexel = clamp(groupBase + ivec2(localTexel), ivec2(0), imageEnd);
-			sharedTile[localTexel.y][localTexel.x] = DofFilter(sourceTexel);
-			sharedCoc[localTexel.y][localTexel.x] = texelFetch(colortex3, sourceTexel, 0).a;
+			// [2026-11-12 A6] DofFilter 已经把同一 texel 的 CoC 带出来（out 参数），
+			// 不再对 colortex3 重复取一次 .a。
+			sharedTile[localTexel.y][localTexel.x] = DofFilter(sourceTexel, sharedCoc[localTexel.y][localTexel.x]);
 		}
 	}
 

@@ -114,25 +114,10 @@ vec2 CalculateRefractedCoord(in ivec2 texelPos, in vec3 viewPos, in vec3 screenP
 // 该处天空（≈1）→ 可见；被地形挡/出屏/在相机背后 → 不可见。
 // 供雾的太阳光晕遮蔽使用，替代 shadow map 精确采样（更轻、无 include 依赖）。
 // [2026-08-20 平滑过渡] 太阳位置周边 9 点软采样，跨地形轮廓 0→1 渐变，消除光晕瞬间亮灭。
-float CalcSunScreenVisibility() {
-    vec3 sunView = mat3(gbufferModelView) * worldSunDir;
-    if (sunView.z >= 0.0) return 0.0;                 // 太阳在相机背后/地平线下
-    vec2 sunUv = ViewToScreenPosRaw(sunView).xy;
-    // [2026-08-20] 太阳滑近屏幕边缘 → 平滑淡出（取代硬 if 的瞬间跳变，对齐太阳本体的滑动过程）
-    vec2 edge = min(sunUv, vec2(1.0) - sunUv);
-    float edgeFade = smoothstep(0.0, 0.08, min(edge.x, edge.y));
-    if (edgeFade <= 0.0) return 0.0;
-
-    const float r = 0.02;                              // 软采样半径（决定过渡的角宽度）
-    vec2 uvMax = vec2(1.0) - viewPixelSize;
-    float occ  = step(1.0 - 1e-4, loadDepth1(uvToTexel(sunUv)));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( r, 0.0), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-r, 0.0), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0,  r), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0, -r), vec2(0.0), uvMax))));
-    // [P1 2026-09-02] 9 点 -> 5 点（十字，去掉对角线采样）：每像素省 4 次深度读取；光晕过渡由 edgeFade 平滑，几乎无感
-    return edgeFade * occ * (1.0 / 5.0);
-}
+// [2026-11-12 A2] 这个量只依赖太阳方向 / 相机矩阵 / 太阳屏幕位置那 5 个 texel —— 对整帧所有
+// 像素都是同一个标量。原来在这里逐像素重算（1080p 每帧 10.4M 次深度读），现改为由
+// composite4.csh(Translucent) 的 (0,0) 线程每帧算一次写进 `global.sunScreenVisibility`，
+// 本 pass 直接读。计算实现保留在 Translucent.comp（唯一写入者），避免两份漂移。
 
 // [2026-09-12 雾中光束] 单点阴影可见度：1 = 未被实心方块挡（或超出阴影范围），
 // 0 = 被实心方块挡；开了 COLORED_VOLUMETRIC_FOG 时穿过玻璃会返回玻璃吸收色。
@@ -376,14 +361,14 @@ void main() {
         #if defined UW_VOLUMETRIC_FOG
             // 水下体积雾 + 体积光：深度渐变散射（浅水青绿亮、深水浓蓝黑）+ 逐点阴影光束
             fogData = RaymarchWaterFog(eyeSkylightSmooth, viewDistance, worldDir, LdotV,
-                                       CalcSunScreenVisibility(), BlueNoise(texelPos, frameCounter), fogLightEnergy);
+                                       global.sunScreenVisibility, BlueNoise(texelPos, frameCounter), fogLightEnergy);
         #else
-            fogData = AnalyticWaterFog(eyeSkylightSmooth, viewDistance, LdotV, CalcSunScreenVisibility());
+            fogData = AnalyticWaterFog(eyeSkylightSmooth, viewDistance, LdotV, global.sunScreenVisibility);
         #endif
     } else {
         // 太阳屏幕可见度：体积雾的太阳光晕与地面大气散射的太阳项共用，每像素只求一次。
         #if defined VOLUMETRIC_FOG || (defined GROUND_SCATTERING && !defined DIMENSION_NETHER && !defined DIMENSION_THE_END)
-            float sunVis = CalcSunScreenVisibility();
+            float sunVis = global.sunScreenVisibility;
         #endif
 
         #ifdef VOLUMETRIC_FOG

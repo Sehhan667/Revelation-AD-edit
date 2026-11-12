@@ -56,6 +56,9 @@ writeonly uniform image2D colorimg3; // Lighting output
 
 //======// SSBO //================================================================================//
 
+// [2026-11-12 A2] 本 pass 需要**写** global.sunScreenVisibility（太阳可见度是帧常量，
+// 由 (0,0) 线程每帧算一次，供 composite4.fsh 读取），所以这里声明成读写而不是默认的 readonly。
+#define SSBO_DECLARED_TPYE restrict
 #include "/lib/universal/SSBO.glsl"
 
 //======// Struct //==============================================================================//
@@ -233,17 +236,28 @@ void main() {
     
     if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
 
+    // [2026-11-12 A2] 太阳屏幕可见度：整帧一个标量（5 次深度读），原来 IntegrateScene 每个像素
+    // 自己算一遍。这里由 (0,0) 线程每帧算一次写进 SSBO，composite4.fsh 直接读；同一 composite
+    // pass 里 compute 先于 fragment（现有代码已经依赖它写 colortex0/colortex3），因此同帧可见。
+    // 本 pass 自己的水面光雾仍在下面用局部计算 —— 同一 dispatch 内读别的线程刚写的值是竞态。
+    if (all(equal(texelPos, ivec2(0)))) global.sunScreenVisibility = CalcSunScreenVisibility();
+
     uvec2 materialPack = loadMaterialPack(texelPos).xy;
     uint materialID = materialPack.y;
     bool notParticle = materialID != 500u;
 
-    // 半透明实体（掉落物/物品展示框/展示实体等）在 deferred 之后才渲染进 gbuffer，
-    // 像素深度比不透明深度（depthtex1）更近；2u/3u/500u 已由下方玻璃/水/粒子管线处理，
-    // 其余此类像素（主要是掉落物）必须在这里用 gbuffer 的 albedo 补合成，否则完全消失。
-    bool translucentEntity = (loadDepth0(texelPos) < loadDepth1(texelPos))
-                          && (materialID != 2u && materialID != 3u && materialID != 500u);
-
-    if ((materialID != 2u && materialID != 3u) && notParticle && !translucentEntity) return;
+    // [2026-11-12 A3 早退顺序] 水/玻璃（2u/3u）与粒子（500u）本来就该继续，其余像素（屏幕 95%+）
+    // 才有必要付 2 次全分辨率深度读来判断「是不是 deferred 之后才画的半透明实体」。
+    // 原来把深度比较写在 && 左侧 ⇒ 每个像素都先读两次深度才发现自己没事干。
+    bool baseMaterial = (materialID == 2u || materialID == 3u);
+    bool translucentEntity = false;
+    if (notParticle && !baseMaterial) {
+        // 半透明实体（掉落物/物品展示框/展示实体等）在 deferred 之后才渲染进 gbuffer，
+        // 像素深度比不透明深度（depthtex1）更近；其余此类像素必须在这里用 gbuffer 的 albedo
+        // 补合成，否则完全消失。
+        translucentEntity = loadDepth0(texelPos) < loadDepth1(texelPos);
+        if (!translucentEntity) return;
+    }
 
     vec3 screenPos = vec3(texelToUv(texelPos), loadDepth0(texelPos));
     #if defined LOD_MOD

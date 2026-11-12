@@ -39,9 +39,12 @@
 	// 但唯一使用点 smooth.glsl 只被已禁用的 deferred1_b.csh1 引用 = 死缓冲。
 	// [2026-09-12] smooth.glsl 已随本批死代码一并删除（它只被 .csh1 禁用 pass 引用）；
 	// 保留上句是为了说明 colortex15 当年为何能安全改格式。
-	// 现改作 DoF gather scratch（移植自原版 Revelation，原版同编号 rgba16f）：
-	// Prepare 写 CoC 数据 / Gather 写过滤色，需 HDR 半精度，故升 RGBA16F。
-	const int 	colortex15Format 			= RGBA16F;
+	// 现改作 DoF CoC 暂存：Prepare 只写 .xy（centerCoc / gatherRadius，见 Prepare.comp:146），
+	// Gather 只读 .x/.y（见 Gather.comp:217），因此 [2026-11-12 A4] 从 RGBA16F 收窄到 RG16F：
+	// 每帧省 8.3MB 写 + 8.3MB 读，半精度通道数不变、精度零损失。
+	// 注意：改这里必须同步 Gather.comp 的图像限定符（layout(rgba16f) -> rg16f），
+	// 否则就是「格式不符 ⇒ glBindImageTexture 静默失败 ⇒ 读回 0」那一类坑（MEMO 2026-11-12）。
+	const int 	colortex15Format 			= RG16F;
 
 #ifdef VOXY
 	// Translucent data
@@ -153,7 +156,7 @@
 	|	colortex12	|   rg16          	|	Full res	|	Water data
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)
-	|	colortex15	|   rgba16f		    |	Full res  	|	DoF Prepare CoC data (written by Prepare, read by Gather; Postfilter merged into Gather 2026-09-21, filtered color no longer staged here)
+	|	colortex15	|   rg16f		    |	Full res  	|	DoF CoC data: x = centerCoc, y = gatherRadius (written by Prepare, read by Gather; Postfilter merged into Gather 2026-09-21, filtered color no longer staged here)
 	|	colortex18	|   rgba16f			|	Half res	|	SSS source (rgb = source x mask, a = mask), written by DeferredLight
 	|	colortex19	|   rgba16f			|	Half res	|	SSS horizontal blur result
 	|	colortex20	|   rgba16f			|	Half res	|	SSS vertical blur result (consumed by IntegrateScene)
