@@ -754,11 +754,16 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// #define DEBUG_CLOUD_NOISE
 	// #define DEBUG_CLOUD_SHADOWS
 	// #define DEBUG_TONE_MAPPING_PLOT
-	// [2026-11-12 W6 临时调试] 染色玻璃「没有颜色」。三种假设各开一次即可定位：
-	//   1 = 假设 translucent.a（纹理 alpha）接近 0 ⇒ 强制指数为 1
+	// [2026-11-12 W6 临时调试] 染色玻璃「没有颜色」的定位开关。**必须用 #ifndef 包住**：
+	// Iris 会把 GUI 里的值以 #define GLASS_DEBUG <值> 注入到源码最前面，这里再无条件
+	// #define 一次会造成「重定义且值不同」的编译错误（表现就是整屏黑）。
+	//   1 = 假设 translucent.a（纹理 alpha）接近 0 ⇒ 强制染色指数为 1
 	//   2 = 假设命中了「回退 colortex6」分支 ⇒ 回退值改成洋红
-	//   3 = 假设玻璃没进 glassMask（materialID != 2）⇒ glassMask 恒真
-	#define GLASS_DEBUG 0 // [0 1 2 3]
+	//   3 = 假设玻璃没进 glassMask ⇒ 对「深度上是半透明」的像素也当玻璃处理
+	//   4 = 直接显示玻璃像素 c7.zw 里的 albedo（判断颜色有没有写进 gbuffer）
+	#ifndef GLASS_DEBUG
+		#define GLASS_DEBUG 0 // [0 1 2 3 4]
+	#endif
 	// #define FORCE_DISABLE_SUBGROUP_OPS
 	#define GI_MODE 0 // [0 1 2 3]
 	// Keep internal boolean aliases for Iris' program-toggle preprocessor.

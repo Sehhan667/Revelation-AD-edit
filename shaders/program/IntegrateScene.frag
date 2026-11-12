@@ -272,7 +272,10 @@ void main() {
         uint materialID = materialPack.y;
         bool glassMask = materialID == 2u;
         #if GLASS_DEBUG == 3
-            glassMask = true;            // W6③：验证「玻璃的 materialID 不是 2」
+            // W6③：验证「玻璃的 materialID 不是 2」。只对**按深度看确实是半透明**的像素生效
+            //（loadDepth0 < loadDepth1 = 有更近的半透明面），不要用全局 true —— 那会把不透明
+            // 像素也拖进玻璃分支，最后乘上 c3.a=0 变成整屏黑。
+            glassMask = glassMask || (loadDepth0(texelPos) < loadDepth1(texelPos));
         #endif
         bool waterMask = materialID == 3u;
 
@@ -309,6 +312,12 @@ void main() {
             }
 
             if (glassMask || waterMask) {
+                #if GLASS_DEBUG == 4
+                    // W6④：玻璃像素直接显示 c7.zw 里的 albedo（跳过染色与高光）。
+                    // 有颜色 = albedo 已经正确写进 gbuffer，问题在下游（alpha/高光）；
+                    // 黑/白 = 颜色根本没进来。
+                    if (glassMask) sceneColor = albedo;
+                #else
                 if (glassMask) {
                     #if GLASS_DEBUG == 1
                         sceneColor *= exp2(log2(albedo));         // W6①：验证「alpha 接近 0」
@@ -319,6 +328,7 @@ void main() {
                 }
                 vec4 specularLight = texelFetch(colortex3, texelPos, 0);
                 sceneColor = sceneColor * specularLight.a + specularLight.rgb;
+                #endif   // GLASS_DEBUG != 4
             }
         }
 
