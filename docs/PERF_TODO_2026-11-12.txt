@@ -33,15 +33,28 @@ A 档：低风险、纯代码、无观感变化（合计 ≈1.0–2.0 ms/帧）
 A 档落地情况：12 项完成（A1–A12，其中 A9 只做零风险的①），3 项按上面理由暂缓/不做。
 
 
+同一天顺带做完的两项（不属于 A 档，不产生帧率收益，但属本审计清理项）
+----------------------------------------------------------------
+[x] N1  反射选项改名 + 补齐英文文案 + 清理 53 个「空开关」       [2f5ffff5]
+[x] N2  删除两份 mode-2「快速 SSR」追踪器，反射模式只留 0/1（方案 B）  [66c7c44a]
+
+仍留着的「点了没反应」的旋钮（下次清理）
+----------------------------------------------------------------
+[ ] G1  GAMMA_CORRECTION 滑条：GradeCore 里 POTATO_GAMMA_APPROX 恒定义，gamma 走 sqrt，
+        这个滑条改什么都没效果（要么让 !=2.0 时回落 pow，要么删掉）。
+[ ] G2  screen.RSM 整页现在是 4 个空槽（父菜单还有 [RSM] 引用，要一起删）。
+[ ] G3  Tier C 那批死选项的 #define 仍留在 settings.glsl（只是不再有 GUI）；要彻底删可以再来一轮。
+
+
 B 档：需要 A/B 或观感裁定（未开工）
 ----------------------------------------------------------------
-[ ] B1  色差三次 GradeScene -> 拆 GradeCtx 复用（0.2–0.3ms，风险低）
+[ ] B1  色差三次 GradeScene -> 拆 GradeCtx 复用（0.2–0.3ms，风险低）★剩余最划算
 [ ] B2  色差移到 tone map 之前（AcademyFit 只跑一次；高光色边会减弱；依赖 B1）
 [ ] B3  PCF：shadowtex0 点采样 vs shadowtex1 双线性判据不自洽（半影被 albedo 染色，性能+观感双修）
 [ ] B4  entityShadowDistanceMul = 0.5（32 格外的实体不进 shadow pass；实体多时 0.1–0.4ms）
 [ ] B5  shadow pass SOLID 阶段不写 shadowcolor0/1（依赖 B3 先修）
 [ ] B6  shadow pass 水片元 9 次 noisetex（海面视角 0.1–0.3ms；②结构性退役 shadowcolor1 波法线）
-[ ] B7  云影 ortho 范围 *32 -> *8（同成本白送 4x 云影锐度）
+[ ] B7  云影 ortho 范围 *32 -> *8（同成本白送 4x 云影锐度）★零风险、纯画质
 [ ] B8  bloom 两趟就地读写 colortex4 且带 restrict（正确性 > 性能）
 [ ] B9  begin/SkyView 全屏 dispatch 服务 192x192 LUT（改前必须抓帧确认 LUT 非空）
 [ ] B10 视差二分后 3–4 次无信息增益（仅开 PARALLAX 时）
