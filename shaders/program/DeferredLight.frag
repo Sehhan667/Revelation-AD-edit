@@ -1155,7 +1155,13 @@ void main() {
                         sceneOut = vec3(1.0, 0.0, 0.0);       // 红：dbgCoord 越界
                     }
                 #else
-                    sceneOut += voxelGI;
+                    // [2026-11-12 修复 VXGI 下「阴影里的物体反射异常光滑」]
+                    // 体素 GI 是**漫反射**辐照度（上面已乘过 albedo），但这里原本无条件加到所有像素上。
+                    // 金属没有漫反射项：它的底色刚被 mix(..., reflection, REFLECTION_METAL_MIX) 换成
+                    // 以镜面反射为主，此时再叠一层平滑、低频的漫反射 GI，会在阴影里（镜面反射本身很暗）
+                    // 直接把反射盖住 —— 表现就是「金属/反光物体在阴影里异常光滑、像塑料」。
+                    // 按 (1 - metalness) 衰减：纯金属不再吃漫反射 GI，电介质与非金属保持原样。
+                    sceneOut += voxelGI * (1.0 - saturate(material.metalness));
                     #ifdef DEBUG_SUNBOUNCE_VIS
                     // [2026-10-02] 角落读数已挪到 /program/post/Final.frag（最后一 pass）——
                     // 画在这里会被"天空像素提前返回 / 曝光 / 色调映射"搅得忽深忽浅、颜色不准。
