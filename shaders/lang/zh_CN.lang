@@ -945,3 +945,5 @@ option.UW_VOXEL_SKY_WATER_FLOOR.comment=体素 GI 的解析天光下限在水下
 
 
 
+option.entityShadowDistanceMul=实体阴影距离倍率
+option.entityShadowDistanceMul.comment=只对实体生效（地形/方块仍按「阴影距离」）。0.5 = 32 格外实体不进阴影 pass，实体多时省 0.1–0.4 ms，代价是远处实体没有影子；1.0 = 旧行为。

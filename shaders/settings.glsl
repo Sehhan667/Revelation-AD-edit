@@ -31,6 +31,12 @@ const int shadowMapResolution = 1024;  // [1024 1536 2048 4096 8192 16384 32768]
 const float	shadowDistance 	  = 64.0; // [32.0 48.0 64.0 80.0 96.0 112.0 128.0 160.0 192.0 224.0 256.0 320.0 384.0 512.0 768.0 1024.0 2048.0 4096.0 8192.0 16384.0 32768.0 65536.0]
 
 const float shadowDistanceRenderMul = 1.0; // [-1.0 1.0]
+
+// [2026-11-12 B4] 实体阴影距离倍率：Iris 常量指令，**只影响实体**（地形/方块仍按 shadowDistance）。
+// 0.5 = 32 格外实体不进 shadow pass（实体多时省 0.1–0.4 ms/帧），代价是远处实体没有阴影。
+// 1.0 = 旧行为。带值列表所以是可选的 GUI 项；不动 shadowDistance 本身是为了保留地形阴影距离。
+const float entityShadowDistanceMul = 0.5; // [0.0 0.25 0.5 0.75 1.0]
+
 const float realShadowMapRes = float(shadowMapResolution) * MC_SHADOW_QUALITY;
 
 //======// Environment //=========================================================================//
