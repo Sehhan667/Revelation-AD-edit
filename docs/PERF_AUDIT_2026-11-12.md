@@ -90,7 +90,13 @@ shadowcolor0/1 main+alt 再 16 MB/帧（Iris 对 `xxxClear=true` 的缓冲两份
 | A12 | **雾中光束的 `sRGBToLinear` 换现成近似** | `IntegrateScene.frag:168`、`Color.glsl:63-65` | 0.03–0.15 ms | 极低 | 1 行 |
 | A13 | **启动面板：缓冲缩回 1/8 + 3 pass 并成 2 pass** | `config.glsl:83-84`、`StartupPanelBlur.comp` | 0.01–0.02 ms + **22.4 MB 显存** | 低 | M |
 | A14 | **直方图并进 Bloom Downsample** | `LumHistogram.comp:49-70`、`Downsample.comp:71-91` | 0.05–0.08 ms | 低 | S-M |
-| A15 | **运动模糊恢复「半分辨率 + 2×2 块共享矢量」**（已实现过又丢失） | `PROGRESS_TODO.md:90-92`（commit `51fb6dd8`）vs 现 `MotionBlur.comp:23,76-81` | 0.05–0.15 ms | 中（边缘块粒度） | S-M |
+| ~~A15~~ | ~~运动模糊「半分辨率 + 2×2 块共享矢量」~~ **更正：这是 1e4a4873 按用户裁定主动回退的，不是丢失的优化，不要重做** | `git log 1e4a4873` | — | — | — |
+
+> **落地情况（2026-11-12，分支 `perf/audit-a-2026-11-12`）**：A1–A12 已实现（A9 只做零风险的①），
+> 共 6 个提交：`2e027550`(A1)、`a9b85d19`(A2/A3/A4/A6)、`91410ae9`(A5/A7/A10/A11/A12)、
+> `a8cdb386`(A8)、`b8d49e8e`(A9①)。暂缓：A13（只省显存、面板刚修好）、A14（动自动曝光输入，
+> 必须实机 A/B）、A9②（要引入 distort 的雅可比近似，收益同级但数学风险）。A15 作废（见上）。
+
 
 ### A1 细节（最大单项）
 `Final.frag` 的 `ENTITY_AREA_GLITCH` 段（`:294-376`）**每帧每像素**先跑

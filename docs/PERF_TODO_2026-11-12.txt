@@ -13,21 +13,24 @@
 
 A 档：低风险、纯代码、无观感变化（合计 ≈1.0–2.0 ms/帧）
 ----------------------------------------------------------------
-[ ] A1  实体受击故障帧级门控（Final.frag ENTITY_AREA_GLITCH）        收益 0.2–0.7ms  风险 低
-[ ] A2  CalcSunScreenVisibility 提为帧常量（两份实现合一）            收益 0.05–0.3ms 风险 零
-[ ] A3  Translucent 早退顺序（深度短路写反）                          收益 0.06–0.15ms 风险 零
-[ ] A4  colortex15 RGBA16F -> RG16F（DOF CoC）                        收益 16.6MB/帧  风险 零
-[ ] A5  TAA 删除「每帧把整张 colortex4 写成 0」的 RT                  收益 8.3MB/帧   风险 低
-[ ] A6  DOF Gather 重复取同一 texel 的 CoC                            收益 5.3MB/帧   风险 零
-[ ] A7  DeferredLight 两处 colorimg7 死写（补偿已停用）               收益 雨天0.1–0.3 风险 低
-[ ] A8  SSR 天空命中后跳过 8 步二分（单独提交，便于目视回退）          收益 0.03–0.1ms 风险 中
-[ ] A9  焦散 4x / SSS blocker 2x 复用已算好的 shadow-screen 位置      收益 0.03–0.17ms 风险 极低
-[ ] A10 接触阴影对 NdotL≈0 像素不再跑 10 次深度步进                    收益 0.03–0.1ms 风险 极低
-[ ] A11 水面法线同一个 lfNoise 取 3 遍 -> 取 1 遍                      收益 0.01–0.03ms 风险 零
-[ ] A12 雾中光束的 sRGBToLinear 换 sRGBToLinearApprox                  收益 0.03–0.15ms 风险 极低
+[x] A1  实体受击故障帧级门控（Final.frag ENTITY_AREA_GLITCH）        收益 0.2–0.7ms  风险 低   [2e027550]
+[x] A2  CalcSunScreenVisibility 提为帧常量（两份实现合一）            收益 0.05–0.3ms 风险 零   [a9b85d19]
+[x] A3  Translucent 早退顺序（深度短路写反）                          收益 0.06–0.15ms 风险 零  [a9b85d19]
+[x] A4  colortex15 RGBA16F -> RG16F（DOF CoC）                        收益 16.6MB/帧  风险 零   [a9b85d19]
+[x] A5  TAA 删除「每帧把整张 colortex4 写成 0」的 RT                  收益 8.3MB/帧   风险 低   [91410ae9]
+[x] A6  DOF Gather 重复取同一 texel 的 CoC                            收益 5.3MB/帧   风险 零   [a9b85d19]
+[x] A7  DeferredLight 两处 colorimg7 死写（补偿已停用）               收益 雨天0.1–0.3 风险 低  [91410ae9]
+[x] A8  SSR 天空命中后跳过 8 步二分（单独提交，便于目视回退）          收益 0.03–0.1ms 风险 中   [a8cdb386]
+[x] A9①  SSS blocker 复用 PCSS 已算好的 shadow-screen 位置            收益 0.01–0.03ms 风险 零  [b8d49e8e]
+[ ] A9②  焦散 4 个采样点线性化共享 ssp                                暂缓：要引入 distort 的雅可比近似，收益同级但有数学风险
+[x] A10 接触阴影对 NdotL≈0 像素不再跑 10 次深度步进                    收益 0.03–0.1ms 风险 极低 [91410ae9]
+[x] A11 水面法线同一个 lfNoise 取 3 遍 -> 取 1 遍                      收益 0.01–0.03ms 风险 零  [91410ae9]
+[x] A12 雾中光束的 sRGBToLinear 换 sRGBToLinearApprox                  收益 0.03–0.15ms 风险 极低 [91410ae9]
 [~] A13 启动面板缓冲缩回 1/8 + pass 合并                              暂缓：只省显存，改动有回归风险（面板刚修好）
-[ ] A14 直方图并进 Bloom Downsample                                    收益 0.05–0.08ms 风险 低
-[ ] A15 运动模糊恢复「半分辨率 + 2x2 块共享运动矢量」（51fb6dd8 丢失）  收益 0.05–0.15ms 风险 中
+[~] A14 直方图并进 Bloom Downsample                                    暂缓：动的是自动曝光的输入，必须实机 A/B，收益 0.05–0.08ms 与风险不成比例
+[~] A15 运动模糊半分辨率                                              不做：这不是「丢失的优化」，而是 1e4a4873 **按用户裁定主动回退**的（见该提交说明）
+
+A 档落地情况：12 项完成（A1–A12，其中 A9 只做零风险的①），3 项按上面理由暂缓/不做。
 
 
 B 档：需要 A/B 或观感裁定（未开工）
