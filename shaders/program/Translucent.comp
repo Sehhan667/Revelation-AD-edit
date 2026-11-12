@@ -283,10 +283,9 @@ void main() {
 
     vec4 lightingOut = vec4(0.0, 0.0, 0.0, 1.0);
 
-    // [2026-11-12 P2] 半透明像素的法线来自 c12.y（水 = 波法线，玻璃 = 贴图法线）；
-    // 这里不再走 FetchNormalData（那会去读已经不再写入的 colortex8）。
-    vec3 worldNormal = OctDecodeUnorm(Unpack2x8(transInfo.y));
-    vec3 geoNormal = worldNormal;
+    // [2026-11-12 试验·还原 c8] 法线回到 colortex8（gbuffers_water 已重新写 c8）
+    vec3 geoNormal, worldNormal;
+    FetchNormalData(texelPos, geoNormal, worldNormal);
 
     float NdotL = 1.0;
 

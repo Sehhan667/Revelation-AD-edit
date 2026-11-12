@@ -30,10 +30,14 @@
 //   x > 0 = 水面（x 存 水深/255）、x < 0 = 玻璃（写 -1）、x == 0 = 非半透明（c12 每帧清 0）。
 // 省下 8 B/px（水面/玻璃像素的 c8 写入），读取侧统一走 lib/universal/Fetch.glsl 的
 // FetchTranslucentNormal —— c8 再也不会在半透明像素上被读到。
-/* RENDERTARGETS: 6,7,12 */
+// [2026-11-12 试验] 先按用户要求把 c8（法线缓冲）还原：水/玻璃重新写 c8，
+// c6（玻璃 albedo）与 c12（哨兵 + 8bit 法线）暂时都保留，便于逐个关掉定位。
+// 恢复正常后再决定最终保留哪几路（当前是 28 B/px，比原来 24 B/px 多）。
+/* RENDERTARGETS: 6,7,8,12 */
 layout (location = 0) out vec4 albedoOut;    // c6：玻璃的真实 albedo（水写 0）
 layout (location = 1) out uvec4 materialOut;
-layout (location = 2) out vec4 waterOut;
+layout (location = 2) out vec4 normalOut;    // c8：法线（还原）
+layout (location = 3) out vec4 waterOut;
 
 //======// Uniform //=============================================================================//
 
@@ -90,6 +94,7 @@ void main() {
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
 
     vec2 geometryNormalOct = unpackSnorm2x16(normalPack);
+    normalOut.xy = geometryNormalOct;                 // c8：几何法线（还原）
 
     // 构建 TBN 矩阵
     vec3 tangent   = OctDecodeSnorm(unpackSnorm2x16(tangentPack.x));
@@ -123,6 +128,8 @@ void main() {
         // 原来写的是 OctEncodeSnorm 却用 Packup2x8/OctDecodeUnorm 解码，负数分量会被折返 ——
         // 这也顺手修掉了 TRANSLUCENT_SKY_REF 里那份潜在的错法线。
         albedoOut = vec4(0.0);   // 水面不需要 albedo（水体着色由 Translucent 做）
+        vec2 waterOct = OctEncodeSnorm(worldNormal);
+        normalOut.zw = waterOct;                  // c8：波法线（还原）
         waterOut = vec4(distance(worldPos, worldPos1) * rcp255,
                         Packup2x8(OctEncodeUnorm(worldNormal)), 0.0, 1.0);
     } else { // 不透明 / 半透明物体
@@ -143,6 +150,7 @@ void main() {
         // 一旦打包/解包链路有任何问题就表现为「染色玻璃没颜色」）。alpha 强制 1.0：
         // 玻璃纹理的 alpha 不该被当成染色指数用。
         albedoOut = vec4(albedo.rgb, 1.0);
+        normalOut.zw = OctEncodeSnorm(glassNormal);   // c8：玻璃法线（还原）
         materialOut.z = Packup2x8U(albedo.xy);
         materialOut.w = Packup2x8U(albedo.zw);
         // 玻璃：x = -1 哨兵（非水面），法线同样走 c12.y
