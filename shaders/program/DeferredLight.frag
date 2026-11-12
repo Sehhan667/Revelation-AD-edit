@@ -417,14 +417,19 @@ void main() {
         vec3 rawShadow = vec3(1.0);
 
         if (distanceFade < EPS) {
-            rawShadow = CalculatePCSS(worldPos, geoNormal * normalOffsetBase, dither, surfaceDepth);
+            // [2026-11-12 A9] PCSS 顺带把 shadow-screen 位置与扭曲因子带出来，供下面的 SSS blocker
+            // 深度复用（原来那个函数把整条变换链又算了一遍）。
+            vec3 shadowScreenPos = vec3(0.0);
+            float shadowDistortion = 1.0;
+            rawShadow = CalculatePCSS(worldPos, geoNormal * normalOffsetBase, dither, surfaceDepth,
+                                      shadowScreenPos, shadowDistortion);
             sssBlockerDepth = surfaceDepth;   // 旧版 SSS 的厚度项（PCF 模式下为 0）
 
             #if defined SUBSURFACE_SCATTERING_PCF_BLOCKER && SHADOW_SOFT_TYPE == 1
                 // [2026-09] PCF 遮挡深度采样：PCF 没有 blocker 深度（上面恒 0），旧版 SSS 的厚度项
                 // 退化为常量、树叶没有「越往树冠深处越暗」的深度感。对 SSS 材质像素做少量 shadowtex0
                 // 采样估计遮挡深度（量纲与 PCSS 的 sssBlockerDepth 一致）。非 SSS 像素零开销。
-                if (sssAmount > EPS) sssBlockerDepth = CalculateSSSBlockerDepth(worldPos, geoNormal * normalOffsetBase, dither);
+                if (sssAmount > EPS) sssBlockerDepth = CalculateSSSBlockerDepth(shadowScreenPos, shadowDistortion, dither);
             #endif
 
             #if SHADOW_SOFT_TYPE == 1

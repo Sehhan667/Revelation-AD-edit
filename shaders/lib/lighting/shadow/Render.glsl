@@ -113,12 +113,11 @@ float BlockerSearch(in vec3 shadowScreenPos, in float dither, in float searchSca
 #endif
 const float sssBlockerSearchScale = 0.15;   // 与 PCSS 的 BlockerSearch 搜索半径一致
 
-float CalculateSSSBlockerDepth(in vec3 worldPos, in vec3 normalOffset, in float dither) {
-    float distortionFactor;
-    vec3 shadowScreenPos = WorldToShadowScreenSpace(worldPos + normalOffset * SHADOW_BIAS_STRENGTH, distortionFactor);
-    // 与 CalculatePCSS 同一套 bias：保证「PCF 判被挡」的采样在深度估计里也算作遮挡
-    shadowScreenPos.z -= 3e-8 * (1.0 + dither) * shadowProjInv1y * distortionFactor * SHADOW_BIAS_STRENGTH;
-
+// [2026-11-12 A9] 参数从 (worldPos, normalOffset) 改为「CalculatePCSS 已经算好的 shadow-screen
+// 位置 + 扭曲因子」：原来这里又跑了一遍完全相同的 WorldToShadowScreenSpace + bias 链
+// （≈40 ALU + 一次 log/rsqrt/div），而调用点上 PCSS 刚在同一像素算过。bias 表达式与
+// CalculatePCSS 逐字一致，所以结果逐位不变。
+float CalculateSSSBlockerDepth(in vec3 shadowScreenPos, in float distortionFactor, in float dither) {
     if (saturate(shadowScreenPos) != shadowScreenPos) return 0.0;
 
     vec2 searchRadius = sssBlockerSearchScale * distortionFactor * diagonal2(shadowProjection);
@@ -326,11 +325,16 @@ vec3 PercentageCloserFilter(in vec3 shadowScreenPos, in vec3 worldPos, in float 
 }
 
 // 对外接口：计算PCSS/阴影
-vec3 CalculatePCSS(in vec3 worldPos, in vec3 normalOffset, in float dither, out float blockerDepth) {
+// [2026-11-12 A9] 额外带出 shadow-screen 位置与扭曲因子：SSS blocker 深度（CalculateSSSBlockerDepth）
+// 需要的就是这两个值，原来它把整条变换链又算了一遍。
+vec3 CalculatePCSS(in vec3 worldPos, in vec3 normalOffset, in float dither, out float blockerDepth,
+                   out vec3 outShadowScreenPos, out float outDistortionFactor) {
     // 地下完全跳过阴影计算
     #ifdef SHADOW_CULL_UNDERGROUND
         if (eyeSkylightSmooth < 0.01) {
             blockerDepth = 0.0;
+            outShadowScreenPos = vec3(0.0);
+            outDistortionFactor = 1.0;
             return vec3(1.0);
         }
     #endif
@@ -340,6 +344,9 @@ vec3 CalculatePCSS(in vec3 worldPos, in vec3 normalOffset, in float dither, out 
     
     vec3 shadowScreenPos = WorldToShadowScreenSpace(worldPos + normalOffset * SHADOW_BIAS_STRENGTH, distortionFactor);
     shadowScreenPos.z -= 3e-8 * (1.0 + dither) * shadowProjInv1y * distortionFactor * SHADOW_BIAS_STRENGTH;
+
+    outShadowScreenPos = shadowScreenPos;
+    outDistortionFactor = distortionFactor;
 
     vec3 shadowResult = vec3(1.0);
     
@@ -357,6 +364,13 @@ vec3 CalculatePCSS(in vec3 worldPos, in vec3 normalOffset, in float dither, out 
     }
 
     return shadowResult;
+}
+
+// 兼容重载：不关心 ssp 的调用点（Translucent.comp）继续用四参版本
+vec3 CalculatePCSS(in vec3 worldPos, in vec3 normalOffset, in float dither, out float blockerDepth) {
+    vec3 unusedSSP;
+    float unusedDistortion;
+    return CalculatePCSS(worldPos, normalOffset, dither, blockerDepth, unusedSSP, unusedDistortion);
 }
 
 // 屏幕空间接触阴影 (SSS)
