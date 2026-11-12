@@ -118,10 +118,20 @@
     风险：高（牵连全链；法线 8bit 会有色带，需要重新映射/量化）
     条件：实机确认当前是带宽瓶颈再动
 
-[ ] P3-3 = C3  DOF 不再把整张场景色复制进 colortex3
-    做法：Prepare 只写 CoC，Gather 直接读 colortex0、写 colortex3
-    收益：16.6 MB/帧（跨 4 个 pass 改道）
-    风险：中（DOF 关闭时拷贝也要能省掉）
+[~] P3-3 = C3  DOF 不再把整张场景色复制进 colortex3 —— **评估后否决（负收益）**
+    原方案：Prepare 只写 CoC，Gather 直接读 colortex0、写 colortex3
+    否决理由（2026-11-12 实测代码）：
+      · Gather 的每个采样点都要读邻居的 **CoC（sampleData.a）** 做分层/覆盖度/权重
+        （DofBuildGatherSample 四处用它），所以「场景色 + CoC」必须在同一个可采样缓冲里；
+      · 拆成「c0 取色 + c15 取 CoC」= 每采样 8B + 4B = 12B，而现在是 8B；
+        DOF_GATHER_SAMPLES=8 ⇒ 每像素多 ~32B 读 ≈ +48MB/帧，
+        而省下的只是 Prepare 的 12MB 写 + 12MB 读 —— **净亏**。
+      · 另外 TAA 的 motion vector 就写在 colortex3.xy（RENDERTARGETS: 1,3），
+        Gather 若占用 colortex3，TAA 的 3x3 邻域读会和 motion 写撞车。
+    真要省这 12MB 只能「DOF gather 全 LDS 化」：
+      34x34 tile（16+2x(8+1)）装 raw scene+CoC → gather 只读 LDS → 去掉 c3 快照；
+      收益 ~12MB 写（0.05–0.1 ms），但 bilinear→point 会有观感变化、属重写（M/L）。
+    结论：不做；若以后重写 DOF 再一并考虑。
 
 [ ] P3-4 = C5  雾噪声二八度烘成 128³ R8 3D 纹理
     收益：12.4M -> 6.2M 采样/帧（0.05–0.12 ms）
