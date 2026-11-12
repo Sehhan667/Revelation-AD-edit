@@ -119,7 +119,6 @@ suffix.VIEWER_BASE_ALTITUDE=m
 option.ATMOSPHERE_THICKNESS=Atmosphere Thickness
 suffix.ATMOSPHERE_THICKNESS=m
 
-option.ATMOSPHERE_TURBIDITY=Atmosphere Turbidity
 
 option.ATMOSPHERE_SKY_SAMPLES=Atmosphere Sky Samples
 option.ATMOSPHERE_TLUT_SAMPLES=Transmittance LUT Samples
@@ -146,7 +145,6 @@ suffix.CLOUD_TAAU_SCALE=x
 
 option.CLOUD_TAAU_CLIPPING=Upsampling Clipping
 option.CLOUD_MAX_ACCUM_FRAMES=Max Accumulated Frames
-option.CLOUD_TAAU_ANTIFLICKER=Anti-flicker
 
 option.CLOUD_LOW_SAMPLES_MIN=Min Main Samples
 option.CLOUD_LOW_SAMPLES_MAX=Max Main Samples
@@ -159,7 +157,6 @@ suffix.CLOUD_LOW_WIND_ANGLE=°
 
 option.CLOUD_MID_ALTITUDE=Altitude
 option.CLOUD_MID_THICKNESS=Thickness
-option.CLOUD_MID_SUNLIGHT_SAMPLES=Sunlight Samples
 suffix.CLOUD_MID_ALTITUDE=m
 suffix.CLOUD_MID_THICKNESS=m
 option.CLOUD_MID_WIND_SPEED=Wind Speed
@@ -169,7 +166,6 @@ suffix.CLOUD_MID_WIND_ANGLE=°
 
 option.CLOUD_HIGH_ALTITUDE=Altitude
 option.CLOUD_HIGH_THICKNESS=Thickness
-option.CLOUD_HIGH_SUNLIGHT_SAMPLES=Sunlight Samples
 suffix.CLOUD_HIGH_ALTITUDE=m
 suffix.CLOUD_HIGH_THICKNESS=m
 option.CLOUD_HIGH_WIND_SPEED=Wind Speed
@@ -187,7 +183,6 @@ suffix.CLOUD_CU_ALTITUDE=m
 suffix.CLOUD_CU_THICKNESS=m
 
 option.CLOUD_ALTOSTRATUS=Altostratus
-option.CLOUD_AS_COVERAGE=Altostratus Coverage
 option.CLOUD_CIRRUS=Cirrus
 option.CLOUD_CI_COVERAGE=Cirrus Coverage
 option.CLOUD_CIRROCUMULUS=Cirrocumulus
@@ -235,8 +230,6 @@ option.SUN_HALO_STRENGTH.comment=Base halo strength (0 disables the halo)
 option.SUN_HALO_WIDTH=Sun Halo Width
 option.SUN_HALO_WIDTH.comment=Angular width of the halo (larger = wider and softer)
 
-option.UW_VOLUMETRIC_FOG=Underwater Volumetric Fog
-option.UW_VOLUMETRIC_FOG.comment=Upgrades the underwater fog to a hybrid: transmission stays closed-form (no noise, no banding) while the scattering is raymarched with a depth gradient - camera depth is derived from the underwater skylight, so shallow water is bright turquoise and deep water turns dense blue-black. Turn off to fall back to the original uniform analytic fog (bit-identical).
 option.UW_FOG_SAMPLES=Underwater Fog Steps
 option.UW_FOG_SAMPLES.comment=Number of segments the scattering raymarch uses. With volumetric light on, each step takes one shadow-map sample, so cost grows linearly with steps; more steps = smoother depth gradient and beams.
 option.UW_FOG_DEEP_RANGE=Depth Gradient Range
@@ -368,7 +361,6 @@ option.SSILVB_PEAK_HOLD=Peak Hold
 option.SSILVB_PEAK_HOLD.comment=Hold the irradiance peak to avoid brightness drops while moving
 option.SSILVB_HOLD_DOWN_SPEED=Hold Down Speed
 option.SSILVB_HOLD_UP_SPEED=Hold Up Speed
-option.SSILVB_TEMPORAL_MIX_SPEED=Temporal Mix Speed
 
 option.SVGF_ENABLED=Spatio-Temporal Variance-Guided Filtering
 
@@ -384,9 +376,6 @@ option.SPECULAR_MAPPING=Specular Mapping
 
 option.LABPBR_HARDCODED_METAL=labPBR Hardcoded Metal
 
-option.AUTO_GENERATED_NORMAL=Auto Generated Normal
-option.AGN_RESOLUTION=AGN Resolution
-option.AGN_STRENGTH=AGN Strength
 
 option.PARALLAX=Parallax Occlusion Mapping
 option.PARALLAX_SHADOW=Parallax Shadow
@@ -463,6 +452,22 @@ option.SSRT_REFINEMENT=Raytrace Refinement
 option.SSRT_REFINEMENT_STEPS=Raytrace Refinement Steps
 option.SSRT_SKY_TRACING=Raytrace Sky
 
+option.METAL_SSR_MODE=Reflection Tracing (Opaque)
+option.METAL_SSR_MODE.comment=Which screen-space tracer opaque surfaces (metals, ice, polished stone, wet ground, ...) use. High quality (SSRT) applies view-space thickness filtering so rays are not falsely blocked behind leaves/fences/glass. Raytrace Sky only affects SSRT, while Raytrace Samples / Raytrace Refinement Steps affect both modes. Fast (legacy SSR) skips the per-step view-depth conversion, so it is slightly cheaper, but it streaks through thin geometry and has no analytic sky tracing.
+value.METAL_SSR_MODE.0=Sky only (no tracing)
+value.METAL_SSR_MODE.1=High quality (SSRT)
+value.METAL_SSR_MODE.2=Fast (legacy SSR)
+option.METAL_REFLECT_MODE=Which Surfaces Reflect
+option.METAL_REFLECT_MODE.comment=Eligibility test: by metalness, by roughness, or either one (widest coverage, most expensive). Only pixels that pass this test are actually traced.
+value.METAL_REFLECT_MODE.0=Metalness only
+value.METAL_REFLECT_MODE.1=Roughness only
+value.METAL_REFLECT_MODE.2=Metalness or roughness (costlier)
+option.TRANSLUCENT_SSR_MODE=Reflection Tracing (Transparent)
+option.TRANSLUCENT_SSR_MODE.comment=Same as above, for water / glass / ice / stained-glass entities. Keep high quality: the fast mode still samples the depth buffer that includes translucent surfaces and disables dithering, which produces false hits and banding on water.
+value.TRANSLUCENT_SSR_MODE.0=Sky only (no tracing)
+value.TRANSLUCENT_SSR_MODE.1=High quality (SSRT)
+value.TRANSLUCENT_SSR_MODE.2=Fast (legacy SSR)
+
 option.SPECULAR_IMPORTANCE_SAMPLING_BIAS=Importance Sampling Bias
 
 option.ROUGH_REFLECTIONS=Rough Reflections
@@ -481,7 +486,6 @@ option.ROUGH_REFLECTION_PULL=Rough Reflection Blur Recentring
 option.ROUGH_REFLECTION_PULL.comment=How far the blur centre is pulled from the ray HIT point towards this pixel's OWN position: 0 = old behaviour (centred on the hit point - the outline of reflected objects survives); 1 = pure local neighbourhood average (outline gone, brightness and hue come from the real scene, and it costs NO extra tracing); in-between values continuously control how soft the outline is. This is the lightweight route: 1 trace + N texture taps
 option.REFLECTION_FILTER=Reflection Filter
 
-option.RAYTRACED_REFRACTION=Raytraced Refraction
 option.REFRACTION_STRENGTH=Refraction Strength
 
 # Transparent
@@ -491,7 +495,6 @@ option.WATER_WAVE_HEIGHT=Water Wave Height
 option.WATER_WAVE_SPEED=Water Wave Speed
 option.WATER_FOG_DENSITY=Water Fog Density
 option.WATER_IOR=Water IOR
-option.WATER_PARALLAX_SAMPLES=Water Parallax Samples
 
 option.WATER_ABSORPTION_R=Water Absorption §4Red
 option.WATER_ABSORPTION_G=Water Absorption §2Green
@@ -666,10 +669,6 @@ option.KILL_RIPPLE_TRIGGER_TIME=Kill Trigger Time
 option.KILL_RIPPLE_TRIGGER_TIME.comment=Seconds an entity has to stay red before it counts as killed (a normal hit is about 0.3-0.5 s)
 option.KILL_RIPPLE_DURATION=Pulse Duration
 option.KILL_RIPPLE_DURATION.comment=Duration of a single kill pulse (seconds)
-option.KILL_RIPPLE_RANGE=Ripple Spread Distance
-option.KILL_RIPPLE_RANGE.comment=Maximum pixel distance the white ripple travels outward from the held item outline
-option.KILL_RIPPLE_HIGHLIGHT=Whiten Strength
-option.KILL_RIPPLE_HIGHLIGHT.comment=How strongly the held item whitens during the pulse
 
 
 # Compatibility
@@ -682,7 +681,6 @@ option.DEBUG_BLOOM_TILES=DEBUG_BLOOM_TILES
 option.DEBUG_CLOUD_SHADOWS=DEBUG_CLOUD_SHADOWS
 option.DEBUG_CLOUD_MAP=DEBUG_CLOUD_MAP
 option.DEBUG_NORMALS=DEBUG_NORMALS
-option.DEBUG_RESHADING=DEBUG_RESHADING
 option.DEBUG_SKY_MAP=DEBUG_SKY_MAP
 option.DEBUG_VOXEL_GI=DEBUG_VOXEL_GI
 option.DEBUG_GI_ACCUM_STATS=GI Accumulation Stats
@@ -693,10 +691,6 @@ option.VOXEL_COARSE_ACCEL=Voxel Empty-Space Skip
 option.VOXEL_COARSE_ACCEL.comment=Skipping tracing DDA over 4^3 coarse blocks that are pure air, avoiding per-voxel fetches. On boosts performance; disable if light leaks / inconsistent lighting appear
 option.VOXEL_FINE_ACCEL=Fine-Grain Air Skip
 option.VOXEL_FINE_ACCEL.comment=Inside a non-empty coarse block, use the fine-grain occupancy bitmap to skip air cells per-voxel (finer than coarse; enabling it alone also includes the 4^3 empty-block jump). The fine bitmap only covers sun-visible voxelized cells; a solid cell that wasn't voxelized but has injected light/emission is treated as air and skipped -> possible light leaks / hollows. If you see hollows, turn this OFF and keep Empty-Space Skip; per-cell then falls back to real sampling
-option.VOXEL_GI_FIREFLY_MEDIAN=Denoise Median (Fireflies)
-option.VOXEL_GI_FIREFLY_MEDIAN.comment=After the last SVGF spatial pass, applies a 3x3 median on luminance to remove high-frequency isolated spike noise (fireflies). Default off (costs one 3x3 gather + sort); keep it off when fine detail matters
-option.VOXEL_LD_SAMPLING=Low-Discrepancy Sampling
-option.VOXEL_LD_SAMPLING.comment=Replaces pseudo-random sample directions with a Halton(2,3) low-discrepancy sequence, spreading rays more evenly over the hemisphere across frames and reducing clustering, usually lowering flicker/noise floor. Default off; disable if regular banding/grid artifacts appear
 option.VOXEL_COS_SAMPLING=Cosine-Weighted Sampling
 option.VOXEL_COS_SAMPLING.comment=Switches to cosine-density sampling (Malley map, pdf∝cosθ) instead of uniform hemisphere x 2cos weight. Same expectation, lower variance: cleaner at equal sampling cost or cheaper at equal noise. Default off; disable & report if indoor/ambient brightness shifts off
 option.VOXEL_REUSE=ReSTIR Temporal Reuse
@@ -719,8 +713,6 @@ option.VOXEL_GI_DENOISE=Voxel GI Denoise
 option.VOXEL_GI_DENOISE.comment=Spatial variance-guided filtering for voxel GI ray tracing. Disable to keep temporal accumulation (checkerboard phase reconstruction) while skipping the spatial filter: sharper but noisier.
 option.VOXEL_GI_DENOISE_MODE=Denoise Scheme
 option.VOXEL_GI_DENOISE_MODE.comment=0=SVGF (EAWF a-trous spatial x4, reuses temporal accumulation); 1=PTGI style (single median + depth/normal edge, cheaper). Only affects VXGI; SSILVB unaffected
-option.VOXEL_GI_NRD=REBLUR Denoise
-option.VOXEL_GI_NRD.comment=REBLUR structure: the long history stores the filtered result (stable, clean), the short history only accumulates and never mixes filtered data (4-frame fresh), and every frame the long history is clamped to the short history neighbourhood - so you get the denoise benefit without progressively erasing detail and without ghosting. VXGI + SVGF chain only.
 option.VOXEL_GI_FULLRES=Full Resolution
 option.VOXEL_GI_FULLRES.comment=Off = 2x2 checkerboard half res (1/4 of the pixels traced per frame, filled in over time). On = one ray per pixel per frame (no checkerboard, no quadrant canvas): finer noise, faster convergence. Cost: roughly 4x the tracing and GI buffer size.
 option.VOXEL_GI_DARK_ACCUM=Low-light Denoise
@@ -747,8 +739,6 @@ option.GI_DEBUG_NO_HISTORY_FIX=HistoryFix A/B
 option.GI_DEBUG_NO_HISTORY_FIX.comment=1 = passthrough (deferred1_c copies history without repair). Use it to tell whether ghosting/speckles come from HistoryFix. Keep 0 normally
 option.GI_DEBUG_NO_TS=Stabilization A/B
 option.GI_DEBUG_NO_TS.comment=1 = skip the second temporal accumulator (GIStabilize); final GI is the spatial filter output. Use it to tell whether ghosting is added by stabilization. Keep 0 normally
-option.GI_STABILIZE_FRAMES=Stabilized Frame Cap
-option.GI_STABILIZE_FRAMES.comment=NRD default 63, this pack uses 8 to keep ghosting short. Lower = shorter motion trails but slightly less stable when still; higher = smoother but longer trails
 option.NRD_STABILIZATION_STRENGTH=Stabilization Strength
 option.NRD_STABILIZATION_STRENGTH.comment=NRD stabilizationStrength, multiplied into accumSpeed (affects antilag and the color box). 0 = effectively off; lower = more responsive, higher = more stable
 option.GI_MOTION_RESPONSE=Motion-Adaptive History
@@ -767,29 +757,15 @@ option.VOXEL_MOON_STRENGTH=Moon Bounce Strength
 option.VOXEL_MOON_STRENGTH.comment=Directional moonlight bounce in voxel GI at night (vanilla moonlightMult is too small so moon GI was missing). Moon-facing faces brighten, away faces stay dark; pairs with AO for shading. 0=off; higher = stronger moon GI
 option.NRD_RADIUS_PX=Filter Radius (x10 Canvas Texels)
 option.NRD_RADIUS_PX.comment=Max radius of the EAWF spatial filter; value x10 = canvas texels (3.0 = NRD maxBlurRadius 30). Per-level steps are split 1:2:4:8 with a 1-texel floor. Higher = cleaner but blurrier; lower = sharper but noisier (too blurry -> 1.5; residual noise -> 4.0)
-option.NRD_RELIABILITY=Reliability Convergence Rate
-option.NRD_RELIABILITY.comment=Exponential reliability history factor (1-exp(-N*rate), N=accumulated frames). Higher reliability -> stronger edge-preserving sigma; few frames (just appeared / reprojected) -> looser filter for fast convergence. 0=off (original SVGF linear history factor); 0.1-0.3 slow convergence, heavy early blur; 0.5 balanced (default); 1-2 fast convergence, strong edge-preserve early (may under-denoise; pair with lower filter radius). Static/far too blurry -> raise; noisy trails while moving -> lower
-option.NRD_DISOCCLUSION=Disocclusion Repair
-option.NRD_DISOCCLUSION.comment=Fast convergence for newly exposed / disoccluded regions (screen-edge on camera turn, backgrounds revealed by movement, placed blocks): on unreliable pixels widen the spatial step and relax edge-preserving so reliable neighbors fill them quickly, avoiding blur patches and long trails. 0=off; 0.5 mild; 1.0 balanced (default); 2.0+ stronger fill (slight detail loss). Still blurry/trailing at edges -> raise; repair marks / soft detail -> lower
-option.VOXEL_DISTANCE=Voxel Distance
-option.VOXEL_DISTANCE.comment=Maximum voxelization coverage radius (far cascade); near/mid cascades, distant spherical-harmonic boundary and ray-tracing distance follow proportionally. Requires shadow map resolution >= 1536 (fixed 3-cascade tile height, independent of this distance); below that the far cascade is clipped and effective GI distance drops to half. Keep <= shadow render distance.
 option.VOXEL_GI_BLENDED_LIGHTMAP=Blended Lightmap
 option.VOXEL_GI_BLENDED_LIGHTMAP.comment=Blend between vanilla lightmap and voxel GI (1.0 = keep vanilla lighting, 0.0 = mask vanilla lightmap, indirect light comes from voxel GI only)
 
-option.VOXEL_GI_STRENGTH=GI Strength
-option.VOXEL_GI_STRENGTH.comment=Overall voxel GI brightness multiplier
 option.PROBE_GI_ENABLED=Probe Global Illumination
 option.PROBE_GI_ENABLED.comment=DDGI-style probe irradiance cache: 16^3 x 4m, smooth low-frequency, denoise-free. Mutually exclusive with voxel/screen-space GI (enable only one); requires ENABLE_VOXELIZATION
-option.PROBE_GI_STRENGTH=Probe GI Strength
-option.PROBE_GI_STRENGTH.comment=Overall probe indirect-light brightness multiplier
 option.PROBE_RAY_SAMPLES=Rays per Probe (per-frame budget)
 option.PROBE_RAY_SAMPLES.comment=Average rays cast per probe per frame (total rays/frame = probes x budget, independent of period). Higher = steadier but slower.
 option.PROBE_UPDATE_PERIOD=Probe Update Period (frames)
 option.PROBE_UPDATE_PERIOD.comment=Each probe updates once every N frames (round-robin); each update casts N x budget rays, lowering per-update variance. N=1 updates every probe every frame (old behavior).
-option.PROBE_MAX_FRAMES=Temporal Convergence
-option.PROBE_MAX_FRAMES.comment=EMA time constant; lower converges faster but noisier
-option.DEBUG_PROBE_PLUMBING=Probe Pipeline Debug
-option.DEBUG_PROBE_PLUMBING.comment=Writes a known gradient pattern instead of lighting: full-screen world-anchored gradient = pipeline OK; one corner only = dispatch size wrong; follows camera = query coords wrong; flickering = ping-pong parity wrong
 
 option.VOXEL_GI_TRACE_STRENGTH=Trace GI Strength
 option.VOXEL_GI_TRACE_STRENGTH.comment=Overall strength knob for the per-pixel diffuse trace signal; lower if too bright, raise if too dark (cave leak protection is handled by the lightmap leak gate)
@@ -854,8 +830,6 @@ option.VOXEL_EDGE_BLEND_DISTANCE.comment=Distance (in voxels) over which outside
 option.SSILVB_GI_BRIGHTNESS=GI Ray Brightness
 option.SSILVB_HAND_DEPTH_THRESHOLD=GI Hand Culling
 option.SSILVB_HAND_DEPTH_THRESHOLD.comment=Prevents your own hand from affecting the GI; leave at default
-option.SVGF_QUALITY=SVGF Quality
-option.SVGF_QUALITY.comment=Upsampling of the half-res GI read-back (shared by SSILVB and VXGI): 0 = centre only (visible 2x2 blocks), 1 = 4-tap depth-aware upsampling (smoother)
 option.VISUALIZE_VOXELS=Voxel Visualization
 option.VISUALIZE_VOXELS.comment=Overlays voxel colors on block albedo to inspect the voxelization result
 option.VOXEL_GI_EMISSIVE_THRESHOLD=Emissive Threshold
@@ -867,12 +841,6 @@ option.NOISE_SIZE=Fog Noise Size
 option.NOISE_SIZE.comment=Spatial scale of the volumetric fog 3D noise. Smaller = finer detail and more expensive; larger = big soft clumps. Used together with the fog noise toggle
 option.SUN_BRIGHTNESS_MULTIPLIER=Sun Brightness Multiplier
 option.SUN_BRIGHTNESS_MULTIPLIER.comment=Scales the intensity of direct sunlight overall. Raise for a brighter look, lower if the image blows out
-option.BLOOM_NO_DOWNSAMPLE=Bloom Downsample
-option.BLOOM_NO_DOWNSAMPLE.comment=Whether bloom is computed at reduced resolution. On is faster but softer, off is sharper and more expensive
-option.SSPT_BLENDED_LIGHTMAP=SSPT Blended Lightmap
-option.SSPT_BLENDED_LIGHTMAP.comment=Blend factor between the screen-space path tracing result and Minecraft vanilla lightmap. 0 = vanilla lighting only, 1 = SSPT result only
-option.SSPT_MAX_ACCUM_FRAMES=SSPT Max Accumulation Frames
-option.SSPT_MAX_ACCUM_FRAMES.comment=Upper bound on SSPT temporal accumulation. Higher = cleaner and more stable, but more ghosting during fast motion
 option.DEBUG_CLOUD_NOISE=Debug: Cloud Noise
 option.DEBUG_CLOUD_NOISE.comment=Outputs the raw cloud noise texture, for diagnosing malformed clouds. Debug only
 option.DEBUG_ATMOSPHERE_LUTS=Debug: Atmosphere LUTs
@@ -880,18 +848,6 @@ option.DEBUG_ATMOSPHERE_LUTS.comment=Displays the atmosphere scattering lookup t
 option.DEBUG_TONE_MAPPING_PLOT=Debug: Tone Mapping Curve
 option.DEBUG_TONE_MAPPING_PLOT.comment=Plots the current tone mapping response curve, for comparing how different mappers roll off highlights. Debug only
 # ===== Not wired up: implementation removed, these currently do nothing =====
-option.FXAA_ENABLED=FXAA (not wired)
-option.FXAA_ENABLED.comment=Note: the FXAA implementation was removed with the dead-code cleanup, so this toggle currently does nothing. To enable it, restore shaders/program/post/FXAA.glsl from git history and wire it up
-option.RSM_ENABLED=Enable RSM (not wired)
-option.RSM_ENABLED.comment=Reflective Shadow Maps gives one-bounce indirect light. Note: RSM.glsl was never included anywhere and has been removed with the dead-code cleanup, so this toggle currently does nothing. To enable it, restore shaders/lib/lighting/RSM.glsl from git history and first fix its duplicate definition of realShadowMapRes (already defined in settings.glsl)
-option.RSM_SAMPLES=RSM Samples (not wired)
-option.RSM_SAMPLES.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
-option.RSM_RADIUS=RSM Radius (not wired)
-option.RSM_RADIUS.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
-option.RSM_BRIGHTNESS=RSM Brightness (not wired)
-option.RSM_BRIGHTNESS.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
-option.RSM_MAX_ACCUM_FRAMES=RSM Max Accumulation Frames (not wired)
-option.RSM_MAX_ACCUM_FRAMES.comment=Note: RSM is not wired up (implementation removed); this option currently does nothing
 
 option.UW_AMBIENT_STRENGTH=Underwater Ambient Strength
 option.UW_AMBIENT_STRENGTH.comment=Ambient light strength for underwater surfaces that are NOT in direct sunlight. The game attenuates the sky lightmap by one level per block underwater (reaching zero around 15 blocks), and direct sunlight is already exempted from that attenuation while ambient light was not - so deep underwater, faces turned away from the sun went almost black. This option gives the ambient term an equivalent sky light based on the WATER extinction at the camera depth, instead of the crushed lightmap. 0 = disable the exemption (old behaviour); default 1.0.

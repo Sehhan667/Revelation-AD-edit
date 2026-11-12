@@ -2899,3 +2899,57 @@ GUI（`screen.VXGI` / `sliders`）与双语 `lang` 条目一并移除。
 
 Final 里如果画布读回 ≈0（`dot(blur, 1) < 1e-5`），退到 5 tap 十字平均的轻度雾面。
 宁可糊得不够也不出黑块 —— 症状会变成「不够糊」而不是「全黑」，一眼能分清是链路问题还是外观问题。
+
+---
+
+# 备忘：清理「设置页里的空开关」（2026-11-12）
+
+现象：反射页有两个「…模式」选项，值写的是 SSRT / SSR，用户看不懂；另外设置页里存在若干**点了没反应**
+的开关。清理后记下判定方法与坑，下次不用重新摸索。
+
+## 1. 怎么判定「空开关」
+
+- **权威依据 = 游戏日志**：latest.log 里的
+  Unable to resolve shader pack option menu element "X" defined in shaders.properties /
+  Invalid pack option: X —— Iris 自己说解析不到，那这个开关就是空的。一次启动日志能一次性列全。
+- 补充手段：全仓 grep（shaders/** + shaders.properties 的 #if），排除「定义行 / 兜底定义块 /
+  GUI 列表 / profile / lang」之后若零命中，就是死选项。
+- **坑 1：Iris 的选项解析不忽略行首注释**。//#define FEATURE // [..] 依然是一个 GUI 选项（默认关）；
+  反过来，写在**未生效的 #if 分支**里的 #define 不会被算作选项 —— 这正是 RSM_* / SSPT_* 这类
+  「有 #define 却在日志里报 unresolved」的原因。
+- **坑 2：#define FAST_CLAMP_SIGMA NRD_HISTORYFIX_CLAMP_SIGMA 这种「别名定义」是真实使用**，
+  自动扫描时不能把 #define 行一律跳过，否则会把活选项误判成死的（本次差点误删 NRD_HISTORYFIX_CLAMP_SIGMA）。
+- **坑 3：sliders 是多行续行列表**（行尾 \\）。清理它必须把整段逻辑行收集起来再过滤，
+  只处理 sliders = 那一行会留下续行里的死条目。
+
+## 2. 清理内容（只动 GUI / sliders / profile / lang，**不删任何 #define**）
+
+- 日志 unresolved 的 18 项：ATMOSPHERE_TURBIDITY、AUTO_GENERATED_NORMAL、BLOOM_NO_DOWNSAMPLE、
+  FXAA_ENABLED、GI_STABILIZE_FRAMES、KILL_RIPPLE_HIGHLIGHT/RANGE、RAYTRACED_REFRACTION、
+  RSM_ENABLED/SAMPLES/RADIUS/BRIGHTNESS/MAX_ACCUM_FRAMES、SSILVB_TEMPORAL_MIX_SPEED、SVGF_QUALITY、
+  UW_VOLUMETRIC_FOG、VOXEL_GI_FIREFLY_MEDIAN、VOXEL_GI_NRD、VOXEL_LD_SAMPLING。
+- 死文案（lang 有、全仓无定义）：DEBUG_PROBE_PLUMBING、DEBUG_RESHADING、NRD_DISOCCLUSION、
+  NRD_RELIABILITY、REFLECTION_SCREEN_SPACE、TRANSLUCENT_SSRT、VOXELIZATION、VOXEL_DISTANCE、
+  VOXEL_GI_DECAY/DIR_DIST/DIR_SAMPLES/RAYS/RAY_STEPS。
+- 有定义但零消费者（grep 核实）：AGN_STRENGTH/RESOLUTION、WATER_PARALLAX_SAMPLES、
+  CLOUD_HIGH/MID_SUNLIGHT_SAMPLES、CLOUD_AS_COVERAGE、CLOUD_TAAU_ANTIFLICKER、SKY_VIEW_RESOLUTION、
+  VOXEL_GI_STRENGTH、PROBE_GI_STRENGTH、PROBE_MAX_FRAMES、REFLECTION_FALLBACK_BASE、SSPT_*、
+  FRESNEL_EXPONENT/STRENGTH、FSR_RCAS_SHARPNESS、LIGHT_REFLECTION_SAMPLES、REF_MIN/MAX。
+- screen.* 里被摘掉的元素原位换成 <empty>（保持网格，不破坏父菜单的 [X] 引用）；
+  sliders 重新输出为**单行**（避免留下空的续行）；profile.Default 同步删掉失效项。
+- 平台内置项（shadowDistance、shadowMapResolution、sunPathRotation）不是 #define，**不要删**。
+
+## 3. 顺手改的命名
+
+- METAL_SSR_MODE / TRANSLUCENT_SSR_MODE：物体反射模式 / 半透明物体反射模式
+  → **反射追踪（不透明物体）/（半透明物体）**，值改成「只看天空反射（不追踪）/ 高质量追踪（SSRT）/
+  快速追踪（旧 SSR）」，并补了中英 comment（说明哪种受「反射最大采样数 / 追踪天空 / 重采样精度」影响）。
+- METAL_REFLECT_MODE：反射阈值判断模式 → **哪些表面参与反射**。
+- 两个追踪器选项在 screen.Reflections 里挪到相邻位置，不再被阈值/天空反射隔开。
+- 只改文案，**不改宏名**（改了会丢用户已保存的配置，见 CODE_STYLE §2）。
+
+## 4. 验证
+
+- preproc_check --all：346 入口无新增命中；properties 纯 ASCII / LF / 无 BOM；lang 无 BOM。
+- 进游戏看：启动日志不再出现 Unable to resolve shader pack option menu element；
+  反射页两个选项名称与三档值可读；被摘掉的开关不再出现在任何页面（原位是空槽）。

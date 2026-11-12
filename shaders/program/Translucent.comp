@@ -19,15 +19,20 @@
         - Minor branch simplification.
     SSR: Use TRANSLUCENT_SSR_MODE to select algorithm:
          0 = Sky reflections only
-         1 = Original SSRT (ScreenSpaceRaytrace)
-         2 = Fast SSR (Belmu/Shadax style) – default
+         1 = Original SSRT (ScreenSpaceRaytrace) – default
+         2 = Fast SSR (Belmu/Shadax style) — legacy, see note below
 --------------------------------------------------------------------------------
 
 */
 
 #define PASS_TRANSLUCENT
 
-// 反射模式：0 = 仅天空反射，1 = 原版 SSRT，2 = 快速 SSR
+// 反射模式：0 = 仅天空反射，1 = 原版 SSRT（默认），2 = 快速 SSR（旧版）
+// [2026-11-12] 模式 2 这一份追踪器仍在用 `textureLod(depthtex0)` 采深度 —— depthtex0 含半透明，
+// 水/玻璃会被当成实体挡住射线（假命中），双线性还会在轮廓处插值出假深度；且下面这一版**关掉了抖动**。
+// 不透明那套已在 2026-10-08 改成 loadDepth2（见 lib/surface/Reflection.glsl 的 ssrSampleOpaqueDepth），
+// 这份没跟上。GUI 默认也是 1，所以只有手动切到 2 才会踩到；要修就把它一起改成 loadDepth2 + 打开抖动，
+// 要删就把两份 mode-2 追踪器一起删（审计报告 B 档）。
 #ifndef TRANSLUCENT_SSR_MODE
     #define TRANSLUCENT_SSR_MODE 1 // [0 1 2]
 #endif

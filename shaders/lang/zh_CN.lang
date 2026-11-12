@@ -131,7 +131,6 @@ suffix.VIEWER_BASE_ALTITUDE=m
 option.ATMOSPHERE_THICKNESS=大气厚度
 suffix.ATMOSPHERE_THICKNESS=m
 
-option.ATMOSPHERE_TURBIDITY=大气浊度
 
 option.ATMOSPHERE_SKY_SAMPLES=Hillaire天空采样数
 option.ATMOSPHERE_TLUT_SAMPLES=Hillaire透射率LUT采样数
@@ -158,7 +157,6 @@ suffix.CLOUD_TAAU_SCALE=x
 
 option.CLOUD_TAAU_CLIPPING=方差裁切
 option.CLOUD_MAX_ACCUM_FRAMES=最大累积帧数
-option.CLOUD_TAAU_ANTIFLICKER=抗闪烁
 
 option.CLOUD_LOW_SAMPLES_MIN=最低主步进采样数
 option.CLOUD_LOW_SAMPLES_MAX=最高主步进采样数
@@ -171,7 +169,6 @@ suffix.CLOUD_LOW_WIND_ANGLE=°
 
 option.CLOUD_MID_ALTITUDE=海拔
 option.CLOUD_MID_THICKNESS=厚度
-option.CLOUD_MID_SUNLIGHT_SAMPLES=阳光步进采样数
 suffix.CLOUD_MID_ALTITUDE=m
 suffix.CLOUD_MID_THICKNESS=m
 option.CLOUD_MID_WIND_SPEED=风速
@@ -181,7 +178,6 @@ suffix.CLOUD_MID_WIND_ANGLE=°
 
 option.CLOUD_HIGH_ALTITUDE=海拔
 option.CLOUD_HIGH_THICKNESS=厚度
-option.CLOUD_HIGH_SUNLIGHT_SAMPLES=阳光步进采样数
 suffix.CLOUD_HIGH_ALTITUDE=m
 suffix.CLOUD_HIGH_THICKNESS=m
 option.CLOUD_HIGH_WIND_SPEED=风速
@@ -199,7 +195,6 @@ suffix.CLOUD_CU_ALTITUDE=m
 suffix.CLOUD_CU_THICKNESS=m
 
 option.CLOUD_ALTOSTRATUS=高层云
-option.CLOUD_AS_COVERAGE=高层云覆盖率
 option.CLOUD_CIRRUS=卷云
 option.CLOUD_CI_COVERAGE=卷云覆盖率
 option.CLOUD_CIRROCUMULUS=卷积云
@@ -247,8 +242,6 @@ option.SUN_HALO_STRENGTH.comment=日晕保底强度（0=关闭光晕）
 option.SUN_HALO_WIDTH=日晕宽度
 option.SUN_HALO_WIDTH.comment=日晕角宽（越大越宽越柔）
 
-option.UW_VOLUMETRIC_FOG=水下体积雾
-option.UW_VOLUMETRIC_FOG.comment=相机入水后的雾升级为混合式：透射仍是闭式（无噪声无条带），散射按深度渐变 —— 由水下天光反解相机深度，浅水青绿透亮、深水浓蓝发黑。关闭则回到原来的均匀分析式水雾（逐位一致）。
 option.UW_FOG_SAMPLES=水下雾步进数
 option.UW_FOG_SAMPLES.comment=散射步进的分段数。开体积光时每段采样一次阴影贴图，开销随段数线性增长；段数越多深度渐变与光束越细腻。
 option.UW_FOG_DEEP_RANGE=深度渐变范围
@@ -392,7 +385,6 @@ option.SSILVB_PEAK_HOLD=峰值保持
 option.SSILVB_PEAK_HOLD.comment=保持辐照度峰值，移动时避免亮度骤降
 option.SSILVB_HOLD_DOWN_SPEED=衰减速度
 option.SSILVB_HOLD_UP_SPEED=上升速度
-option.SSILVB_TEMPORAL_MIX_SPEED=时域混合速度
 
 option.SVGF_ENABLED=时空方差导向过滤(SVGF)
 
@@ -408,9 +400,6 @@ option.SPECULAR_MAPPING=高光贴图支持
 
 option.LABPBR_HARDCODED_METAL=labPBR金属预设
 
-option.AUTO_GENERATED_NORMAL=自动生成法线
-option.AGN_RESOLUTION=分辨率
-option.AGN_STRENGTH=强度
 
 option.PARALLAX=视差
 option.PARALLAX_SHADOW=视差阴影
@@ -503,23 +492,10 @@ option.NONMETAL_REFLECTION_BRIGHTNESS=非金属反射亮度
 option.NONMETAL_REFLECTION_BRIGHTNESS.comment=增强非金属反射亮度，与未命中反射时的亮度补偿共同作用
 option.REFLECTION_FILTER=反射过滤
 
-option.RAYTRACED_REFRACTION=光线追踪折射
 option.REFRACTION_STRENGTH=折射强度
 
-option.REFLECTION_SCREEN_SPACE=屏幕空间反射
-option.REFLECTION_SCREEN_SPACE.comment=方块的屏幕空间反射开关，关闭可以在保留质感的情况下提升性能
 option.REFLECTION_SKY=天空反射
 option.REFLECTION_SKY.comment=控制方块是否反射天空，以防有的人不喜欢
-option.LIGHT_REFLECTION_SAMPLES=反射最高采样数
-option.LIGHT_REFLECTION_SAMPLES.comment=屏幕空间反射和光线追踪反射的采样数都不会高于本选项的数值
-option.FRESNEL_EXPONENT=菲涅尔透镜亮度
-option.FRESNEL_EXPONENT.comment=关闭屏幕空间反射时的金属反光效果亮度
-option.FRESNEL_STRENGTH=菲涅尔透镜强度
-option.FRESNEL_STRENGTH.comment=关闭屏幕空间反射时的金属反光效果强度
-option.REF_MIN=菲涅尔透镜最小亮度
-option.REF_MIN.comment=关闭屏幕空间反射时的金属反光效果最小亮度
-option.REF_MAX=菲涅尔透镜最大亮度
-option.REF_MAX.comment=关闭屏幕空间反射时的金属反光效果亮度
 # Transparent
 option.WATER_PARALLAX=水体视差
 option.WATER_CAUSTICS=水体焦散
@@ -527,7 +503,6 @@ option.WATER_WAVE_HEIGHT=水波高度
 option.WATER_WAVE_SPEED=水波速度
 option.WATER_FOG_DENSITY=水雾密度
 option.WATER_IOR=水体折射率
-option.WATER_PARALLAX_SAMPLES=水体视差采样数
 
 option.WATER_ABSORPTION_R=水体吸收系数-§4红
 option.WATER_ABSORPTION_G=水体吸收系数-§2绿
@@ -689,7 +664,6 @@ option.DEBUG_CLOUD_MAP=DEBUG_CLOUD_MAP
 option.DEBUG_NORMALS=DEBUG_NORMALS
 option.DEBUG_KILL_RIPPLE_GRID=显示击杀特效采样点
 option.DEBUG_KILL_RIPPLE_GRID.comment=在屏幕上以颜色显示击杀特效的 16x16 稀疏采样点：绿色=受伤时长低，越接近/超过触发阈值越红
-option.DEBUG_RESHADING=DEBUG_RESHADING
 option.DEBUG_SKY_MAP=DEBUG_SKY_MAP
 option.DEBUG_VOXEL_GI=体素 GI 调试可视化
 option.DEBUG_VOXEL_GI.comment=压暗其余光照并放大体素 GI 贡献，直观查看 GI 生效区域（火把光晕、天空渗入、岩浆泛光等）
@@ -701,10 +675,6 @@ option.VOXEL_COARSE_ACCEL=体素空洞跳跃
 option.VOXEL_COARSE_ACCEL.comment=追踪端 DDA 跳过"纯空气"的 4³ 粗块，省逐格读体素。开启提升性能；若出现漏光/光照不一致请关闭
 option.VOXEL_FINE_ACCEL=细格空气跳过
 option.VOXEL_FINE_ACCEL.comment=非空粗块内用细格 occupancy 位图逐个判空，跳过空气格省一次体素采样（比 coarse 更细；单独开启即自动包含 4³ 粗块空洞跳跃）。细格位图只覆盖"阳光可见面"被体素化的格子，未体素化但有注入光照/发射光的实体格会被当成空气跳过 → 可能漏光/空洞。出现空洞时关闭本项、保留"体素空洞跳跃"，逐格回退真实采样
-option.VOXEL_GI_FIREFLY_MEDIAN=去噪中值(剔亮点)
-option.VOXEL_GI_FIREFLY_MEDIAN.comment=SVGF 空间滤波最后一级后，对亮度做一次 3×3 中值，剔除高频孤点亮噪(firefly)。默认关（多一次 3×3 采样与排序）；细节损失明显时保持关闭
-option.VOXEL_LD_SAMPLING=低差异采样
-option.VOXEL_LD_SAMPLING.comment=用 Halton(2,3) 低差异序列代替伪随机采样方向，跨帧半球上分布更均匀、减少随机聚簇，通常能降低闪噪/交底噪。默认关；若出现规律性条带/网格伪影请关闭
 option.VOXEL_COS_SAMPLING=余弦加权采样
 option.VOXEL_COS_SAMPLING.comment=改用余弦密度采样（Malley 映射，pdf∝cosθ）代替均匀半球×2cos权重。期望一致、方差更低，常驻同采样成本下更干净或同噪底更省。默认关；若室内/暗处亮度偏暗或偏亮请关闭反馈
 option.VOXEL_REUSE=ReSTIR 时域复用
@@ -728,15 +698,12 @@ option.DEBUG_VOXEL_RADIANCE.comment=直接显示传播后的体素辐照度，�
 #other
 option.VF_DENSITY_MULT=全局雾气密度
 option.SSS_LOD_ENABLED=lod模组区块内的屏幕空间阴影
-option.SVGF_QUALITY=SVGF质量
-option.SVGF_QUALITY.comment=半分辨率 GI 读回时的上采样档位（SSILVB 与 VXGI 共用）：0=仅取中心值（会有 2x2 块状），1=4 邻域深度感知上采样（更平滑）
 option.SSILVB_GI_BRIGHTNESS=全局光照光线亮度
 option.SSILVB_HAND_DEPTH_THRESHOLD=全局光照手部剔除
 option.SSILVB_HAND_DEPTH_THRESHOLD.comment=用来防止玩家自己的手部对光照造成影响，正常不用动
 option.SSAO_LOD_ENABLED=lod模组区块内的屏幕空间环境光遮蔽
 option.REFLECTION_GLOBAL=全局反射开关
 option.TRANSLUCENT_SKY_REF=半透明物体天空反射
-option.TRANSLUCENT_SSRT=半透明物体反射
 option.TEXTURE_CULL_DISTANCE=实体pbr剔除距离
 option.TEXTURE_CULL_DISTANCE.comment=大于此距离不渲染pbr贴图
 option.BLOCK_TEXTURE_CULL_DISTANCE=方块pbr剔除距离
@@ -761,27 +728,29 @@ option.FOG_NOISE_ENABLED=启用体积雾噪声
 screen.Compensation=光照补偿
 option.PCF_FAST_SAMPLES=PCF过滤采样数
 option.SHADOW_CULL_UNDERGROUND=地下阴影剔除
-option.REFLECTION_FALLBACK_BASE=天空光为零时的基础反射亮度
 option.REFLECTION_FALLBACK_BRIGHTNESS=未命中反射时的亮度补偿
 option.REFLECTION_FALLBACK_BRIGHTNESS.comment=与天空光/基础值相乘
 option.GTAO_INTENSITY=GTAO强度
 option.SSS_DISABLE_BEYOND_SHADOW_DIST=阴影距离外完全关闭次表面散射
 option.SSS_DISABLE_BEYOND_SHADOW_DIST.comment=默认关：阴影距离外不关 SSS，只把太阳项（正面扩散 + 背光透光）按 1 - distanceFade 平滑淡出，保留天光/环境项——远处半透明方块不会因为"太阳透过"凭空变亮，也没有硬跳变。打开则退回旧行为（距离外整块关闭）。
 option.SPECULAR_BLOOM_BOOST=反射高光强度
-option.METAL_SSR_MODE=物体反射模式
-value.METAL_SSR_MODE.0=无反射（只有天空反射）
-value.METAL_SSR_MODE.1=SSRT
-value.METAL_SSR_MODE.2=SSR
-option.METAL_REFLECT_MODE=反射阈值判断模式
-value.METAL_REFLECT_MODE.0=金属度
-value.METAL_REFLECT_MODE.1=粗糙度
-value.METAL_REFLECT_MODE.2=金属度/粗糙度
+option.METAL_SSR_MODE=反射追踪（不透明物体）
+option.METAL_SSR_MODE.comment=决定不透明物体（金属、冰面、抛光石、湿地面…）用哪套屏幕空间追踪器。高质量追踪（SSRT）带视空间厚度过滤，树叶/栅栏/玻璃后面不会假命中；「追踪天空」只对高质量档有效，「反射最大采样数 / 重采样精度」两档都有效。快速追踪（旧 SSR）每步少几次视深换算，略省一点，但薄物体处容易拉丝、也没有天空解析追踪。
+value.METAL_SSR_MODE.0=只看天空反射（不追踪）
+value.METAL_SSR_MODE.1=高质量追踪（SSRT）
+value.METAL_SSR_MODE.2=快速追踪（旧 SSR）
+option.METAL_REFLECT_MODE=哪些表面参与反射
+option.METAL_REFLECT_MODE.comment=反射资格判定：按金属度、按粗糙度、或两者满足其一（覆盖最多、也最费）。只有通过这里的像素才会真的跑追踪。
+value.METAL_REFLECT_MODE.0=仅金属度
+value.METAL_REFLECT_MODE.1=仅粗糙度
+value.METAL_REFLECT_MODE.2=金属度或粗糙度（更费）
 option.METALNESS_THRESHOLD=金属度反射阈值
 option.ROUGHNESS_THRESHOLD=粗糙度反射阈值
-option.TRANSLUCENT_SSR_MODE=半透明物体反射模式
-value.TRANSLUCENT_SSR_MODE.0=无反射（只有天空反射）
-value.TRANSLUCENT_SSR_MODE.1=SSRT
-value.TRANSLUCENT_SSR_MODE.2=SSR
+option.TRANSLUCENT_SSR_MODE=反射追踪（半透明物体）
+option.TRANSLUCENT_SSR_MODE.comment=同上，管水/玻璃/冰/彩色玻璃实体。建议保持高质量追踪：快速追踪这一档还在采含半透明的深度图、而且关掉了抖动，水面上容易出现假命中和条带。
+value.TRANSLUCENT_SSR_MODE.0=只看天空反射（不追踪）
+value.TRANSLUCENT_SSR_MODE.1=高质量追踪（SSRT）
+value.TRANSLUCENT_SSR_MODE.2=快速追踪（旧 SSR）
 option.AMBIENT_SUNLIGHT_TINT_RATIO=漫反射阳光染色强度
 option.AMBIENT_BRIGHTNESS_MULTIPLIER=漫反射亮度倍率
 option.VF_SUNLIGHT_TINT_RATIO=体积雾阳光染色强度
@@ -809,10 +778,6 @@ option.KILL_RIPPLE_TRIGGER_TIME=击杀触发阈值
 option.KILL_RIPPLE_TRIGGER_TIME.comment=实体持续变红达到该秒数判定为击杀（普通受击约 0.3~0.5 秒）
 option.KILL_RIPPLE_DURATION=特效脉冲时长
 option.KILL_RIPPLE_DURATION.comment=击杀特效单次脉冲的持续时间（秒）
-option.KILL_RIPPLE_RANGE=涟漪扩散距离
-option.KILL_RIPPLE_RANGE.comment=白色涟漪从手部轮廓向外扩散的最大像素距离
-option.KILL_RIPPLE_HIGHLIGHT=泛白提亮强度
-option.KILL_RIPPLE_HIGHLIGHT.comment=脉冲期间手部物品整体泛白的强度
 screen.R!G!B!.comment=一些有关故障效果的神秘特效（闪烁注意！）
 
 
@@ -823,7 +788,6 @@ option.SKY_MODEL=大气模型
 option.SKY_MODEL.comment=Hillaire质量更高，Hosek-Wilkie还相当不完善，效果拉完了
 value.SKY_MODEL.1=Hosek-Wilkie
 value.SKY_MODEL.0=Hillaire
-option.SKY_VIEW_RESOLUTION=天空渲染分辨率
 
 
 option.DEBUG_ALIGHNMENT.comment = of texture reads. overrides other visualizations
@@ -831,8 +795,6 @@ option.VISUALIZED_DATA.comment = 0-average color. 1-position. 2-one pixel's colo
 option.VOXEL_POSITION_RECONSTRUCTION_METHOD.comment 1-passed from vertex shader. 2-reconstructed with foot position & face normals
 option.WHERE_TO_VOXELIZE.comment = 1-Gbuffers. 2-Shadow pass
 
-option.VOXELIZATION=体素化
-option.VOXELIZATION.comment=体素化与全局光照系统
 
 option.VISUALIZE_VOXELS=体素可视化
 option.VISUALIZE_VOXELS.comment=用体素颜色覆盖方块反照率，直观查看体素化结果
@@ -842,8 +804,6 @@ option.VOXEL_GI_DENOISE=光追降噪
 option.VOXEL_GI_DENOISE.comment=体素光追的 SVGF 空间降噪；关闭后仍做时域累积（含棋盘相位重建），只跳过空间滤波——更锐利但更闪烁
 option.VOXEL_GI_DENOISE_MODE=降噪方案
 option.VOXEL_GI_DENOISE_MODE.comment=0=SVGF(EAWF a-trous 空间×4，时域累积复用)；1=PTGI 风格(单次中值+深度/法线边缘，更省)。只影响 VXGI 降噪，SSILVB 不受影响
-option.VOXEL_GI_NRD=REBLUR 降噪
-option.VOXEL_GI_NRD.comment=REBLUR 结构：长历史存滤波后的结果（安静、干净），短历史只累积、不掺滤波（4 帧级新鲜），每帧把长历史夹到短历史邻域 ⇒ 既得到降噪收益，又不会逐帧压掉细节、也不拖影。仅 VXGI + SVGF 链路生效
 option.VOXEL_GI_FULLRES=全分辨率追踪
 option.VOXEL_GI_FULLRES.comment=关=2x2 棋盘半分辨率（每帧只投 1/4 像素，时域补全）；开=每像素每帧 1 条光线（无棋盘/无象限，噪点更细、收敛更快）。代价：追踪量与 GI 缓冲约 4 倍，弱显卡慎开
 option.VOXEL_GI_DARK_ACCUM=弱光加强降噪
@@ -870,8 +830,6 @@ option.GI_DEBUG_NO_HISTORY_FIX=历史修复 A/B
 option.GI_DEBUG_NO_HISTORY_FIX.comment=1=直通（deferred1_c 不修复历史，只原样搬运），用于判断拖影/斑点是否来自 HistoryFix。正常保持 0
 option.GI_DEBUG_NO_TS=稳定化 A/B
 option.GI_DEBUG_NO_TS.comment=1=跳过后一级时间累积（GIStabilize），最终 GI 直接取空间滤波输出。用于判断拖影是否由稳定化叠加造成。正常保持 0
-option.GI_STABILIZE_FRAMES=稳定化历史上限（帧）
-option.GI_STABILIZE_FRAMES.comment=官方 63，本包默认 8（拖影更短）。调小→运动拖影变短、静止平滑略降；调大→更稳但拖影更长
 option.NRD_STABILIZATION_STRENGTH=稳定化强度
 option.NRD_STABILIZATION_STRENGTH.comment=官方 stabilizationStrength，乘在累积速度上（同时影响 antilag 与颜色盒）。0=等价关闭稳定化；调小更跟手，调大更稳
 option.GI_MOTION_RESPONSE=运动自适应历史
@@ -890,29 +848,15 @@ option.VOXEL_MOON_STRENGTH=月光反弹强度
 option.VOXEL_MOON_STRENGTH.comment=夜晚月光在体素 GI 里的方向化反弹强度（原版 moonlightMult 太小导致夜晚无间接光）。朝月面亮、背月暗，配合 AO 出阴影。0=关闭月光反弹；值越大月光 GI 越明显
 option.NRD_RADIUS_PX=滤波半径（×10 画布纹素）
 option.NRD_RADIUS_PX.comment=EAWF 空间滤波的最大半径，值×10 = 画布纹素（3.0 = 官方 maxBlurRadius 30）。每级步长按 1:2:4:8 分摊、每级下限 1 画布纹素。调大更干净但更糊，调小保细节但残噪多：发糊→1.5；残噪→4.0
-option.NRD_RELIABILITY=可靠性收敛速率
-option.NRD_RELIABILITY.comment=指数可靠性历史因子（1-exp(-N*速率)，N=累积帧数）。可靠性越高边缘保持越强；帧数少（刚出现/刚重投影）时放宽滤波快速收敛。0=关闭（用回原 SVGF 线性历史因子）；0.1~0.3 慢收敛、前期模糊重；0.5=均衡（推荐）；1~2 快收敛、前期即强保边（可能略欠降噪，可配降滤波世界半径）。静态/远景嫌糊→调大；转动/平移噪点拖尾重→调小
-option.NRD_DISOCCLUSION=去遮挡修复
-option.NRD_DISOCCLUSION.comment=新暴露/遮挡消除区域（转视角边缘、移动露出的背景、放置方块等）快速收敛：对不可靠像素放大空间步长并降低边缘保持，从周边可靠样本尽快补填，避免糊块和长拖影。0=关闭；0.5 温和；1.0=均衡（推荐）；2.0+ 更强补填（可能轻微细节损失）。边缘新露处仍糊/拖影→调大；出现修复痕迹/细节糊→调小
-
-option.VOXEL_DISTANCE=体素化距离
-option.VOXEL_DISTANCE.comment=体素化最远覆盖半径（far 级联）；近/中级联、远处球谐光边界、光追计算距离自动按比例跟随。要求阴影分辨率 ≥1536（三级联平铺总高，固定值，与距离无关）；不足时 far 级联被裁剪，有效 GI 距离降至该值的一半。建议 ≤ 阴影渲染距离
 
 
-option.VOXEL_GI_STRENGTH=GI 强度
-option.VOXEL_GI_STRENGTH.comment=整体体素 GI 亮度倍率
+
 option.PROBE_GI_ENABLED=探针全局光照
 option.PROBE_GI_ENABLED.comment=DDGI 风格探针辐照度缓存：16³×4m 平滑低频、天然免降噪。与体素/屏幕空间 GI 互斥，仅开其一；依赖体素化（ENABLE_VOXELIZATION）
-option.PROBE_GI_STRENGTH=探针 GI 强度
-option.PROBE_GI_STRENGTH.comment=探针间接光整体亮度倍率
 option.PROBE_RAY_SAMPLES=每探针射线预算（平均每帧）
 option.PROBE_RAY_SAMPLES.comment=每探针平均每帧投出的射线数（总射线量/帧 = 探针数 × 该值，与周期无关）。越大越稳越耗。
 option.PROBE_UPDATE_PERIOD=探针更新周期（帧）
 option.PROBE_UPDATE_PERIOD.comment=每个探针每隔 N 帧更新一次（轮转分摊）；更新时一次投出 N×预算 条射线，单次更新方差随 N 降低。N=1 即每帧全量更新（旧行为）。
-option.PROBE_MAX_FRAMES=时域收敛帧数
-option.PROBE_MAX_FRAMES.comment=EMA 时间常数；越小收敛越快/越易出现噪点
-option.DEBUG_PROBE_PLUMBING=探针管线自检
-option.DEBUG_PROBE_PLUMBING.comment=写入已知渐变图案替代光照：整屏渐变钉在世界=管线全通；只有一角=调度尺寸错；跟相机跑=查询坐标错；闪烁=乒乓奇偶错
 
 option.VOXEL_GI_TRACE_STRENGTH=追踪 GI 强度
 option.VOXEL_GI_TRACE_STRENGTH.comment=每像素漫反射追踪信号的总强度旋钮；过亮降、过暗升（洞穴防漏由 lightmap 泄漏衰减保证，不靠压低天空值）
@@ -960,26 +904,16 @@ option.VOXEL_GI_SH_MIX.comment=体素网格内恢复 SH 球谐光做环境底（
 option.VOXEL_SKY_REFERENCE=天空辐射基准
 option.VOXEL_SKY_REFERENCE.comment=天空辐射贴图换算到 0-1 光照尺度的除数；调大天光变暗、调小变亮
 
-option.VOXEL_GI_RAYS=射线数量上限
-option.VOXEL_GI_RAYS.comment=每个发光体素发射的最大射线数（控制性能上限）
 
-option.VOXEL_GI_RAY_STEPS=射线步进距离
-option.VOXEL_GI_RAY_STEPS.comment=每条射线最多传播多少个体素单位
 
 option.VOXEL_GI_EMISSIVE_THRESHOLD=光源阈值
 option.VOXEL_GI_EMISSIVE_THRESHOLD.comment=PBR 自发光低于此值的方块不作为光源
 
-option.VOXEL_GI_DECAY=能量衰减
-option.VOXEL_GI_DECAY.comment=每帧保留的旧辐照度比例（1.0=不衰减，0.9=快速衰减）
 
 option.VOXEL_GI_BOOST=光源倍率
 option.VOXEL_GI_BOOST.comment=发光体素的光源能量放大倍率
 
-option.VOXEL_GI_DIR_SAMPLES=查询采样数
-option.VOXEL_GI_DIR_SAMPLES.comment=表面点沿法线方向采样体素的点数
 
-option.VOXEL_GI_DIR_DIST=查询采样距离
-option.VOXEL_GI_DIR_DIST.comment=沿法线方向采样的最大体素距离
 
 # ===== VXGI 用户开关（光照 → 全局光照 → VXGI 子菜单）=====
 option.ENABLE_VOXELIZATION=体素化
@@ -1004,12 +938,6 @@ option.NOISE_SIZE=雾噪声尺寸
 option.NOISE_SIZE.comment=体积雾 3D 噪声的空间尺度。值越小噪声越细密、越吃性能；越大越成大块絮状。配合「雾噪声」开关使用
 option.SUN_BRIGHTNESS_MULTIPLIER=太阳亮度倍率
 option.SUN_BRIGHTNESS_MULTIPLIER.comment=整体缩放太阳直射光的强度。想让画面更明媚就调高，觉得过曝就调低
-option.BLOOM_NO_DOWNSAMPLE=泛光降采样
-option.BLOOM_NO_DOWNSAMPLE.comment=泛光是否在低分辨率下计算。开启更快但光晕略糊，关闭更清晰也更吃性能
-option.SSPT_BLENDED_LIGHTMAP=SSPT 融合光照贴图
-option.SSPT_BLENDED_LIGHTMAP.comment=屏幕空间路径追踪结果与 Minecraft 原版光照贴图的混合比例。0 = 完全用原版光照，1 = 完全用 SSPT 结果
-option.SSPT_MAX_ACCUM_FRAMES=SSPT 最大累积帧数
-option.SSPT_MAX_ACCUM_FRAMES.comment=SSPT 时域累积的帧数上限。越高噪点越少、画面越稳，但快速移动时拖影越明显
 option.DEBUG_CLOUD_NOISE=调试：云噪声
 option.DEBUG_CLOUD_NOISE.comment=把云层使用的噪声纹理直接输出，用于排查云形异常。仅调试用
 option.DEBUG_ATMOSPHERE_LUTS=调试：大气查找表
@@ -1017,18 +945,6 @@ option.DEBUG_ATMOSPHERE_LUTS.comment=把大气散射的查找表（透射率/多
 option.DEBUG_TONE_MAPPING_PLOT=调试：色调映射曲线
 option.DEBUG_TONE_MAPPING_PLOT.comment=绘制当前色调映射的响应曲线，用于对比不同映射模式的亮度走向。仅调试用
 # ===== 未接线功能：实现文件已删除，选项暂时无效 =====
-option.FXAA_ENABLED=FXAA（未接线）
-option.FXAA_ENABLED.comment=注意：FXAA 的实现文件已随死代码清理移除，此开关当前无效。如需启用请从 git history 取回 shaders/program/post/FXAA.glsl 并接线
-option.RSM_ENABLED=启用 RSM（未接线）
-option.RSM_ENABLED.comment=反射阴影贴图（Reflective Shadow Maps）是一次反弹的间接光方案。注意：实现文件 RSM.glsl 从未被接线且已随死代码清理移除，此开关当前无效；若要启用需取回该文件，并先解决它与 settings.glsl 重复定义 realShadowMapRes 的问题
-option.RSM_SAMPLES=RSM 采样数（未接线）
-option.RSM_SAMPLES.comment=注：RSM 未接线（实现文件已移除），此选项当前无效
-option.RSM_RADIUS=RSM 采样半径（未接线）
-option.RSM_RADIUS.comment=注：RSM 未接线（实现文件已移除），此选项当前无效
-option.RSM_BRIGHTNESS=RSM 亮度（未接线）
-option.RSM_BRIGHTNESS.comment=注：RSM 未接线（实现文件已移除），此选项当前无效
-option.RSM_MAX_ACCUM_FRAMES=RSM 最大累积帧数（未接线）
-option.RSM_MAX_ACCUM_FRAMES.comment=注：RSM 未接线（实现文件已移除），此选项当前无效
 
 option.UW_AMBIENT_STRENGTH=水下环境光强度
 option.UW_AMBIENT_STRENGTH.comment=深水里"没被太阳直射的面"的环境光强度。游戏在水下会把天光每格降一级、约 15 格归零，而直射光本来就豁免了这套衰减，环境光却没有 —— 结果是深水里背光面接近死黑。本项按**水的消光**随相机水深给环境光一个等效天光（不是用被压死的 lightmap）。0 = 关掉豁免（回到旧行为）；默认 1.0。
