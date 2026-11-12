@@ -223,9 +223,10 @@ void main() {
     vec3 worldDir = worldPos * invWorldDist;
     worldPos += gbufferModelViewInverse[3].xyz;
 
-    // [2026-11-12] c12 收窄成 R16F 后只有 .x（水深/255）；波法线改从 c8.zw 读
-    // （Water.frag 写的是同一个方向、精度更高，因此天空反射分支不再需要第二份打包值）。
-    float waterData = texelFetch(colortex12, texelPos, 0).x;
+    // [2026-11-12 P2] 半透明法线统一在 c12.y（8bit oct, UNORM），c12.x 是哨兵：
+    // >0 = 水面（值 = 水深/255）、<0 = 玻璃、==0 = 非半透明。c8 不再为半透明像素写入。
+    vec4 transInfo = texelFetch(colortex12, texelPos, 0);
+    float waterData = transInfo.x;            // >0 时 = 水深/255
     bool waterMask = waterData > 0.0;
 
     vec2 lightmap = Unpack2x8U(materialPack.x);
@@ -255,7 +256,7 @@ void main() {
 
             #ifdef TRANSLUCENT_SKY_REF
             if (materialID == 2u) {
-                vec3 worldNormal = FetchSurfaceNormal(texelPos);   // 同一个波法线，来自 c8.zw（16bit，比原来的 8bit 打包更准）
+                vec3 worldNormal = OctDecodeUnorm(Unpack2x8(transInfo.y));   // 波法线：c12.y
 
                 float NdotV = abs(dot(worldNormal, worldDir));
                 vec3 rayDir = worldDir + worldNormal * (NdotV * 2.0);
@@ -282,8 +283,10 @@ void main() {
 
     vec4 lightingOut = vec4(0.0, 0.0, 0.0, 1.0);
 
-    vec3 geoNormal, worldNormal;
-    FetchNormalData(texelPos, geoNormal, worldNormal);
+    // [2026-11-12 P2] 半透明像素的法线来自 c12.y（水 = 波法线，玻璃 = 贴图法线）；
+    // 这里不再走 FetchNormalData（那会去读已经不再写入的 colortex8）。
+    vec3 worldNormal = OctDecodeUnorm(Unpack2x8(transInfo.y));
+    vec3 geoNormal = worldNormal;
 
     float NdotL = 1.0;
 

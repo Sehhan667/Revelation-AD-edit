@@ -25,10 +25,14 @@
 
 //======// Output //==============================================================================//
 
-/* RENDERTARGETS: 7,8,12 */
+// [2026-11-12 P2] 这个 pass 不再写 colortex8（法线缓冲）：水面与玻璃的法线都走
+// colortex12.y（8bit oct, UNORM 编码），配 colortex12.x 的哨兵区分：
+//   x > 0 = 水面（x 存 水深/255）、x < 0 = 玻璃（写 -1）、x == 0 = 非半透明（c12 每帧清 0）。
+// 省下 8 B/px（水面/玻璃像素的 c8 写入），读取侧统一走 lib/universal/Fetch.glsl 的
+// FetchTranslucentNormal —— c8 再也不会在半透明像素上被读到。
+/* RENDERTARGETS: 7,12 */
 layout (location = 0) out uvec4 materialOut;
-layout (location = 1) out vec4 normalOut;
-layout (location = 2) out vec4 waterOut;
+layout (location = 1) out vec4 waterOut;
 
 //======// Uniform //=============================================================================//
 
@@ -84,11 +88,11 @@ void main() {
     // 预先计算屏幕坐标，供后续水体分支复用
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
 
-    normalOut.xy = unpackSnorm2x16(normalPack);
+    vec2 geometryNormalOct = unpackSnorm2x16(normalPack);
 
     // 构建 TBN 矩阵
     vec3 tangent   = OctDecodeSnorm(unpackSnorm2x16(tangentPack.x));
-    vec3 normal    = OctDecodeSnorm(normalOut.xy);
+    vec3 normal    = OctDecodeSnorm(geometryNormalOct);
     vec3 bitangent = cross(tangent, normal) * uintBitsToFloat(tangentPack.y);
     mat3 tbnMatrix = mat3(tangent, bitangent, normal);
 
@@ -114,29 +118,29 @@ void main() {
         vec3 viewPos1  = ScreenToViewPos(vec3(screenCoord, depth1));
         vec3 worldPos1 = transMAD(gbufferModelViewInverse, viewPos1);
 
-        vec2 encodedNormal = OctEncodeSnorm(worldNormal);
-        normalOut.zw = encodedNormal;
-
-        // [2026-11-12] c12 只留 .x（水深/255）：波法线原本在这里再打包一遍（Packup2x8），
-        // 但唯一的读者（Translucent 的天空反射分支）可以直接读 c8.zw 里同一方向、更高精度的
-        // 值 ⇒ 删掉重复写入后 c12 可以从 RG16 收窄到 R16F（水面每像素少 2 字节）。
-        waterOut = vec4(distance(worldPos, worldPos1) * rcp255, 0.0, 0.0, 1.0);
+        // [2026-11-12 P2] 波法线写进 c12.y（OctEncodeUnorm -> Packup2x8 是配套的 [0,1] 编码；
+        // 原来写的是 OctEncodeSnorm 却用 Packup2x8/OctDecodeUnorm 解码，负数分量会被折返 ——
+        // 这也顺手修掉了 TRANSLUCENT_SKY_REF 里那份潜在的错法线。
+        waterOut = vec4(distance(worldPos, worldPos1) * rcp255,
+                        Packup2x8(OctEncodeUnorm(worldNormal)), 0.0, 1.0);
     } else { // 不透明 / 半透明物体
         vec4 albedo = texture(tex, texCoord) * vertColor;
 
         if (albedo.a < 0.1) { discard; return; }
 
+        vec3 glassNormal;
         #if defined MC_NORMAL_MAP
             vec3 normalTex = texture(normals, texCoord).rgb;
             DecodeNormalTex(normalTex);
-            normalOut.zw = OctEncodeSnorm(tbnMatrix * normalTex);
+            glassNormal = tbnMatrix * normalTex;
         #else
-            normalOut.zw = normalOut.xy;
+            glassNormal = normal;
         #endif
 
         materialOut.z = Packup2x8U(albedo.xy);
         materialOut.w = Packup2x8U(albedo.zw);
-        waterOut = vec4(0.0);
+        // 玻璃：x = -1 哨兵（非水面），法线同样走 c12.y
+        waterOut = vec4(-1.0, Packup2x8(OctEncodeUnorm(glassNormal)), 0.0, 1.0);
     }
 
     materialOut.x = PackupDithered2x8U(lightmap, bayer4(gl_FragCoord.xy));
