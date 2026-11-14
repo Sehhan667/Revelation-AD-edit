@@ -390,9 +390,14 @@ vec3 VoxelTracePixel(vec3 origin, vec3 normal, vec3 vertexNormal, float viewDist
             // [2026-10-02] 乘 VOXEL_SUN_BOUNCE_GAIN（代码侧增益，见 VoxelLighting.glsl 注释）：
             // 追踪端是"半球 1 采样 + 时域平均"，收敛值 = 命中率 × 单次量级；开阔地命中率低
             // ⇒ 平均下来天然很弱，且强度滑条只放大单次量级、改不了命中率。增益直接抬结果。
-            contrib += alb * (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
-                     * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * VOXEL_SUN_BOUNCE_GAIN
-                     * absorption;
+            // [2026-11-14] 天气衰减（雨/雪）+ 末地淡紫色（与注入端 VoxelGI.frag 同口径）。
+            vec3 sunGI = (directIlluminance * rcp(VOXEL_SUN_REFERENCE))
+                       * sunLighting * sunVis * VOXEL_TRACE_SUN_STRENGTH * VOXEL_SUN_BOUNCE_GAIN
+                       * absorption * (1.0 - rainStrength * VOXEL_SUN_WEATHER_ATTEN);
+            #ifdef DIMENSION_THE_END
+                sunGI *= VOXEL_END_SUN_GI_TINT;
+            #endif
+            contrib += alb * sunGI;
         }
         // [2026-08-19] 夜晚月光反弹：directIlluminance 里的 moon 项受 moonlightMult(~0.001)
         // 压到近 0 → 体素 GI 夜晚无间接月光。独立补方向化月光弹射：

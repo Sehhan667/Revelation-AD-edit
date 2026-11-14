@@ -261,6 +261,15 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define SKY_AMBIENT_SUN_POW 1.45 // 随 worldSunDir.y 上升的指数
 	#define SKY_AMBIENT_RAIN_ATTEN 0.60 // 全雨天时天空辐照度降幅（0 = 原行为，0.96 = 与直射同深度）
 
+	// [2026-11-14] 天空图刷新模式（球谐环境光的刷新频率由它决定）。
+	// 球谐环境光每帧从 skyMapTex（colortex5）积分得到，而这张图默认曾是 2x2 棋盘降频：
+	// 每帧只写 1/4 纹素、4 帧一轮，再由历史累积补全。太阳/云影快速变化时，SH 环境光
+	// 因此最多滞后 4 帧。
+	//   注释（默认）= 每帧全量刷新：SH 环境光每帧更新，代价是 skyMap 计算量 ×4。
+	//   取消注释     = 恢复原来的 2x2 棋盘降频刷新（每帧 1/4 纹素，省约 75% 计算）。
+	// 切换后需要重载光影（属于编译期分支）。
+	//#define SKY_MAP_DOWNFREQ_REFRESH
+
 /* Global Illumination */
 	#define SVGF_ENABLED // Enables spatiotemporal variance-guided filtering（SSILVB 降噪）
 	#define VOXEL_GI_DENOISE  // 光追降噪开关（SVGF 时域+空间）；注释此行或 GUI 关闭即关闭光追降噪

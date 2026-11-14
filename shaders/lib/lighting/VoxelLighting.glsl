@@ -276,6 +276,14 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 本增益直接抬最终结果，与滑条独立：
 //   太亮 → 改 2.0 或 1.0；还不够 → 改 8.0；1.0 = 关闭（回到旧行为）。改完 F3+R。
 #define VOXEL_SUN_BOUNCE_GAIN 8.0
+
+// [2026-11-14] 阳光 GI 的天气/维度修正（注入端 VoxelGI.frag 与追踪端 VoxelTracing.glsl 共用）。
+// 天气衰减：直射光在无云影时用 1 - wetness*0.96，但 wetness 在雪天为 0，所以这里用
+// rainStrength（雨天/雪天都为 1），与直射光同一口径；阴影贴图只判遮挡、不含云层衰减，
+// 所以 GI 侧必须自己乘这一项，否则雨天/雪天的间接阳光不衰减。
+#define VOXEL_SUN_WEATHER_ATTEN 0.96
+// 末地：阳光 GI 用与环境光一致的淡紫色（比环境光再淡一些，避免反弹偏品红）。
+#define VOXEL_END_SUN_GI_TINT vec3(0.90, 0.82, 0.98)
 // 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；
 // 洞穴/室内（skyLightmap≈0）无天光，不会过量。若整体过亮用 VOXEL_GI_TRACE_STRENGTH 旋钮。

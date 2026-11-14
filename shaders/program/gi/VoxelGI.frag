@@ -318,6 +318,11 @@ vec4 IrcTraceVoxel(ivec3 c, ivec3 cDi) {
             // directIlluminance），不再是天空蓝 VoxelSkyColor——蓝天空色导致阳光反弹偏蓝且暗，
             // 是阴影不亮的关键 bug 之一。天空光（天光）单独由 skyMapTex 方向辐射提供。
             vec3 sunLight = sunIrradiance * 128.0 * rcp(VOXEL_SUN_REFERENCE);
+            // [2026-11-14] 天气衰减（雨/雪）+ 末地淡紫色（与追踪端 VoxelTracing.glsl 同口径）。
+            sunLight *= 1.0 - rainStrength * VOXEL_SUN_WEATHER_ATTEN;
+            #ifdef DIMENSION_THE_END
+                sunLight *= VOXEL_END_SUN_GI_TINT;
+            #endif
             // [FIX 2026-08-06 SimpleShadow] 命中体素真被太阳照亮才注入阳光
             //（阴影贴图判定）：洞穴/背阴体素 sunVis=0 → 不注入 → 洞穴白天不再因阳光反弹而亮
             //（用户发现"洞穴亮度受阳光反弹控制"的根因）。hitWorldPos = camrel。
