@@ -32,8 +32,9 @@ ivec2 GICanvasCoord(in ivec2 texelPos) {
     #define SVGF_UPSCALE_AVAILABLE
 #endif
 #ifdef SVGF_UPSCALE_AVAILABLE
+// 兜底值必须与 settings.glsl 的 GUI 默认值一致（它已定义 ⇒ 本段不生效，只防误导）。
 #ifndef SVGF_QUALITY
-    #define SVGF_QUALITY 0 // 半分辨率 GI 的上采样档位：0=仅取中心值（2x2 块状），1=4 邻域深度感知上采样 [0 1]
+    #define SVGF_QUALITY 1 // 半分辨率 GI 的上采样档位：0=仅取中心值（2x2 块状），1=4 邻域深度感知上采样 [0 1]
 #endif
 
 // 上采样的相对深度阈值陡度：相对视距差 1% → 0.64，3% → 0.13，5% → 0.01

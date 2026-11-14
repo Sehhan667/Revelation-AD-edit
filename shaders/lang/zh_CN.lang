@@ -798,13 +798,15 @@ option.VOXEL_GI_FULLRES.comment=关=2x2 棋盘半分辨率（每帧只投 1/4 �
 option.VOXEL_GI_DARK_ACCUM=弱光加强降噪
 option.VOXEL_GI_DARK_ACCUM.comment=暗处把时域累积上限提高到 4 倍（32→128 帧）。只加长历史、不加大空间滤波，所以不会把画面抹平；代价是暗处光照变化时拖影变长
 option.GI_ACCUM_TIME=时域累积时间（秒）
-option.GI_ACCUM_TIME.comment=按「低通后的帧时间」换算成帧数上限（cap = 时间/平滑帧时，并以「最大累积帧数」为硬上限）。NRD 官方 REBLUR 漫反射默认 0.5 秒；越大越干净但拖影越长
+option.GI_ACCUM_TIME.comment=按「低通后的帧时间」换算成帧数上限（cap = 时间 ÷ 平滑帧时 ÷ 每帧等效样本数，夹在 8 帧与「最大累积帧数」之间）。越大越干净但拖影越长。注意：这个上限同时喂给空间滤波的 NLAS 与稳定化的 antilag 灵敏度，实测（11 fps）cap 22 → 块内时域标准差 0.24、cap 32 → 0.46，**不是越大越好**，2.0 附近是这套实现的甜点
 option.NRD_PREPASS_RADIUS=预滤波空间重用半径
-option.NRD_PREPASS_RADIUS.comment=官方 diffusePrepassBlurRadius（默认 30，单位=画布纹素）。时域累积**之前**的降噪：1 spp 输入很稀疏，先在这个范围内加权平均再交给累积器。调大=单帧更平滑、收敛更快，但接触阴影/小凹槽/1 米体素块状会被一起摊平；调小=保细节、单帧更噪（时域压力更大）。官方 0=完全关闭，本包最低 1 画布纹素（≈关闭）
+option.NRD_PREPASS_RADIUS.comment=官方 diffusePrepassBlurRadius 的半径（官方 30 / 本包默认 80，单位=画布纹素）。时域累积**之前**的降噪：1 spp 输入很稀疏，先在这个范围内加权平均再交给累积器。本包调大是因为输入是 1 米体素锥追踪（同格同值），30 纹素在 10 米处只能跨 1.7 格、空间平均几乎不降噪；80 才能跨到 2 格以上。代价：跨表面概率上升，几何判据会拒掉部分样本，边缘可能更噪。调小=保细节、边缘干净，但脏斑回来；调大=更干净但更糊。官方 0=完全关闭，本包最低 1 画布纹素（≈关闭）
 option.NRD_MIN_HITDIST_WEIGHT=跨命中距离最小权重
 option.NRD_MIN_HITDIST_WEIGHT.comment=官方 minHitDistanceWeight（默认 0.1）。空间滤波时，命中距离差很大的邻居至少保留这么多权重。命中距离≈该像素的 GI 射线打到多远；两个像素差异大，说明多半是不同深度的物体（薄墙/栅栏/接触缝）。调大=跨深度更愿意混合（更平滑，但会漏进背景光、接触区发亮）；调小=保接触细节，代价是薄结构周围残噪
 option.NRD_PLANE_DIST_SENS=平面距离容差
 option.NRD_PLANE_DIST_SENS.comment=官方 planeDistanceSensitivity（默认 0.02）。判定两个像素"是否同一平面"的相对阈值（×视锥短边在当前深度的世界尺寸，所以自动随距离放大）；prepass / Blur / PostBlur / HistoryFix / TS 五处共用。调大=更容易跨小台阶与凹凸混合（更平滑，但台阶边缘渗色、拖影变长）；调小=判据更严（保边缘，但斜面与法线贴图区域更难累积、残噪上升）
+option.NRD_HISTORYFIX_FRAMES=新像素重建窗口
+option.NRD_HISTORYFIX_FRAMES.comment=HistoryFix 对年轻像素（累积帧数小于本值）做宽步长邻居重建的窗口。官方 historyFixFrameNum=3，但官方前提是稠密输入；本包 1 spp + 1 m 体素量化下窗口 3 会让转头新露出的像素只剩 2~3 帧自己的样本，表现为大块模糊斑块与脏点。本值只影响年轻像素，稳定区完全不受影响；最后 2 帧线性淡出。3=严格官方（更锐、新像素更脏），8=推荐，12=更平滑也更糊
 option.NRD_HISTORYFIX_CLAMP_SIGMA=HistoryFix 短历史裁剪 sigma
 option.NRD_HISTORYFIX_CLAMP_SIGMA.comment=官方 fastHistoryClampingSigmaScale（默认 2.0，在 HistoryFix 里生效）。把空间滤波后的长历史亮度夹到"未滤波的 6 帧短历史"的 mean±kσ：光照突变（火把移动/方块增删）时把滞后几十帧的长历史拉回来。调大=夹得松（细节保得多、拖影长）；调小=夹得紧（拖影短、残噪多）。官方注释：脏信号可降到 1.5，遮挡去噪用 1.1 更安全
 option.GI_EFFECTIVE_SPP=每帧等效样本数
@@ -824,7 +826,7 @@ option.NRD_STABILIZATION_STRENGTH.comment=官方 stabilizationStrength，乘在�
 option.GI_MOTION_RESPONSE=运动自适应历史
 option.GI_MOTION_RESPONSE.comment=重投影位移超过 2 屏幕像素时，按位移抬高本帧权重、压低稳定化历史权重 ⇒ 移动拖影从几十帧压到约 2 帧。静止时逐位不变（含 TAA 亚像素抖动）。默认 1.0；0=关（回到纯时域累积），0.5=半强度。代价：移动时噪点略升
 option.GI_RECURRENT_HISTORY=主历史回流（Recurrent）
-option.GI_RECURRENT_HISTORY.comment=官方 REBLUR 的核心机制：主历史 = 上一帧**空间滤波后**的结果，同一个核被逐帧反复迭代 ⇒ 等效滤噪力度随历史长度增长（Ray Tracing Gems II ch.49；NRD 里只有 PostBlur 的输出标为跨帧持久，而时域累积读的正是它）。1=官方口径（默认）：更干净、也更糊；0=退回 SVGF 式（历史只存原始累积）：更锐但残噪多。**嫌整体发糊时先关这个**
+option.GI_RECURRENT_HISTORY.comment=1=官方 Recursive（默认）：历史=上一帧空间滤波后的结果，同一个核逐帧迭代 ⇒ 等效降噪倍数免费拿到，画面一直干净。0=SVGF 式：历史只存原始累积，细节一直都在，但残噪只能按 1/√累积帧数自由衰减（64 帧仍有 12.5%），本包 3 遍空间滤波补不回来 ⇒ 实机表现为「新像素几帧内凝固成满屏噪点」。0 仅供对照实验
 option.GI_KERNEL_ROT_PER_FRAME=滤波核逐帧旋转
 option.GI_KERNEL_ROT_PER_FRAME.comment=随机核方向是否每帧换一个角度。关（默认）：图案钉在屏幕上——静止时误差被固化成不动的斑块，但画面稳定、不漂移。开：单帧误差变成时域白噪声，理论上有累积可以平均掉，**但实测与"主历史回流"叠加时会让静止画面持续漂移、拖影变长**；两个都开请谨慎
 option.PTGI_MEDIAN_RADIUS=中值半径
@@ -959,3 +961,7 @@ option.LOGO_FOLLOW_STRENGTH=启动logo跟随位移强度
 option.LOGO_FOLLOW_STRENGTH.comment=把「滞后角」换算成屏幕位移的倍率（按焦距计算）。0 = 只旋转不位移。
 option.LOGO_FOLLOW_ROLL=启动logo跟随滚转强度
 option.LOGO_FOLLOW_ROLL.comment=横向转身时板子的倾斜量（弧度/弧度）。0 = 不倾斜。
+option.NRD_STABLE_MIN_RADIUS=稳定区最小滤波半径
+option.NRD_STABLE_MIN_RADIUS.comment=单位=画布纹素。稳定像素（累积到顶）的公式半径只有 sqrt(hitDistFactor×NLAS)×maxBlurRadius ≈ 1.9 纹素（官方口径）。**这个值直接决定残噪斑块的尺寸**：8 个 tap 撑在半径 R 上，脚印就是 2R 画布纹素 = 4R 屏幕像素的软斑，所以调大不只是"更糊"，而是把噪点放大成一片片看得见形状的云。3.0 ⇒ Blur 3 / PostBlur 6 画布纹素 = 12/24 屏幕像素，与普通残噪同量级，看不出结构；4.0 以上开始出现"被模糊过的斑块"。调小（2.0）更接近官方、更锐，但残噪更明显。与远端曲线（64 米到 6）取 max。官方没有此项（只有 gMinBlurRadius=1）
+option.NRD_WIDE_RADIUS=低频补刀半径（实验项，默认关）
+option.NRD_WIDE_RADIUS.comment=单位=画布纹素（×2=屏幕像素）。一圈固定半径的 8 tap + 按残噪估计收紧的亮度判据，本来是为「非递归历史」补低频残噪写的。实机结论：非递归冻结的残噪量级超出 3 遍滤波能补的范围（差约 10 倍），补不干净；切回递归后它又被逐帧反复应用，把稳定态永久抹平在 16 纹素尺度。故默认 0。留着供将来把空间级数补到 5~8 级时重新标定

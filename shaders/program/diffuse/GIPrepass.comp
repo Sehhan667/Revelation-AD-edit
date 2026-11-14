@@ -58,6 +58,8 @@ layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时�
 // 官方 NRD 的 diffuse 本来就在**半分辨率** rect 上跑（README 的 half-res 集成），
 // 所以 30 rect 像素 = 30 画布纹素，与本文件同尺度，不需要额外换算。
 // 官方另乘 sqrt(hitDistFactor) 自适应收缩、取 minBlurRadius = 1 下限（下面已实现）。
+// 实际值由 settings.glsl 的 GUI 选项 `NRD_PREPASS_RADIUS` 决定（默认 30，与官方一致）。
+// 这里只是 settings 未定义时的兜底，必须与 settings 的默认值一致，否则会误导（改这里不生效）。
 #ifndef NRD_PREPASS_RADIUS
     #define NRD_PREPASS_RADIUS 30.0
 #endif
@@ -74,8 +76,23 @@ layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时�
     #define NRD_PLANE_DIST_SENS 0.02
 #endif
 
-// 官方 lobeAngleFraction = 0.15（漫反射 90° 瓣角的 15% ≈ 13.5°）
-#define LOBE_COS 0.9723699
+// [2026-11-13 修正] 官方传入 GetNormalWeightParam 的不是 0.15，而是 **0.15²**：
+// `Reblur.cpp:376` → `gLobeAngleFraction = settings.lobeAngleFraction * settings.lobeAngleFraction`。
+// 推导（NLAS = 1/11、fractionScale = 2）：
+//   pov = 0.75·lerp(0.0225, 1, 1/11) = 0.083523
+//   tanHalf = sqrt(pov/(1-pov)) = 0.301884
+//   angleMax = atan(0.301884) = 0.293501 rad
+//   param = (1/0.293501)/2 = 1.70357（全拒角 0.587 rad ≈ 33.6°）
+// 旧值 1.1748 是按 0.15 推的，全拒角 48.8°，比官方宽 45% ⇒ 跨棱/凹凸混色。
+#define PREPASS_NORMAL_PARAM 1.70357
+// 官方 g_Special8（Common.hlsli:207）：4 个轴点（半径 1.0，高斯 r=1）+ 4 个对角点
+// （半径 0.25·√2 = 0.5，高斯 r=0.5）。官方 prepass 与 Blur/PostBlur 用的是同一个图案。
+const vec2 PREPASS_DIR[8] = vec2[8](
+    vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(0.0, -1.0),
+    vec2(-0.35355339, 0.35355339), vec2(0.35355339, 0.35355339),
+    vec2(0.35355339, -0.35355339), vec2(-0.35355339, -0.35355339)
+);
+const float PREPASS_GAUSS_R[8] = float[8](1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5);
 
 // 自造项：官方 ReblurSettings 没有 fireflyClampThreshold，官方 anti-firefly 在 TA（清单 4.11）。
 // 参与重用的样本亮度超过中心像素亮度 × 本值时等比缩回阈值；0 = 关闭（默认）。
@@ -84,15 +101,9 @@ layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时�
     #define GI_FIREFLY_CLAMP 0.0
 #endif
 
-// [2026-11-11 B0] 官方权重 A/B（默认 0 = 现状，逐位不变；1 = §3 五处偏差换成官方公式）。
-// 官方口径的关键更正：NRD_USE_EXPONENTIAL_WEIGHTS 两版默认都是 0，几何/法线权重
-// 实际是 ComputeNonExponentialWeight = SmoothStep(1, 0, u) 三次窗（u>=1 全拒），
-// ExpApprox(-3u) 只是可选的指数变体（旧清单 3.4 把两者看混了）；ExpApprox 仅在
-// hitDist 权重处被显式使用。各公式的推导见 REBLUR-CHECKLIST 3.4/3.5/3.6/3.10/3.13。
-// 官方法线权重参数（prepass 固定）：NLAS = 1/11（REBLUR_PRE_PASS_NON_LINEAR_ACCUM_SPEED），
-// fractionScale = 2 ⇒ pov = 0.75·lerp(0.15, 1, 1/11) = 0.1705，
-// tanHalf = sqrt(pov/(1-pov)) = 0.4533，angleMax = atan(0.4533) = 0.4255 rad，
-// param = 1/(angleMax·2) = 1.1748（全拒角 0.851 rad ≈ 48.8°）。
+// 官方权重口径：NRD_USE_EXPONENTIAL_WEIGHTS 默认 0，几何/法线权重走
+// ComputeNonExponentialWeight = SmoothStep(1, 0, u) 三次窗（u ≥ 1 全拒）；
+// ExpApprox(-3u) 只用于 hitDist 权重。法线参数见上方 PREPASS_NORMAL_PARAM 的推导。
 
 void main() {
     ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
@@ -145,6 +156,13 @@ void main() {
     vec4 _center = texelFetch(colortex3, texelPos, 0);
     float _normHitC = saturate(max(_center.a, 0.0) * rcp(_f));
     float _hitDistM = _normHitC * _f;
+    // [2026-11-13 官方口径] 官方 prepass 半径只有这一条公式：
+    //   blurRadius = max( saturate( sqrt(hitDistFactor) ) · maxBlurRadius, gMinBlurRadius = 1 )
+    // 此前在它后面加过一条「物理尺度下限」（0.5·span·texelsPerMeter），本意是把 8 个 tap
+    // 的落点跨度撑到 1~2 个 1 m 体素。但它会在近距离（2 m 处可到 ~70 纹素）整段覆盖
+    // hitDistFactor 的自适应收缩 —— 接触阴影、墙角、栏杆等近处细节被一起摊平。
+    // 官方就是靠这条自适应收缩保住近处细节的，恢复原样；空间重用不足的问题交给
+    // EAWF 的核宽与时间累积处理。
     float prepassRadius = max(sqrt(saturate(_hitDistM * rcp(max(frustumSize, 1e-3)))) * NRD_PREPASS_RADIUS, 1.0);
 
     vec3 sum = vec3(0.0);
@@ -171,19 +189,19 @@ void main() {
     lSum2 = _center.r * _center.r;
     w2Sum = 1.0;
 
-    // Poisson 盘（黄金角 Vogel）在整个盘内均匀铺开；2x2 画布块共享旋转。
-    // [2026-11-10 波前] 旋转角必须**逐帧**变化（黄金角步进）。只按像素哈希固定时，
-    // 32 个稀疏样本带来的采样误差是「时域相关」的：累积多少帧都平均不掉，只会把它
-    // 固化成一块跟着屏幕走的偏差。实测症状正是这样——
-    //   · 静止：偏差钉在原地 ⇒ 不动的斑点；
-    //   · 转头：图案相对世界内容滑动 + 新露出像素拿到另一份偏差 ⇒ 噪声水平的波前 = 拖影。
+    // 官方采样图案 = g_Special8（4 轴点 + 4 对角点），旋转由 NRD_FRAME rotator 提供：
+    // 全屏同一个角度、逐帧黄金角推进。
+    // [2026-11-10 波前] 旋转角必须**逐帧**变化。只按像素哈希固定时，稀疏样本误差是
+    // 「时域相关」的：累积多少帧都平均不掉，只会固化成一块跟着屏幕走的偏差。
     // 逐帧旋转后它变成时域白噪声，由 Accumulate 平均掉（代价：单帧略噪一点）。
 #ifndef GI_ROT_PER_FRAME
     #define GI_ROT_PER_FRAME 0.0
 #endif
-    ivec2 rotCell = texelPos >> 1;
-    float ang0 = hash13(vec3(rotCell, 3.0)) * 6.2831853
-               + GI_ROT_PER_FRAME * float(frameCounter) * 2.39996323;
+    // [2026-11-13 旋转修正] 官方 rotator = NRD_FRAME（全屏一致、逐帧换），不能叠 `hash13(rotCell)`。
+    float _cellAng = hash13(vec3(texelPos >> 1, 3.0)) * 6.2831853;
+    float _frameAng = float(frameCounter) * 2.39996323;
+    float ang0 = mix(_cellAng, _frameAng, saturate(GI_ROT_PER_FRAME));
+    mat2 _prepassRot = mat2(cos(ang0), sin(ang0), -sin(ang0), cos(ang0));
 
 #if GI_FIREFLY_CLAMP > 0.0
     // firefly 阈值：以中心像素亮度为参考（同帧、无需第二遍循环）
@@ -191,9 +209,8 @@ void main() {
 #endif
 
     for (int i = 0; i < PREPASS_SAMPLES; ++i) {
-        float rn = sqrt((float(i) + 0.5) * rcp(float(PREPASS_SAMPLES)));   // 0..1
-        float an = float(i) * 2.39996323 + ang0;
-        ivec2 t = texelPos + ivec2(round(vec2(cos(an), sin(an)) * rn * prepassRadius));
+        vec2 _tapDir = _prepassRot * PREPASS_DIR[i];
+        ivec2 t = texelPos + ivec2(round(_tapDir * prepassRadius));
         if (clamp(t, ivec2(1), canvasEnd - 2) != t) continue;
         // 同帧视深 + 同帧法线（法线不能再取 colortex14：那是上一帧的，跨帧混用会在运动时误拒）
 #ifdef VXGI_FULLRES
@@ -229,24 +246,23 @@ void main() {
         float _tg = saturate(1.0 - planeDist * rcp(max(NRD_PLANE_DIST_SENS * frustumSize, 1e-3)));
         float w = _tg * _tg * (3.0 - 2.0 * _tg);
         // [3.5 官方] 法线按夹角**连续**衰减：w = SmoothStep(1, 0, angle · normalParam)。
-        // param = 1/angleMax / fractionScale，prepass 固定 NLAS = 1/11、fractionScale = 2：
-        //   pov = 0.75·lerp(0.15, 1, 1/11) = 0.1705，tanHalf = sqrt(pov/(1-pov)) = 0.4533，
-        //   angleMax = atan(tanHalf) = 0.4256 rad，param = (1/0.4256)/2 = 1.1748。
-        // 旧实现是 cos 硬阈 smoothstep(0.952, 0.992, dot)，二值化会在折角两侧留下边界。
+        // 官方 param 见文件头的 PREPASS_NORMAL_PARAM 推导（lobeAngleFraction = 0.15²）。
         float _ang = acos(clamp(dot(tapN, normal), -1.0, 1.0));
-        float _sn = saturate(1.0 - _ang * 1.1748);
+        float _sn = saturate(1.0 - _ang * PREPASS_NORMAL_PARAM);
         w *= _sn * _sn * (3.0 - 2.0 * _sn);
         // [3.13 官方] hitDist 权重：w *= minHitDistWeight + ExpApprox( -3·|ΔnormHit|/NLAS )。
-        // ExpApprox(-u) = rcp(u² + u + 1)（有理逼近，不是 exp）；minHitDistWeight
-        // = 0.1 · fractionScale(2) = 0.2；a = 1/NLAS = 11 ⇒ u = 3·11·|Δ| = 33·|Δ|。
-        // Δ 在归一化域（每个 tap 用自身视深归一化，见上）。
+        // ExpApprox(-u) = rcp(u² + u + 1)（有理逼近，不是 exp）；
+        // minHitDistWeight = NRD_MIN_HITDIST_WEIGHT · fractionScale(2)，prepass 无时域累积 ⇒ NLAS = 1。
+        // a = 1/NLAS = 11 ⇒ u = 3·11·|Δ| = 33·|Δ|。Δ 在归一化域（每个 tap 用自身视深归一化，见上）。
+        // [2026-11-13 接线] 此前这里写死 0.2（= 0.1 · 2），GUI 的 NRD_MIN_HITDIST_WEIGHT
+        // 改了不影响 prepass，与 EAWF（那边读同一个宏）出现口径分叉。现在同源。
         {
             float _u = 33.0 * abs(_normHitS - _normHitC);
-            w *= 0.2 + rcp(_u * _u + _u + 1.0);
+            w *= (NRD_MIN_HITDIST_WEIGHT * 2.0) + rcp(_u * _u + _u + 1.0);
         }
-        // [3.6 官方] GetGaussianWeight(r) = exp( -0.66 · r² )，r 归一化到 1。
-        // 旧实现 exp(-2r²) 在 r = 1 时只剩 0.135（官方 0.517）⇒ 边缘样本被过度压低、等效半径远小于 30。
-        w *= exp(-0.66 * rn * rn);
+        // [3.6 官方] GetGaussianWeight(r) = exp( -0.66 · r² )，r 取 g_Special8 的 z 分量
+        //（轴点 1.0 ⇒ 0.517，对角点 0.5 ⇒ 0.848）。
+        w *= exp(-0.66 * PREPASS_GAUSS_R[i] * PREPASS_GAUSS_R[i]);
 
         sum += tapCol * w;
         hitSum += _normHitS * w;

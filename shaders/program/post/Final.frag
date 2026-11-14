@@ -564,7 +564,14 @@ void main() {
         #endif
         float _dbgAccum = texelFetch(colortex2, _giCanvasTexel, 0).a;
         float _dbgBad   = texelFetch(colortex14, _giCanvasTexel, 0).a;
-        finalOut = vec3(saturate(_dbgAccum * rcp(max(SSILVB_MAX_ACCUM_FRAMES, 1.0))), _dbgBad, 0.0);
+        // [2026-11-13 诊断增强] 蓝通道 = historyReset uniform 的实际求值结果。
+        // 这个 uniform 由 shaders.properties 的自定义表达式求出：
+        //   abs(smooth(worldTimeCounter, 0.2, 0.2) - worldTimeCounter) > 1.0
+        // worldTimeCounter = ((worldDay%256)*24000 + worldTime)*0.05 ⇒ 量级 10^3~10^5。
+        // 若 smooth(x,0.2,0.2) 退化为常数 1，则 abs(1-10^5)>1 恒真 ⇒ 每帧全局丢弃历史。
+        // 蓝=1 ⇒ historyReset 恒真（历史从不被使用）；蓝=0 ⇒ 拒绝来自几何判据而非该 uniform。
+        finalOut = vec3(saturate(_dbgAccum * rcp(max(SSILVB_MAX_ACCUM_FRAMES, 1.0))), _dbgBad,
+                        historyReset ? 1.0 : 0.0);
     #endif
 
     // ===== GI 诊断视图（GI_DEBUG_VIEW；0=关闭）=====
@@ -594,7 +601,8 @@ void main() {
             // 暗处上限 ×4（Accumulate 用 lightmap 判定，这里同一来源、同一公式）
             uint _p = texelFetch(colortex7, texelPos, 0).x;
             float _lm = max(float(_p & 0xFFu), float((_p >> 8u) & 0xFFu)) * rcp(255.0);
-            _dbgCap = mix(_dbgCap, _dbgCap * 4.0, 1.0 - smoothstep(0.10, 0.60, _lm));
+            _dbgCap = min(mix(_dbgCap, _dbgCap * 4.0, 1.0 - smoothstep(0.10, 0.60, _lm)),
+                          SSILVB_MAX_ACCUM_FRAMES);
         }
 #endif
         // 各视图的隔离量在各自分支里算；不要在公共段放"滤波前后差值"之类会饱和的量。

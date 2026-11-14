@@ -61,8 +61,12 @@ layout (rgba16f) restrict uniform image2D colorimg23;            // 稳定化输
 
 //======// Constants //===========================================================================//
 
-// 官方 REBLUR_MAX_HISTORY_FRAME_NUM = 63
-#define STABILIZE_MAX_FRAMES 63.0
+// 累积帧数的**垃圾值**上界（不是「帧数上限」，语义见下方 taAge 处）。
+// 本级的真实上限由 TA 决定：accumCap = clamp(GI_ACCUM_TIME / 帧时间, 8, SSILVB_MAX_ACCUM_FRAMES)，
+// 暗处 VOXEL_GI_DARK_ACCUM 再 ×4，OFFLINE_RENDER 还有 1024 的直通上限 —— 任何「按上限折算」
+// 的写法都可能误伤某个模式。这里只拦 NaN/Inf/荒谬大值（与 GIHistoryFix 的 1e6 同口径）：
+// 凡是 TA 真写下的帧数，都必须原样使用。
+#define STABILIZE_MAX_AGE 1e6
 // 官方 historyFixFrameNum = 3：antilag 触发时历史长度最低回落到这里
 #define HISTORY_FIX_FRAME_NUM 3.0
 // 官方 planeDistanceSensitivity = 0.02（与 prepass / EAWF / HistoryFix 同一口径）
@@ -104,13 +108,14 @@ void HistTap(in ivec2 sampleTexel, in vec3 centerViewPos, in vec3 geoNormalV,
 // 官方 artilagSettings：luminanceSigmaScale = 2.0 / luminanceSensitivity = 3.0
 #define ANTILAG_LUMA_SIGMA_SCALE 2.0
 #define ANTILAG_LUMA_SENSITIVITY 3.0
-// 稳定化的**历史长度上限**（帧）。官方把它挂到 maxAccumulatedFrameNum（同一 FPS 公式），
-// 但本链在它之前已经有一级时域累积（Accumulate，约 24 帧），这一级的输入是**已累积**信号：
-// 再压 20~60 帧既压不出噪声（残差在时域上已高度相关），只换来 `historyWeight = N/(N+1)`
-// 的滞后（N=28 ⇒ 96.6%，约 1 秒）。实测「转头拖影严重」就是这里。
-// 只保留抑制滤波核抖动所需的几帧；要更长可自行调回。
+// 官方 `maxStabilizedFrameNum`（NRDSettings.h，默认 REBLUR_MAX_HISTORY_FRAME_NUM = 63）。
+// [2026-11-11 语义修正] 它**不是帧数上限**，也不参与任何清零判断，只被换算成
+// `gStabilizationStrength = N/(1+N)`（Source/Reblur.cpp:303）后去夹最终混合权重。
+// 旧注释把这里写成「本级历史长度上限」并据此清 taAge，正是 2026-11-13 那个
+// 「站定一秒后突然变噪」的成因（见下方 taAge 处）。本级不设帧数上限。
+// 兜底值必须与 settings.glsl 的 GUI 默认值一致（它已定义 ⇒ 本段不生效，只防误导）。
 #ifndef GI_STABILIZE_FRAMES
-    #define GI_STABILIZE_FRAMES 8.0 // [2.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 63.0] 稳定化历史长度上限（帧）
+    #define GI_STABILIZE_FRAMES 63.0 // [2.0 4.0 8.0 16.0 32.0 63.0] maxStabilizedFrameNum
 #endif
 
 // 官方 `stabilizationStrength`（REBLUR_Settings，默认 1.0）：稳定化历史的权重乘子。
@@ -153,7 +158,10 @@ void main() {
 
 #if GI_DEBUG_NO_TS > 0
     // A/B 直通：跳过这个第二个时间累加器，最终 GI = EAWF 输出（不参与时域）。
-    imageStore(colorimg23, texelPos, vec4(imageLoad(colorimg25, texelPos).rgb, 1.0));
+    // .a 必须透传 TA 的帧数：下一帧 Accumulate 会从 colortex23.a 读累积速度，
+    // 写死 1.0 会让这个诊断档完全无法累积。
+    imageStore(colorimg23, texelPos,
+               vec4(imageLoad(colorimg25, texelPos).rgb, texelFetch(colortex2, texelPos, 0).a));
     return;
 #endif
 
@@ -198,9 +206,9 @@ void main() {
     vec3 prevWorldPos = worldPos + (cameraPosition - previousCameraPosition);
     vec3 prevViewPos = transMAD(gbufferPreviousModelView, prevWorldPos);
     vec3 prevNDC = projMAD(gbufferPreviousProjection, prevViewPos) * rcp(max(-prevViewPos.z, 1e-3));
-#ifdef TAA_ENABLED
-    prevNDC.xy += taaJitterPrev;
-#endif
+    // [2026-11-13 去掉重投影上的 TAA jitter] 与 Accumulate 同一理由：GI 信号不含 jitter，
+    // 历史（colortex24）存的也是画布纹素中心的值。加 `taaJitterPrev` 会让历史采样点在
+    // 静止时逐帧漂移，CatRom 的 12 个 tap 与 4 个双线性 tap 随之换点 ⇒ 稳定化输出小幅抽动。
     vec2 prevCoord = prevNDC.xy * 0.5 + 0.5;
 
     bool valid = all(greaterThanEqual(prevCoord, vec2(0.0))) && all(lessThanEqual(prevCoord, vec2(1.0)));
@@ -329,12 +337,30 @@ void main() {
     // 我们此前在这里做 `taAge + 1` —— 那是**第二级时域累积**（官方只有 TA 一级），
     // 拖影因此多叠了一层，是"拖影一大条"的结构性来源之一。现在直接读 TA 的帧数。
     float taAge = texelFetch(colortex2, texelPos, 0).a;
-    // 首次使用/NaN/越界/主历史失效 → 重置
-    if (!(taAge >= 0.0) || taAge > STABILIZE_MAX_FRAMES) taAge = 0.0;
+    // 首次使用 / NaN / 荒谬大值 → 重置。
+    // [2026-11-13 修复「转头→糊→逐渐清晰→瞬间变成没降噪的噪点」]
+    // 这里原来写 `taAge > STABILIZE_MAX_FRAMES(63) ⇒ taAge = 0`。63 是官方
+    // `maxStabilizedFrameNum` 的默认值，但它在 7.5 那次语义修正之后**已经只是
+    // `gStabilizationStrength = N/(1+N)` 的换算输入，不再是帧数上限**；
+    // 真正的上限是 TA 的 accumCap。于是这里变成一颗地雷：
+    //   选项文件 GI_ACCUM_TIME = 2.0 ⇒ cap = clamp(2.0/0.0167, 8, 64) = 64
+    //   ⇒ 站定第 64 帧（约 1.07 s）A 刚跨过 63，本级把 taAge 判成 0
+    //   ⇒ historyWeight = quality·(1-NLAS)·antilag = 0 ⇒ _hwMix = 0
+    //   ⇒ 输出 = 裸 EAWF，0.984 的 IIR 整级消失，方差瞬间放大约 60 倍。
+    // 这正是主人看到的现象：空间半径随 A 增长逐步收小（越看越清晰），
+    // 收到底的那一帧稳定化同时归零 ⇒ 画面从「干净」直接跳到「满屏颗粒」。
+    // 现在只在真正的垃圾值（NaN / Inf / 荒谬大值）时清零，TA 写下的任何帧数都原样使用。
+    if (!(taAge >= 0.0) || taAge > STABILIZE_MAX_AGE) taAge = 0.0;
     // [7.1 官方] 没有 `quality < 0.25` 的硬重置：部分遮挡由 hw（足迹质量直接乘进权重）
     // 自然降权，不整段丢弃历史。!valid / 去遮挡标记的重置保留（后者等价官方 TA 的 data1.x 置 1）。
     if (!valid || bad > 0.5) taAge = 0.0;
     if (any(isnan(prev.rgb)) || any(isinf(prev.rgb))) taAge = 0.0;
+
+    // [2026-11-13 官方 TS:141-142] HistoryFix 刚修过的像素（data1.x < historyFixFrameNum）
+    // 做一次亮度清理：luma = min(luma, 5×5均值 × (1.2 + 1/(1+data1.x)))。
+    // 官方在 antilag 之前执行；这里放在 taAge 确定之后、antilag 之前。
+    if (taAge < HISTORY_FIX_FRAME_NUM)
+        filtered.r = min(filtered.r, mu.r * (1.2 + rcp(1.0 + taAge)));
 
     // 官方 `gMaxAccumulatedFrameNum`：TS 的权重公式用的是 **TA 的累积上限**（与 Accumulate/EAWF
     // 同一个公式），不是本级自造的帧数上限。
@@ -354,7 +380,13 @@ void main() {
     float magic = ANTILAG_LUMA_SENSITIVITY * (2.0 * framerateScale) * (2.0 * framerateScale);
 
     // [7.6] 官方 stabilizationStrength 只夹最终混合权重（min(hw, strength)），不进 accumSpeed。
-    float accumSpeed = quality * taAge;
+    // [2026-11-14] antilag 的输入速度夹到官方默认 maxAccumulatedFrameNum = 30。
+    // 官方 `magic = luminanceSensitivity·(2·fps)²` 是按 30 帧标定的；本包 GI_ACCUM_TIME 可把
+    // taAge 拉到 120+，直接代入会把 `d·N/magic` 的灵敏度放大 4 倍 —— 转头时亚像素重投影造成的
+    // 几个百分点亮度差就能把 ageOut 从 120 压到 30，反馈回 TA 后 alpha 从 1/120 涨到 1/30，
+    // 表现正是「画面没出屏、只是转视角，稳定区域突然变噪」。
+    // 只夹 antilag 的输入；historyWeight 与 ageOut 仍用真实 taAge。
+    float accumSpeed = quality * min(taAge, 30.0);
     float antilag = 1.0;
     if (accumSpeed > 0.0) {
         float sL = max(sigma.r, 1e-5) * ANTILAG_LUMA_SIGMA_SCALE;

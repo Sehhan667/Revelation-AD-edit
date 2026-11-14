@@ -123,14 +123,22 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // ——采样点落在 2×2×2 的**格角**上，命中格自己的辐射被稀释成 1/8、另外 7 格（+XYZ 八分体）各 1/8。
 // 改成真三线性（连续位置、格心 t=0、命中格权重 1）后，火把近场最多会亮到原来的 ~8 倍、平坦区几乎不变
 // ⇒ 默认值按比例收回，维持原观感。嫌亮/嫌暗直接拖 GUI 滑条（光照 → 全局光照 → VXGI）。
+#ifndef VOXEL_GI_SELF_BOUNCE
 #define VOXEL_GI_SELF_BOUNCE 0.3       // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 自反弹衰减比（光线命中点取前帧 IRC；[2026-08-17] 1.0→0.5 减小 IRC 亮度，避免整体过亮；[2026-08-28] 上限扩到 32，>1 为超强自反弹放大，用于传播调试/刻意增强；[2026-09-22] 补 0.0 档——原列表从 0.1 起使滑条无法归零，无法验证/关闭自反弹传播）
+#endif
+#ifndef VOXEL_GI_EMISSIVE_THRESHOLD
 #define VOXEL_GI_EMISSIVE_THRESHOLD 0.0 // [0.0 0.01 0.02 0.05 0.1 0.2] 发射度阈值（LabPBR 发射贴图，太低会把矿物误判为发光体）
+#endif
+#ifndef VOXEL_GI_BOOST
 #define VOXEL_GI_BOOST 24.0              // [0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 发射体素能量倍率
+#endif
 // 发射光球形光距离衰减（语义的补充，2026-08-04 #8）：远场（16 格外）偶发
 // "穿心"命中会闪现全强度 → 高对比可见闪烁；× rcp(1 + dist²×FALLOFF) 后远场命中大幅
 // 变弱（dist=8 → 9%），近场 1-2 格几乎不变。只影响球形光路径（发射体素），普通固体
 // 命中/IRC 自反弹不受影响。
+#ifndef VOXEL_GI_LIGHT_FALLOFF
 #define VOXEL_GI_LIGHT_FALLOFF 0.02 // [0.02 0.05 0.08 0.1 0.15 0.2 0.3 0.5] 发射光距离衰减（越小传播越远）
+#endif
 // 发射光球形光源半径（体素格数）。用 0.5（格内切球），但那是多 SPP + ×0.1 低强度
 // 的物理尺度；本项目 1 SPP 低配，球太小 → 贴光源面命中率极低（1 格外 ≈2.8%）→
 // 平均贡献 = 命中率 × 强度 很低 → "走起来亮（TAA 运动降权显示单帧命中）、停下来灭
@@ -143,7 +151,9 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // （火把/灯笼等）的球几乎填满整格 ⇒ 观感上又变回「整块方块在发光」（用户实测）。
 // 硬约束（项目记忆）：发射光球半径 = 0.5（格内切球）——形状块光源要呈"球形光"靠的就是这条。
 // 命中率低带来的 1SPP 噪声问题，应靠 VOXEL_GI_BOOST / 时域累积解决，不要靠放大半径。
+#ifndef VOXEL_GI_LIGHT_RADIUS
 #define VOXEL_GI_LIGHT_RADIUS 0.5    // [0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 发射光球命中半径
+#endif
 // 追踪端发射光强度（架构：发射光主体由 IRC 时域累积承载——IRC 注入端用
 // VOXEL_GI_BOOST 强注入、时间混合 0.99 平滑；追踪端是每像素每帧 1 条随机光线的
 // 高方差采样，发射光脉冲必须压低，否则贴光源面"命中/未命中"跳变 → 闪烁）。
@@ -151,7 +161,9 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 我们的追踪端脉冲 = 0.225~1.5（BOOST 1.5）→ 方差高 2 个数量级。此系数把追踪端
 // 脉冲压到 ~0.07~0.45（仍高于 的低配亮度），近场火把光主体依赖 IRC。
 #define VOXEL_GI_TRACE_LIGHT_STRENGTH 0.3
+#ifndef VOXEL_GI_BLEND
 #define VOXEL_GI_BLEND 0.995            // [0.5 0.6 0.7 0.8 0.9 0.95 0.98 0.99 0.995] 时间混合权重
+#endif
 // 注：IRC 是随机采样注入（每体素每帧 1 条光线），靠时域累积降噪。
 // 0.99 = 默认时域混合权重，IRC 存"表面体素辐照度"变化慢，
 // 时域稳定；首次进入场景由"旧帧全黑 → 直接写新值"播种（VoxelGI.frag），不会冷启动黑屏。
@@ -188,23 +200,35 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 从"网格外 SH 环境光"瞬间切到"网格内 GI"且 GI 新暴露种子暗 → 边缘暗→亮跳变。
 // DeferredLight 在网格内边缘此距离内按距离渐进混入网格外同款 SH 环境光，
 // 外部光→内部 GI 平滑过渡。0 = 关闭过渡（老行为）。
+#ifndef VOXEL_EDGE_BLEND_DISTANCE
 #define VOXEL_EDGE_BLEND_DISTANCE 8.0 // [0.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0] 网格边缘环境光过渡带（格数）
+#endif
 
 // ------ 注入内部系数（随 VOXEL_GI_STRENGTH 整体缩放，不单独暴露滑条）------
 // 天空光用 0-1 尺度的 skyMapTex 方向辐射，系数即注入上限（白天暴露面 ≈ 0.1×albedo）。
 // 量级链路：注入 nRC → ×100 存储 → 查询 ×0.01 解码，最终 ≈ 注入值 × albedo × STRENGTH
 // 2026-08-04 真阳光改造（思路）：阳光注入主体改为"阴影贴图判定直射"（sunVis），
 // vanilla 天空光 lightmap 降级为弱环境底，保留洞穴渐变。
+#ifndef VOXEL_GI_SUN_STRENGTH
 #define VOXEL_GI_SUN_STRENGTH 1.0      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显）
+#endif
+#ifndef VOXEL_GI_SKY_STRENGTH
 #define VOXEL_GI_SKY_STRENGTH 3.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 2.0→1.0：室内天光略过量）
+#endif
+#ifndef VOXEL_GI_BLOCK_STRENGTH
 #define VOXEL_GI_BLOCK_STRENGTH 0.5    // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 方块光注入倍率（× blocklightColor，火把等光源）
+#endif
 // 天空辐射贴图 → 0-1 尺度换算基准（skyViewTex 白天顶光 ≈110-130；与阳光基准同量级，
 // 调大=天光变暗、调小=天光变亮）。定义在 VoxelSkyLight.glsl 之前（VoxelLighting 先 include）
+#ifndef VOXEL_SKY_REFERENCE
 #define VOXEL_SKY_REFERENCE 300.0   // [100.0 150.0 200.0 250.0 300.0 350.0 400.0 500.0 600.0 800.0 1000.0] 天空辐射贴图→0-1 尺度换算基准
+#endif
 // [FIX 2026-08-06] 方块光反弹的最小 albedo 底：薄片/流体光源（发光地衣、岩浆）的
 // voxelData 中心色 midCoord 采样可能为 0/很暗（贴图大部分透明黑）→ albedo 乘进
 // blocklight 后趋 0 → 光源不发光。给 blocklight 反弹一个不依赖采样色的最小 albedo。
+#ifndef VOXEL_GI_BLOCK_MIN_ALBEDO
 #define VOXEL_GI_BLOCK_MIN_ALBEDO 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 方块光反弹最小 albedo 底
+#endif
 // NOLIGHT 兜底（NOLIGHT_BRIGHTNESS 思路）：命中固体/出界外的闭塞处底光，
 // 洞穴深处不黑死。默认 7e-6 是物理尺度（白天物理辐照度 ~300），
 // 本项目 0-1 尺度（skyMapTex 归一化后白天 ~0.1 级注入），等效底光取 0.0005（可调）。
@@ -213,10 +237,14 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // ------ 每像素漫反射追踪参数（阶段③，随 VOXEL_GI_TRACE 开关生效）------
 // [FIX 2026-08-05] 默认 24 → 32：用户反馈"光线传播距离太短"，加大追踪最大步进让
 // 阳光反弹/方块光能传更远；已暴露为 GUI 滑条。
+#ifndef VOXEL_TRACE_DISTANCE
 #define VOXEL_TRACE_DISTANCE 32 // [8 16 24 32 48 64 96] 追踪光线最大步进体素数（越大传播越远，性能略降）
+#endif
 // 追踪 GI 强度总旋钮：信号量级 = 追踪值 × STRENGTH（命中/出界已按 语义全强度输出，
 // 过亮就降这个，过暗就升；洞穴不过量由 lightmap 泄漏衰减保证，不靠压低天空值）。
+#ifndef VOXEL_GI_TRACE_STRENGTH
 #define VOXEL_GI_TRACE_STRENGTH 1.5 // [0.0 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0] 追踪 GI 总强度（过亮降、过暗升）
+#endif
 // 物理直射辐照度 → 0-1 尺度换算基准（GlobalStorage.comp：directIlluminance = 128×(sun+moon)，
 // 白天约 300；除以该值即得 0-1 尺度阳光色——自带昼夜明暗 + 暖色温，见 VoxelTracing 阳光弹射）
 #define VOXEL_SUN_REFERENCE 300.0
@@ -229,14 +257,18 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 已暴露为 GUI 滑条（shaders.properties sliders），可在光影设置里直接调。
 // [2026-08-19] 夜晚月光反弹强度：moonlightMult(~0.001) 让 directIlluminance 夜晚≈0 →
 // 体素 GI 无月光反弹。此为独立方向化月光反弹倍率（月亮向面弹射），夜晚才有间接月光 GI。
+#ifndef VOXEL_MOON_STRENGTH
 #define VOXEL_MOON_STRENGTH 2.0 // [0.0 0.1 0.25 0.5 0.75 1.0 1.5 2.0] 夜晚月光反弹强度（0=关闭月光反弹）
+#endif
 // [2026-09-23 倍率回正] 32.0 → 1.0。原倍率是历史补丁（注释链：1.0→2.0→8.0→32.0，都是为
 // "让阳光反弹可见"而抬），但它把物理正确的阳光项（directIlluminance/VOXEL_SUN_REFERENCE
 // 已是 0-1 尺度）放大了 32 倍 ⇒ 被太阳直射的**彩色方块**（红石/红羊毛等）反弹出
 // 亮度极高、颜色为反照率原色的溢出像素，且只在 sunVis=1 处触发 ⇒ 随相机位置出现/消失。
 // 现在有降噪链与 firefly 中值，不需要靠过曝来"看见"；要更亮请调 VOXEL_GI_TRACE_STRENGTH
 // 或修天光/环境光链路，不要用本条倍率。
+#ifndef VOXEL_TRACE_SUN_STRENGTH
 #define VOXEL_TRACE_SUN_STRENGTH 1.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
+#endif
 // [2026-10-02] 阳光反弹的**代码侧增益**（不占 GUI 滑条，与上面的强度滑条相乘）。
 // 为什么需要：追踪端本质是"半球 1 采样 + 时域平均"的估计器，收敛值 = 命中率 × 单次量级。
 // 开阔地上多数射线飞向天空（不命中任何面）⇒ 命中率很低 ⇒ 平均值天然"有但很弱"，
@@ -247,17 +279,23 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 追踪端出界天空（原创方向天光：skyMapTex 方向辐射 × 上半球权重 × lightmap 门控）。
 // 户外（skyLightmap≥0.23）全开：开阔地面出界光线呈方向性天光；
 // 洞穴/室内（skyLightmap≈0）无天光，不会过量。若整体过亮用 VOXEL_GI_TRACE_STRENGTH 旋钮。
+#ifndef VOXEL_GI_TRACE_SKY_STRENGTH
 #define VOXEL_GI_TRACE_SKY_STRENGTH 3.0  // [0.0 0.2 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 40.0 48.0] 追踪端出界方向天光倍率
+#endif
 // （新增环境光控制宏已移除 2026-08-06：环境光还原旧版纯 skySH 行为）
 
 // [2026-08-21] 射线天光门控模式：出界天光是否乘原版 lightmap 漏光门控。
 // 0=只有出界判定（gate 全开，只要射线出界就上天光，不受 lightmap 影响）；
 // 1=出界+原版光照门控（VoxelSkyLeakGate，洞穴/半遮挡按 lightmap 衰减，现状）。
+#ifndef VOXEL_TRACE_SKY_GATE
 #define VOXEL_TRACE_SKY_GATE 1 // [0 1] 射线天光门控：0=只有出界判定 1=出界+原版光照
+#endif
 // [2026-08-21] IRC 天光门控模式：IRC 出界天光是否用体素 skylight 可见度判定。
 // 0=现有门控（ircSkyVis = saturate(hitSkylight*2-1)，封闭空间写胜残留会压低）；
 // 1=只根据射线是否出界（出界即满强度，不查 hitSkylight）。
+#ifndef VOXEL_IRC_SKY_GATE
 #define VOXEL_IRC_SKY_GATE 0 // [0 1] IRC 天光门控：0=现有门控 1=只根据射线出界
+#endif
 // [2026-08-21] 网格内 SH 球谐光混合强度：体素网格内环境光原本完全交给 GI（方向性天光），
 // SH 被屏蔽 → 朝下表面只靠 GI 自反弹（距离有限）易死黑。恢复网格内 SH 加法混入——
 // 用 SH 全空间辐照度（含下半球）做环境底，补朝下表面，且随昼夜自动变化。
@@ -265,6 +303,8 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // [2026-10-06] 默认 0.5 → 0.0：此前 DeferredLight 用 `#if VOXEL_GI_SH_MIX > 0.0` 判断，而 Iris 的
 // jcpp 只按整数部分比较浮点（0.5 → 0）⇒ 该分支恒假 ⇒ 本项**从未生效**。接线修好后（改运行期判断），
 // 为守住"默认观感不变"把默认值归零（= 修好接线但效果默认关），要用请把滑条拉到 0.1~1.0。
+#ifndef VOXEL_GI_SH_MIX
 #define VOXEL_GI_SH_MIX 0.0 // [0.0 0.05 0.1 0.15 0.2 0.3 0.5 0.75 1.0] 网格内 SH 球谐光混合强度（加法混入环境光）
+#endif
 
 #endif // VOXEL_GI_LIGHTING_INCLUDED

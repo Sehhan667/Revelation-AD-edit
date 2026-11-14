@@ -79,7 +79,10 @@ layout (location = 2) out vec4 fastHistory;
 // colortex2 的上一帧内容（帧末由 GIHistoryStore 覆盖成"上一帧的空间滤波最终输出"）。
 // [2026-11-11 官方拓扑] 历史 = **colortex2 的上一帧内容**。
 // 官方：TA 读 gHistory_Diff（PERMANENT），而写它的是 PostBlur 的输出（见 GIHistoryStore.comp）。
-// 我们让 GIHistoryStore 在帧末把 colortex2 覆盖成本帧 EAWF 的最终输出 ⇒ 与官方同构。
+// [2026-11-13 默认改了] 上面这条「帧末覆盖成空间滤波输出」现在只在 GI_RECURRENT_HISTORY=1 时成立；
+// **默认是 0（SVGF 式）**，GIHistoryStore 不再回写 rgb ⇒ 历史就是本 pass 自己写下的原始累积。
+// 理由与取舍见 settings.glsl 的 GI_RECURRENT_HISTORY 说明：细节留在历史里，靠噪声下降自己浮出，
+// 而不是靠逐帧滤波把细节磨掉后收半径找回来。`.a`（累积帧数）两条路都不动。
 // HistoryFix 已移到 deferred5（TA 之后），它的输出只喂 Blur，**不再进入历史**。
 #define GI_HISTORY_TEX colortex2
 
@@ -113,10 +116,17 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     vec3 prevViewPos = transMAD(gbufferPreviousModelView, prevWorldPos); // To previous frame's view space
 	vec3 prevNDCPos = projMAD(gbufferPreviousProjection, prevViewPos) * rcp(-prevViewPos.z); // To previous frame's NDC space
 
-    #ifdef SHOULD_APPLY_JITTER
-        prevNDCPos.xy += taaJitterPrev;
-    #endif
-    vec2 prevCoord = prevNDCPos.xy * 0.5 + 0.5;
+	// [2026-11-13 去掉重投影上的 TAA jitter] 这里原来写 `prevNDCPos.xy += taaJitterPrev;`。
+	// 但 GI 信号本身**不含 jitter**：DiffuseIndirect.comp 里零处用到 taaJitter，
+	// trace 的屏幕位置就是像素中心（`texelToUv(renderTexel)`）。
+	// 给重投影额外加一个亚像素偏移，等于人为把 4 个历史 tap 每帧挪动 0~1 纹素：
+	//   · 静止时这是唯一还在动的量 ⇒ `maxGeometryWeight` 在几何边缘两侧来回采
+	//     ⇒ 反复跨过 conf 阈值 ⇒ A 被重置 ⇒ alpha 从 0.8% 跳到 81%
+	//     ⇒ 重新灌入一帧 1spp 样本（弱光下常接近 0）⇒ 忽然出现又消失的黑点。
+	// 官方 NRD 的 TA 重投影用的是 motionMatrix，同样不含 TAA jitter（jitter 只在最终
+	// 全分辨率 resolve 时才参与）。去掉后 prevCoord 在静止时恒定，tap 固定。
+
+	vec2 prevCoord = prevNDCPos.xy * 0.5 + 0.5;
 
     // a 默认 0（可靠）；不可靠/重投影失效路径在下方置 1
     // 视深用 `ScreenToViewDepth(depth)`（纯投影逆变换，与 taaJitter 无关）——
@@ -140,6 +150,11 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
         // [2026-08-28 ] 上帧该像素的可信度 = 4 tap 里几何一致权重的最大（不含双线性）。
         // 几何一致（静止）→ 接近 1；遮挡/移动/几何剧变 → 骤降，驱动累积帧数连续衰减。
         float maxGeometryWeight = 0.0;
+        // 官方 `smbFootprintQuality = sqrt( bilinear(occlusionBits) )`：逐 tap 的几何判据按
+        // 双线性权重平均。[2026-11-14] 用**连续**的切平面权重而不是 0/1 二值位：官方二值位配
+        // 的是 frustum 尺度的容差，本包的深度判据本身是连续量，硬阈值 0.5 会让掠射面/凹凸面
+        // 在转头时跨阈值 ⇒ fpq 从 1 掉到 0.5 ⇒ 累积速度被乘半，表现为「没出屏也突然变噪」。
+        float footprintSum = 0.0;
 
         // Custom bilinear filter
         #ifdef VXGI_FULLRES
@@ -206,14 +221,29 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 float _tapOffTexels = length(vec2(sampleTexel - texelPos));
                 float _tapTol = depthTol + _tapOffTexels * giDepthGrad;   // 双线性落点补偿（同帧口径）
 
-                float tapGeo = saturate(1.0 - distance(prevViewPos.z, sampleAux.z) / _tapTol);
-                tapGeo *= linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
-                if (_dbgForceHistory) tapGeo = 1.0;   // 诊断：取消几何拒绝
+                // 遮挡位只由**深度/切平面**判据决定（官方 TA 的法线位阈值是 cos(89°)，
+                // 几乎恒真；把带法线的 tapGeo 二值化会在凹凸表面过度衰减累积速度）。
+                float tapPlane = saturate(1.0 - distance(prevViewPos.z, sampleAux.z) / _tapTol);
+                float tapGeo = tapPlane * linearstep(0.5, 0.8, saturate(dot(OctDecodeSnorm(sampleAux.xy), worldNormal)));
+                if (_dbgForceHistory) { tapPlane = 1.0; tapGeo = 1.0; }   // 诊断：取消几何拒绝
                 maxGeometryWeight = max(maxGeometryWeight, tapGeo);
+                footprintSum += bilinearWeight[i] * tapPlane;
 
                 float weight = tapGeo * bilinearWeight[i];
 
-                prevDiffuse += sampleIrradiance * weight;
+                // [2026-11-13 官方帧数闭环] 官方 TA 读的 data1.x 是**上一帧 TS 输出**的
+                // 累积速度（TS 里 `data1.x = lerp(min(N,3), N, antilag)` 后由 PackInternalData
+                // 加一并 clamp）。本项目此前读 colortex2.a（TA 自己写下的值），TS 的 antilag
+                // 调整从未回流 ⇒ 光照突变时 TS 压低了历史权重，下一帧 TA 却仍按长历史累积。
+                // colortex23.a 正是上一帧 TS 的 ageOut（deferred11 最后写它），改读它。
+                // .a 携带的是帧数，与颜色一起按同一组权重双线性平均（官方 internalData 也走双线性）。
+#ifdef VOXEL_GI_NRD_ACTIVE
+                float _ageSample = texelFetch(colortex23, sampleTexel, 0).a;
+#else
+                float _ageSample = sampleIrradiance.a;
+#endif
+                if (!(_ageSample >= 0.0) || _ageSample > 1e6) _ageSample = 0.0;
+                prevDiffuse += vec4(sampleIrradiance.rgb, _ageSample) * weight;
                 prevFast += texelFetch(colortex21, sampleTexel, 0).rgb * weight;
                 sumWeight += weight;
             }
@@ -239,24 +269,21 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 prevDiffuse.rgb = RGBToYCoCg(max(_rgbHist, vec3(0.0)));
             }
 
-            // [2026-11-10] 累积计数器改为**二值接受 + 整数计数**：
-            //   几何可信 → A+1；不可信 → A=1（重来）。
-            // 不能用连续衰减 `A*conf+1`：它的稳态是 A* = 1/(1-conf)，conf 0.97→0.98 就让 A* 从 33
-            // 跳到 50 ⇒ ① conf 的逐帧抖动被放大成**整屏闪烁**；② 每像素 conf 的微小差异被铺成
-            // **条纹/摩尔纹**（地面一片黄、树梢满天星）。官方的 accumSpeed 能保持连续，是因为它是
-            // 从历史里双线性过滤出来的平滑量；我们的 conf 是当场算的、带逐像素噪声，只能二值化。
-            // 连续的几何权重仍然参与颜色混合（上面 tapGeo），所以边缘质量不受影响。
+            // [2026-11-13 官方 TA:903] 累积速度的置信度衰减：
+            //   diffAccumSpeed *= lerp( diffHistoryConfidence, 1.0, 1.0 / (1.0 + diffAccumSpeed) )
+            // 官方 +1 发生在帧末的 PackInternalData（TS 之后），这里等价为「先 +1、再乘衰减」。
+            // diffHistoryConfidence = sqrt( 双线性加权后的逐 tap 平面权重 )（见上：用连续值，
+            // 避免硬阈值在转头时把 fpq 从 1 打到 0.5）。
+            // [替代的旧实现] 二值滞回（可信 +1 / 边缘 -1 / 不可信归 1）。它在 conf 0.3~0.5 时
+            // 一帧只掉 1 帧，而官方一帧就把 30 帧乘到 9~15 帧 ⇒ 边缘与掠射面的拖影慢十几倍。
             #ifdef OFFLINE_RENDER
                 const float _capA = 1024.0;
             #else
                 const float _capA = accumCap;
             #endif
-            // 双阈值滞回：起步要求 conf>0.5，已经在累积的只要求 >0.3。
-            // 单阈值时 conf 在 0.5 附近抖（掠射面 / TAA 亚像素抖动都会让它抖几个百分点）⇒
-            // 一帧接受一帧重置 ⇒ A 在 1 和 cap 之间翻 ⇒ 视图 5 整片黑白闪。
-            // 真去遮挡（conf≈0）仍会被重置，边缘质量不变。
-            float _confThreshold = (prevDiffuse.a > 1.5) ? 0.3 : 0.5;
-            integratedDiffuse.a = (maxGeometryWeight > _confThreshold) ? min(prevDiffuse.a + 1.0, _capA) : 1.0;
+            float _ageRead = min(prevDiffuse.a + 1.0, _capA);
+            float _fpq = sqrt(saturate(footprintSum));
+            integratedDiffuse.a = _ageRead * mix(_fpq, 1.0, rcp(1.0 + _ageRead));
 
             // [输入采样 = REBLUR prepass 的输出] 官方把 prepass 做成一个**独立 pass**
             // (diffusePrepassBlurRadius = 30；注释：must be used in case of badly defined
@@ -265,36 +292,24 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             // 我们已按官方把它实现为 program/diffuse/GIPrepass.comp（deferred1_b），
             // 输出在 colortex22：rgb = 重用后的 YCoCg 输入，a = 归一化命中距离。
             // 这里只负责取它——不再在采样处顺手平均（那是之前的近似做法）。
-            // 注意：colortex22 只在 NRD 模式由 deferred1_b 写入；非 NRD 模式下它是空的，
-            // 必须回退到追踪端自己的输出（colortex3），否则非 NRD 路径会读到未初始化的缓冲。
-#ifdef VOXEL_GI_NRD_ACTIVE
+            // [2026-11-13 修正] 旧注释写「colortex22 只在 NRD 模式由 deferred1_b 写入」是错的：
+            // deferred1_b 没有任何条件门控，prepass **每帧都在算**、colortex22 每帧都是有效值。
+            // 所以 VXGI 路径（含关降噪）统一读 colortex22；只有 SSILVB 仍读 colortex3。
+            // 这样「光追降噪」开关关掉后，看到的是**降噪器真正收到的信号**，而不是 prepass 之前的
+            // 裸追踪 —— 后者比真实输入脏一档（少 8 tap / 半径 30 纹素的空间重用），容易误判。
+#ifdef GI_ACTIVE_VXGI
             integratedDiffuse.rgb = texelFetch(colortex22, texelPos, 0).rgb;
 #else
             integratedDiffuse.rgb = texelFetch(colortex3, texelPos, 0).rgb;
 #endif
 
-            // [官方 convergenceSettings] f = 1 / (1 + k*N)，其中
-            //     k = s * lerp( b, 1, saturate( N / (p * maxAccumulatedFrameNum) ) )
-            // 官方参数 s = 1.0（总尺度）、b = 0.2（短历史行为）、p = 0.8（b 影响的比例）。
-            // 意图（原文）：b < 1 「历史重置后做更多降噪 —— a blurry result is better on average
-            // than a dirty result」；s > 1 「短累积时做更少降噪（干净信号不该被抹）」。
-            // N = 1 时 alpha ≈ 0.81（原 1/N 写法是 1.0：第一帧 100% 用单帧样本 ⇒ 闪）。
-            // N = 30 时 alpha ≈ 1/31，与原来 1/N 基本一致。
-            float alpha;
-            {
-                const float _convS = 1.0;    // 官方 s
-                const float _convB = 0.2;    // 官方 b
-                const float _convP = 0.8;    // 官方 p
-                float _N = max(integratedDiffuse.a, 1.0);
-                float _t = saturate(_N * rcp(max(_convP * accumCap, 1.0)));
-                float _k = _convS * mix(_convB, 1.0, _t);
-                alpha = rcp(1.0 + _k * _N);
-            }
-
-            // [2026-11 回正] 原"新像素 alpha 封顶 1/8"已删除。它把年轻像素的混合率压到比
-            // 官方 b=0.2（N=1 时 alpha=0.83）还小一个数量级，方向与官方相反：官方要求新像素
-            // 快速采纳本帧。之所以能删，是因为新像素的稳定性现在由 prepass（30px 稠密化）与
-            // history fix（邻域重建）承担，不再需要靠压低混合率硬拖。
+            // [2026-11-13 官方修正] TA 的混合率是**纯 1/(1+N)**（TA:949），不是
+            // `GetAdvancedNonLinearAccumSpeed`。后者是 Blur 半径与 TS 历史权重用的公式
+            //（带 s=1 / b=0.2 / p=0.8），管的是「空间滤波多宽、稳定化历史多重」，
+            // **不参与时域累积本身**。
+            // 旧实现把 advanced 公式搬到 alpha：N=1 时 alpha 0.83（官方 0.5）、N=30 时两者接近。
+            // 也就是说新像素/刚重置像素采纳本帧太快 ⇒ 移动与新露出区域更噪。
+            float alpha = rcp(1.0 + max(integratedDiffuse.a, 0.0));
 
             // [fast-history clamp] 官方机制在 **GIHistoryFix**（deferred5）里执行：
             // 把空间滤波后的长历史亮度夹到「未经滤波的 6 帧短历史」的 mean ± k·σ
@@ -335,22 +350,24 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             vec3 _currRaw = integratedDiffuse.rgb;   // 短历史必须用**未经压制**的本帧输入（见下）
             integratedDiffuse.rgb = mix(min(prevDiffuse.rgb, FP16_MAX), _currRaw, alpha);
 
-            // [官方 firefly suppressor] 逐字对齐 `REBLUR_TemporalAccumulation` 的 diffuse 分支：
-            //   maxRel  = gFireflySuppressorMinRelativeScale + 38.0 / (accumSpeed + 1.0)
-            //   amount  = accumSpeed * maxBlurRadius * 0.1  →  饱和
-            //   luma    = lerp( luma(result), min( luma(result), luma(history) * maxRel ), amount )
-            // 判据是「**混合结果**比**历史**亮太多」——即本帧 1spp 的离群亮点，被按历史亮度封顶；
-            // 阈值随累积速度衰减（N=1 时 21 倍 ≈ 不压，N=63 时 2.6 倍），强度随 N 增长。
-            // 短历史（fastHistory）仍取原始 _currRaw：官方 fast 也用 `GetLuma(diff)`，不受压制影响。
+            // [官方 firefly suppressor] 对齐 `REBLUR_TemporalAccumulation` 的 diffuse 分支
+            //（TA:960-979）：
+            //   maxRel = gFireflySuppressorMinRelativeScale(2.0) + 38.0 / (accumSpeed + 1.0)
+            //   amount = accumSpeed · gMaxBlurRadius · 0.1;  amount /= 1 + amount
+            //   luma   = lerp( luma(result), min(luma(result), luma(history)·maxRel), amount )
+            //
+            // [2026-11-13 修正] 这里的 accumSpeed 就是**累积帧数 N**（官方 TA 的 diffAccumSpeed），
+            // 不是归一化的 alpha。旧注释写成「alpha 值域 0~1」是误读：按 alpha 算的话，
+            // 稳定像素（N=30 ⇒ alpha≈0.032）得到 maxRel≈38.8、amount≈0.10，
+            // 官方是 maxRel≈3.23、amount≈0.99 ⇒ 亮点几乎不受抑制。
+            // amount 也确认是 x/(1+x)，不是 saturate(x)（官方 TA:964-965）。
+            // 短历史（fastHistory）仍取原始 _currRaw：官方 fast 也用 GetLuma(diff)，不受压制影响。
             {
-                float _ffN      = max(prevDiffuse.a, 1.0);
-                float _ffMaxRel = 2.0 + 38.0 / (_ffN + 1.0);
-                // [2026-11-11 半径同步] 官方 amount = accumSpeed · gMaxBlurRadius · 0.1，
-                // gMaxBlurRadius = 30（NRD rect 像素）。这里此前写死 8.0 —— 那是旧 4 级 a-trous
-                // 时代的基础半径；EAWF 重写为官方 Blur+PostBlur 后半径已是
-                // NRD_RADIUS_PX·10 = 30，8.0 让 N=1 时强度只有 0.44（官方 0.75、N≥1 基本饱和）。
-                float _ffAmt    = _ffN * (NRD_RADIUS_PX * 10.0) * 0.1;
-                _ffAmt /= 1.0 + _ffAmt;
+                float _ffSpeed  = max(integratedDiffuse.a, 0.0);
+                float _ffMaxRel = 2.0 + 38.0 / (_ffSpeed + 1.0);
+                // 官方 amount 里的 gMaxBlurRadius = 30（NRD rect 像素）= NRD_RADIUS_PX*10。
+                float _ffAmt    = _ffSpeed * (NRD_RADIUS_PX * 10.0) * 0.1;
+                _ffAmt          = _ffAmt / (1.0 + _ffAmt);
                 float _ffLuma   = max(integratedDiffuse.r, 1e-6);
                 float _ffCap    = prevDiffuse.r * _ffMaxRel;
                 integratedDiffuse.rgb *= mix(_ffLuma, min(_ffLuma, _ffCap), _ffAmt) / _ffLuma;
@@ -359,15 +376,14 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
                 // FAST_RELATIVE_INTENSITY = 1.5）。不压的话单个火点会以 1/6 权重进入短历史并在
                 // 其中停留 ~6 帧，把「历史裁剪」的参考区间撑宽 → 该区域几帧内几乎不裁剪。
                 // [2026-11-11 官方对齐] fast history 的累积速度 = min(data1.x, maxFastAccumulatedFrameNum=6)，
-                // 混合率 = 1/(1+N)（NRDSettings.h:284、TA:988-994）。旧写法固定 1/6：
-                // 新像素太慢（0.167，官方是 0.5）、老像素略快 ⇒ 新露出区域要靠 6 帧才跟上。
-                float _fastN = min(max(prevDiffuse.a, 1.0), 6.0);
+                // 混合率 = 1/(1+N)（NRDSettings.h:284、TA:988-994）。
+                float _fastN = min(_ffSpeed, 6.0);
                 vec3 _ffFast = mix(prevFast, _currRaw, rcp(1.0 + _fastN));
                 float _ffFastL = max(_ffFast.r, 1e-6);
                 _ffFast *= mix(_ffFastL, min(_ffFastL, prevDiffuse.r * _ffMaxRel * 1.5), _ffAmt) / _ffFastL;
 
-                // 短历史：固定 1/6 混合率（官方 maxFastAccumulatedFrameNum = 6）、**永不掺滤波结果**
-                // ⇒ 几帧级的新鲜参考（REBLUR fastHistory）。
+                // 短历史：混合率 1/(1+min(N, 6))（官方 maxFastAccumulatedFrameNum = 6）、
+                // **永不掺滤波结果** ⇒ 几帧级的新鲜参考（REBLUR fastHistory）。
                 // .a 存**本帧的几何可信度**（诊断用，见 GI_DEBUG_VIEW 6 档）：
                 // 累积帧数的稳态只取决于它（a* = 1/(1-w)），所以 a 停在半途就说明它在扣权重。
                 fastHistory = vec4(_ffFast, saturate(maxGeometryWeight));
@@ -392,9 +408,27 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
             //（官方 TA 的 disocclusion 分支：diff = gIn_Diff, data1.x = 0 ⇒ 下一帧视为 1）。
             // 旧实现是"取 colortex2 里的旧值、帧数压到 1~3" ⇒ 去遮挡像素继续复用旧的滤波值，
             // 移动时表现为**沿着物体边缘拖一条**。改成用本帧 prepass 结果（已做过 30 纹素空间重用），
-            // 既新鲜又不脏。
+            // 既新鲜又不脏。降噪开启时**只取中心**，不做邻居平均（保留官方口径的锐度）。
             integratedDiffuse.rgb = texelFetch(colortex22, texelPos, 0).rgb;
             integratedDiffuse.a = 1.0;
+        }
+    #elif defined GI_ACTIVE_VXGI
+        {
+            // [2026-11-13] 关降噪的 VXGI：同样用 prepass 输出（colortex22），但保留 5-tap 十字平均。
+            // 为什么保留：prepass 的 30 纹素核只覆盖"同一表面"的邻居，新露出区域的边界以外
+            // 还没被它平均到；这一层把跨界样本先摊平，避免新像素直接拿单点出图（实机会看到
+            // 新像素明显更脏）。为什么读 22 而不是 3：22 才是降噪器真正收到的信号，读 3 等于
+            // 把这个诊断档变成"prepass 之前"的样子，比真实输入脏一档，容易误判。
+            ivec2 _c = clamp(texelPos, ivec2(0), canvasEnd - 1);
+            vec3 _s = texelFetch(colortex22, _c, 0).rgb;
+            float _w = 1.0;
+            const ivec2 _o[4] = ivec2[4](ivec2(1,0), ivec2(-1,0), ivec2(0,1), ivec2(0,-1));
+            for (int _i = 0; _i < 4; ++_i) {
+                ivec2 _t = clamp(_c + _o[_i], ivec2(0), canvasEnd - 1);
+                _s += texelFetch(colortex22, _t, 0).rgb;
+                _w += 1.0;
+            }
+            integratedDiffuse.rgb = _s * rcp(_w);
         }
     #else
         // [2026-11-11 半分辨率契约修正] 这里原来是 `textureLod(colortex3, currCoord, 3.0)`，
@@ -501,6 +535,12 @@ void main() {
         float _stableFrameTime = global.smoothedFrameTime > 1e-6
                                ? global.smoothedFrameTime
                                : max(frameTime, 1e-4);
+        // [2026-11-13 试过 32 帧下限，已回退] 动机：这一层「时间 ÷ 帧时间」在低帧率下会把
+        // 累积帧数一起压小（5 fps、2 s ⇒ 只有 10 帧）。但实测（11 fps，块内时域标准差 B=16）
+        // 与直觉相反：cap 22 → 0.24、cap 32 → 0.46，**cap 越大越吵**。
+        // 原因：cap 不只喂 alpha，还喂 EAWF 的 NLAS（minHitDistWeight ∝ NLAS）和 TS 的
+        // accumSpeed（antilag 灵敏度 ∝ accumSpeed）⇒ cap 大 ⇒ 空间权重变小 + 历史更容易被拒。
+        // 所以「多累积几帧」在这套实现里不是单调收益，不要再想当然地加下限。
         float _targetCap = clamp(GI_ACCUM_TIME / (_stableFrameTime * max(GI_EFFECTIVE_SPP, 1.0)),
                                  8.0, SSILVB_MAX_ACCUM_FRAMES);
         // [2026-11-10 去掉 8 帧量化] 量化本意是"fps 抖动不该改变档位"，但档位边界上它会
@@ -517,7 +557,9 @@ void main() {
             uint _matPack = loadMaterialPack(renderTexel).x;
             float _lmMax = max(Unpack2x8UX(_matPack), Unpack2x8UY(_matPack));   // 方块光 / 天空光取大者
             float _dark = 1.0 - smoothstep(0.10, 0.60, _lmMax);
-            accumCap = mix(accumCap, accumCap * 4.0, _dark);
+            // [2026-11-13] ×4 之后要回到**硬上限**：下限抬到 32 帧后 ×4 = 128 帧，
+            // 5 fps 下是 25 秒历史，暗处拖影会盖过收益；GUI 上「最大累积帧数」也应名副其实。
+            accumCap = min(mix(accumCap, accumCap * 4.0, _dark), SSILVB_MAX_ACCUM_FRAMES);
         #endif
         TemporalFilter(texelPos, screenPos, worldNormal, accumCap, giDepthGrad);
     }

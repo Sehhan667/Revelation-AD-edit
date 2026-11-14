@@ -131,11 +131,28 @@ layout (rgba16f) restrict uniform image2D colorimg25;
 #ifndef NRD_PLANE_DIST_SENS
 	#define NRD_PLANE_DIST_SENS 0.02
 #endif
-#define LOBE_ANGLE_FRACTION 0.15   // lobeAngleFraction
+// [2026-11-13 修正] 官方 `gLobeAngleFraction = lobeAngleFraction²`（Reblur.cpp:376），
+// 默认 0.15 ⇒ 实际传入 0.0225。此前直接用 0.15，稳定区允许跨法线约 20.5°，
+// 官方只有约 9.7° ⇒ 跨棱/凹凸混色、细节被抹。
+#define LOBE_ANGLE_FRACTION 0.0225
 #ifndef NRD_MIN_HITDIST_WEIGHT
 	#define NRD_MIN_HITDIST_WEIGHT 0.1
 #endif
 #define NORMAL_ENCODING_ERROR 0.0059  // NRD_NORMAL_ENCODING_ERROR（≈1.5/255）
+
+// 两遍（Blur / PostBlur）由 deferred6 / deferred7 在 include 前定义。兜底给 0，保证单独展开也能编译。
+#ifndef FILTER_PASS_INDEX
+	#define FILTER_PASS_INDEX 0
+#endif
+
+// 低频补刀（见文件末尾与 settings.glsl）。默认 0 = 关（非递归配套实验失败，见 settings 注释）。
+#ifndef NRD_WIDE_RADIUS
+	#define NRD_WIDE_RADIUS 0.0
+#endif
+// 每个宽 tap 的权重上限（相对中心样本的 1.0）。8 个 tap × 0.5 × 高斯 0.52~0.85 × 亮度 0.85
+// ≈ 2.0 的总权重，对上中心 1 + 主循环的 ~2~2.4 ⇒ 宽核约占最终结果的 40%。
+// 这是「把低频压下去」和「不让平坦区糊成一片」之间的取舍点：调大更干净也更软。
+#define NRD_WIDE_WEIGHT 0.5
 
 // 官方 g_Special8（Common.hlsli:207）：4 个轴点（半径 1.0）+ 4 个对角点（半径 0.25·√2 = 0.5）。
 // xy = 单位盘内的方向×半径分数，z = 高斯半径分数（GetGaussianWeight 的输入）。
@@ -200,7 +217,28 @@ void main() {
 	if (any(isnan(centerSample.rgb)) || any(isinf(centerSample.rgb))) centerSample.rgb = f16vec3(0.0);
 
 	// 时域累积帧数（colortex2.a），驱动 nonLinearAccumSpeed。
+	// [2026-11-13 半径空间低通] 直接取本像素的 A，会让「新露出区域（A=1~5）」与「稳定区域
+	//（A=120）」的交界处出现**半径阶跃**：sqrt(1/5)*maxBlurRadius ≈ 18 纹素，
+	// 而稳定区 sqrt(1/121)*maxBlurRadius ≈ 3.6 —— 差 5 倍。快速转头时这条界线肉眼可见。
+	//
+	// 但低通**只能向「更糊」的方向传播**（取 min），这一点是必须的：
+	// 如果直接用平均值，新露出的像素会被邻居的高 A 拉高 ⇒ 半径变小 ⇒ 本该「先糊着」
+	// 的新区域直接以低半径出图 ⇒ 移动时整片噪（实测：碎点修好之后，移动变成本子最严重的问题）。
+	// 取 min(自身 A, 5-tap 平均 A) 后：
+	//   · 新像素（A=1，邻居 120）⇒ 仍取 1 ⇒ 半径保持最大 ⇒ 先糊；
+	//   · 稳定像素（A=120，邻居里有 1）⇒ 取 96 ⇒ 半径略微变大 ⇒ 界线变成 1 像素的渐变。
+	// 这正是 REBLUR「越久越清晰」的方向：移动时先糊，停下后逐步锐化，反向不成立。
 	float frameIndex = texelFetch(colortex2, texelPos, 0).a;
+	float _frameAvg;
+	{
+		ivec2 _aEnd = canvasEnd - 1;
+		_frameAvg = frameIndex
+		          + texelFetch(colortex2, clamp(texelPos + ivec2( 1,  0), ivec2(0), _aEnd), 0).a
+		          + texelFetch(colortex2, clamp(texelPos + ivec2(-1,  0), ivec2(0), _aEnd), 0).a
+		          + texelFetch(colortex2, clamp(texelPos + ivec2( 0,  1), ivec2(0), _aEnd), 0).a
+		          + texelFetch(colortex2, clamp(texelPos + ivec2( 0, -1), ivec2(0), _aEnd), 0).a;
+		_frameAvg = min(frameIndex, _frameAvg * 0.2);
+	}
 
 	// 画布坐标 → 视空间。「texelToUv」是全分辨率像素尺寸，画布上直接用会压 UV。
 	vec2 centerCanvasUv = (vec2(texelPos) + 0.5) / vec2(canvasEnd);
@@ -232,8 +270,16 @@ void main() {
 	                       : max(frameTime, 1e-4);
 	float _accumCap = clamp(GI_ACCUM_TIME / (_stableFrameTime * max(GI_EFFECTIVE_SPP, 1.0)),
 	                        8.0, SSILVB_MAX_ACCUM_FRAMES);
-	float fade = saturate(frameIndex * rcp(max(_accumCap, 1.0)));
-	float nonLinearSpeed = rcp(1.0 + fade * max(frameIndex, 1.0));
+	// 用空间低通后的 A 算 NLAS：半径与权重都跟着连续变化，新/老区域之间不再有台阶。
+	// 官方 GetAdvancedNonLinearAccumSpeed（REBLUR_Common.hlsli:303-310）：
+	//   f = saturate( N / (1 + maxAccumulatedFrameNum · p) )
+	//   e = s · lerp( b, 1, f )
+	//   NLAS = 1 / (1 + e · N)        s = 1 / b = 0.2 / p = 0.8（NRDSettings.h:265-267）
+	// 旧实现是 1/(1 + saturate(N/cap)·N)，少了 b=0.2 的地板：新像素 NLAS 0.968（官方 0.812），
+	// 半径反而比官方小 ⇒ 新露出区域更锐、更噪。
+	float _nlasF = saturate(_frameAvg * rcp(1.0 + _accumCap * 0.8));
+	float _nlasE = mix(0.2, 1.0, _nlasF);
+	float nonLinearSpeed = rcp(1.0 + _nlasE * max(_frameAvg, 0.0));
 
 	// 官方 GetHitDistFactor：saturate(hitDist_m / frustumSize)。
 	// colortex26 存 normHit = saturate(hitDist_m / (A + |z|·B))，先解码回米再按官方比值算。
@@ -254,6 +300,55 @@ void main() {
 	float blurRadius = saturate(SPATIAL_RADIUS_SCALE * sqrt(hitDistFactor * nonLinearSpeed))
 	                 * (NRD_RADIUS_PX * 10.0);
 	blurRadius = max(blurRadius, 1.0);
+
+	// [2026-11-13 半径量化] tap 用 `texelPos + ivec2(round(dir))` 是**最近邻**，
+	// round 的量化误差是 ±0.5 纹素：
+	//   · 刚转头（A=1、NLAS≈1）⇒ 半径 ≈ maxBlurRadius，误差 1~2%，看不出来；
+	//   · 稳定后（A=120、NLAS≈0.008）⇒ 半径收缩到 3.6，GI 阴影边缘 hitDistFactor 小，
+	//     还会掉到 1.6~2 纹素 ⇒ 相对误差 25~30%。
+	// 而 normHit 是 EMA（每帧混 15%），半径逐帧微动 ⇒ tap 在整数纹素之间来回跳
+	// ⇒ 采到不同纹素、输出跳变，实机表现就是「弱光 + GI 阴影边缘的劈里啪啦小点，
+	// 且刚转头不闪、过一会才闪」。
+	// 量化到 0.5 档后，同一档内半径恒定、8 个 tap 图案完全固定；只有跨 0.5 档时才换一次图案。
+	// 代价：滤波强度变成离散档位（1.0 / 1.5 / 2.0 …），但挡位切换是低频的（半径随 EMA 缓慢变）。
+	// [2026-11-13 远距离半径下限] `hitDistFactor = saturate(hitDist_m / frustumSize)`，
+	// 而 frustumSize 随视距线性增长、hitDist_m 基本不变（几米）⇒ 越远 hitDistFactor 越趋近 0
+	// ⇒ 半径被 max(..., 1.0) 压到 **1 纹素**，等于完全不滤波。
+	// 于是近处 3~4 纹素、远处 1 纹素 —— 正好反了：远处的输入并不更干净
+	//（体素量化、prepass 采样稀疏、追踪距离衰减），实机就是成片的脏斑。
+	// 这里**只抬远处的下限**，不动公式本身 ⇒ 12m 以内逐位不变。
+	//   12m 以内：1（维持原样）    64m：6
+	// 为什么是 6：1 米体素在 64m 处约占 12 屏幕像素 = 6 个画布纹素，半径 6 的 8-tap
+	// 正好覆盖 ±6，能抹平一个体素见方的台阶；再多就只剩糊了。
+	{
+		// [2026-11-13 稳定区核宽] 稳定像素的公式值只有 sqrt(0.14/61)·40 ≈ 1.9 纹素，
+		// 8-tap 核 4 纹素宽 —— 正好等于「碎点」的尺度（4 画布纹素 = 8 屏幕像素），
+		// 压不掉自己尺度以下的残噪；这部分残噪再被 TS 的 0.98 历史（IIR，方差衰减 ~1%）压制，
+		// 表现为「不动的、模糊的碎斑」，关掉 TS 就变成「清晰、每帧在变的碎点」。
+		// 刚转头 NLAS≈1 ⇒ 半径 15、核 30 纹素 ⇒ 压得平，所以「刚转头干净」。
+		// 与远端曲线取 max，再由 GUI 的 NRD_STABLE_MIN_RADIUS 控制。
+		float _minR = max(NRD_STABLE_MIN_RADIUS,
+		                  mix(1.0, 6.0, saturate((viewDist - 12.0) * rcp(52.0))));
+		// [2026-11-13 去掉「暗部 ×1.8」—— 「被 reblur 模糊过的斑块」的直接来源]
+		// 这段原来是：lightmap 低 ⇒ `_minR *= 1.8`，用意是暗处多模糊一点。
+		// 实测（暗室内大面积平坦天花板）它**全程吃满**：室内 lightmap 本来就低，
+		// 于是 Blur 半径 4→7.2、PostBlur（×2）→14.4 画布纹素 = **28 屏幕像素**，
+		// 那是官方（gMinBlurRadius=1，公式值 1.9）的 7 倍。8 个 tap 撑在半径 14 上，
+		// 脚印就是一片 30~60 屏幕像素的软斑：尺度固定、结构可辨，正是「被 reblur 模糊过的斑块」。
+		// 去掉后半径回到官方量级（2 / 4），脚印缩到 8~16 屏幕像素，与常规残噪混在一起，看不出结构。
+		// 当初加它，是因为累积只有 9~20 帧、残噪 15~22%，只能靠加大核硬糊；
+		// 现在改用「缩小核 + 全屏一致的逐帧核旋转」两条（都是官方口径），不需要这笔补偿。
+		// 官方 REBLUR 也没有暗部专用的半径补偿 —— 它靠 hitDistFactor 与 NLAS，两者都与亮度无关。
+		// 想临时找回「暗处更糊」，把下面这行注释打开即可（不建议长期开）。
+		//uint _matPack = loadMaterialPack(skyTexel).x;
+		//float _lmMax = max(Unpack2x8UX(_matPack), Unpack2x8UY(_matPack));
+		//_minR *= mix(1.0, 1.8, 1.0 - smoothstep(0.10, 0.60, _lmMax));
+		// 上限保留：调大 NRD_STABLE_MIN_RADIUS 时不至于把半径顶到离谱值。
+		_minR = min(_minR, max(NRD_STABLE_MIN_RADIUS * 1.8, 8.0));
+		// PostBlur 的 radiusScale 是 2.0（官方），所以地板也跟着 ×2：
+		// Blur 2 / PostBlur 4 —— 与官方「小核去高频 + 大核去低频」的比例一致，且量级对齐。
+		blurRadius = max(blurRadius, _minR * SPATIAL_RADIUS_SCALE);
+	}
 
 	vec3 centerViewPos = ScreenToViewPosRaw(centerCanvasUv, normalDepthData.z);
 
@@ -278,13 +373,20 @@ void main() {
 	// （最后那个 ×NLAS 只在非 prepass、非 occlusion 模式下生效，Blur/PostBlur 都属于此类）
 	float minHitDistWeight = NRD_MIN_HITDIST_WEIGHT * SPATIAL_FRACTION_SCALE * nonLinearSpeed;
 
-	// 旋转：同一 2x2 画布块共享角度（官方 rotator 的意图），否则逐像素完全随机会让
-	// 每个像素的模糊方向不同 ⇒ 半分辨率画布上出现颗粒状/斑块状的低频结构。
-	// 官方 rotator mode = NRD_FRAME（逐帧换序列），由 GUI 的 GI_KERNEL_ROT_PER_FRAME 控制。
-	ivec2 rotCell = texelPos >> 1;
-	float _tapAng = hash13(vec3(rotCell, float(FILTER_PASS_INDEX))) * 6.2831853
-	              + float(FILTER_PASS_INDEX) * 2.39996323
-	              + GI_ROT_PER_FRAME * float(frameCounter) * 2.39996323;
+	// [2026-11-13 旋转修正] 官方 rotator mode = NRD_FRAME：**全屏同一个角度**，由 app 每帧
+	// 给一个新的（gRotator），像素之间不随机化。
+	// 旧写法在逐帧项之外又叠了 `hash13(rotCell)` ⇒ 每个 2x2 块各转一个角度，
+	// 于是 8 个 tap 的脚印变成「每块随机、且固定不动」的结构：
+	//   · 不会被时域累积平均成各向同性（方向本来就不随时间变）⇒ 结构被冻结；
+	//   · 也不会像噪声那样被平均掉（它是低频的）⇒ 看起来就是一团团「被模糊过的斑块」。
+	// 这正是之前把 GI_KERNEL_ROT_PER_FRAME 打开反而更糟（35.7 vs 1.9）的原因：
+	// 那次打开的是「每块随机 + 每帧乱跳」的版本，等于给每个像素灌不同的滤波方向。
+	// 现在：关 = 每 2x2 块固定角度（旧默认，结构冻结）；开 = 全屏一致 + 逐帧黄金角（官方式，
+	// 脚印逐帧整体旋转，累积十几帧后等效为各向同性圆盘，结构感消失）。
+	float _cellAng = hash13(vec3(texelPos >> 1, float(FILTER_PASS_INDEX))) * 6.2831853;
+	float _frameAng = float(frameCounter) * 2.39996323;
+	float _tapAng = mix(_cellAng, _frameAng, saturate(GI_ROT_PER_FRAME))
+	              + float(FILTER_PASS_INDEX) * 2.39996323;
 	mat2 _tapRot = mat2(cos(_tapAng), sin(_tapAng), -sin(_tapAng), cos(_tapAng));
 
 	float _planeNorm = max(NRD_PLANE_DIST_SENS * frustumSize, 1e-3);
@@ -297,12 +399,37 @@ void main() {
 		// 采样偏移 = 旋转( g_Special8.xy ) × blurRadius × skew，单位是**画布纹素**。
 		vec2 dir = _tapRot * SPATIAL_DIR[i];
 		dir *= blurRadius * skew;
-		ivec2 smp = texelPos + ivec2(round(dir));
-		if (clamp(smp, ivec2(1), canvasEnd - 2) != smp) continue;
+		// [2026-11-13 双线性] 原来这里是 `ivec2 smp = texelPos + ivec2(round(dir))` +
+		// `imageLoad`（最近邻），配合半径/偏移的 0.5 档量化。问题在于**稳定区所有像素的
+		// 累积帧数 A 相同** ⇒ 半径相同 ⇒ 量化档位也相同 ⇒ 一旦 crossfade 跨档，是
+		// **整屏同时**跳半格（实机表现：转头→糊→逐渐清晰→整屏瞬间跳成噪点）。
+		// 量化本来是为了压"tap 在整数纹素间跳"，但那个跳和整屏跳是同一个根。
+		// 现在颜色改成**手动双线性**（4 次 load + 权重），采样位置连续、权重连续，
+		// 于是半径的连续变化不会再产生任何台阶；两条量化一并删除。
+		// 代价：颜色 load 从 1 次变 4 次（法线/命中距离仍是 1 次），单 tap 从 3 次变 6 次。
+		// [2026-11-13 官方 MirrorUv] 官方把越界 tap 镜像回屏内，且镜像 tap 的权重固定 1.0
+		//（不乘高斯）：屏幕边缘不白白丢掉一半样本。旧实现直接 continue ⇒ 边缘更噪、更暗。
+		// 镜像公式与 Common.hlsli:304 的 MirrorUv 一致。
+		vec2 tapUvRaw = (vec2(texelPos) + 0.5 + dir) / vec2(canvasEnd);
+		// 是否越界用原始 UV 的边界判断（不要用 `mirroredUv != uv`：对屏内像素，
+		// `1-abs(1-x)` 的浮点往返不一定逐位等于 x，会把所有 tap 都误判成镜像）。
+		bool mirrored = any(lessThan(tapUvRaw, vec2(0.0))) || any(greaterThanEqual(tapUvRaw, vec2(1.0)));
+		vec2 tapUv = 1.0 - abs(1.0 - fract(tapUvRaw * 0.5) * 2.0);
+		tapUv = min(tapUv, vec2(1.0) - rcp(vec2(canvasEnd)));   // 避免落在最后一列/行外
+		vec2 smpF = tapUv * vec2(canvasEnd) - 0.5;
+		ivec2 smp = clamp(ivec2(floor(smpF)), ivec2(0), canvasEnd - 2);
+		vec2 tapF = clamp(smpF - vec2(smp), 0.0, 1.0);
 
 		f16vec3 sampleAux = f16vec3(texelFetch(colortex14, smp, 0).rgb);
-		f16vec4 sampleColVar = f16vec4(imageLoad(EAWF_SRC, smp));
-		if (any(isnan(sampleColVar.rgb)) || any(isinf(sampleColVar.rgb))) continue;
+		// 双线性在 vec4 上算，最后一次性转 f16vec4：`mix` 没有
+		// (f16vec4, f16vec4, float) 这个重载，直接写会报 C7011 隐式转换。
+		vec4 c00 = imageLoad(EAWF_SRC, smp);
+		vec4 c10 = imageLoad(EAWF_SRC, smp + ivec2(1, 0));
+		vec4 c01 = imageLoad(EAWF_SRC, smp + ivec2(0, 1));
+		vec4 c11 = imageLoad(EAWF_SRC, smp + ivec2(1, 1));
+		if (any(isnan(c00.rgb)) || any(isinf(c00.rgb))) continue;
+		f16vec4 sampleColVar = f16vec4(
+			mix(mix(c00, c10, tapF.x), mix(c01, c11, tapF.x), tapF.y));
 
 		// 几何：官方 ApplyGeometryWeightLast ⇒ ComputeWeight(NoX, a, -b)
 		//   NoX·a + b = dot(Nv, Xvs - Xv) / (planeDistanceSensitivity · frustumSize)
@@ -330,11 +457,84 @@ void main() {
 
 		// 高斯：官方 GetGaussianWeight( offset.z ) = exp( -0.66 · r² )，
 		// r 取 g_Special8 的 z 分量（轴点 1.0 ⇒ 0.517，对角点 0.5 ⇒ 0.848）。
-		w *= exp(-0.66 * SPATIAL_GAUSS_R[i] * SPATIAL_GAUSS_R[i]);
+		// 镜像 tap 不乘高斯（官方 `w = any(uv != mirrorUv) ? 1.0 : gaussian`）。
+		w *= mirrored ? 1.0 : exp(-0.66 * SPATIAL_GAUSS_R[i] * SPATIAL_GAUSS_R[i]);
 
 		sumRGB += sampleColVar.rgb * f16vec3(w);
 		sumW += w;
 	}
+
+	//======// 低频补刀（固定半径，只挂 PostBlur 这一遍）//==========================================//
+	// [2026-11-13 非递归历史的配套] 见 settings.glsl 的 NRD_WIDE_RADIUS 说明。
+	// 与主循环的三点不同，都是刻意的：
+	//  1. 半径固定，不乘 sqrt(hitDistFactor × NLAS) ⇒ 稳定之后这一圈仍然在工作；
+	//  2. **点采样**（imageLoad 取整纹素）而不是手动双线性：低频内容不需要亚像素精度，
+	//     tap 数一样的前提下省掉 3/4 的取数；
+	//  3. 多一条**亮度判据**，容差 = 6 × 残噪估计 √(prepass 方差 / 累积帧数)。这条是「平滑但保细节」
+	//     的唯一来源 —— 没有它，宽核就是永久性的糊。倍数为什么是 6，见下方 _lumaTol 处。
+	// 采样图案**全像素统一**（常数角度，见下方）：稀疏宽核的误差必须保持为位置的平滑函数，
+	// 一旦逐像素随机化就会变成高频麻点。
+	// 命中距离权重这里**不加**：它按 NLAS 收紧，稳定后 NLAS≈1/65 ⇒ 该权重≈0，
+	// 一加就把这一圈整体筛没（等于白算），而低频平均本来不需要「命中距离相近」这个前提。
+#if defined VOXEL_GI_NRD_ACTIVE && FILTER_PASS_INDEX == 1
+	if (NRD_WIDE_RADIUS > 0.0) {
+		float _aSelf = max(texelFetch(colortex2, texelPos, 0).a, 1.0);
+		float _varY = max(texelFetch(colortex26, texelPos, 0).g, 0.0);
+		// 残噪幅度：单帧方差 ÷ 累积帧数，再开方。下限 2e-4 防止方差为 0 时把所有 tap 判死。
+		//
+		// [2026-11-13 修复「新像素迅速凝固成静态噪点」] 容差原来是 **1.5σ**，量级错了：
+		// 两个邻居的亮度差在「只有残噪」时约 √2·σ，|ΔY|/tol ≈ 0.94 ⇒ 判据正好落在最敏感的
+		// 那一段，每个 tap 的权重被噪声随机削到 0.3~0.7，而且这个抖动是**逐像素固定**的
+		//（图案只由像素哈希决定）⇒ 屏幕上出现一张不随时间变化的静态麻点，还会被 TS 的
+		// 0.98 历史锁死。更糟的是 tol 和噪声都按 1/√A 缩放 ⇒ 比值与 A 无关，**任何累积帧数
+		// 下都在抖**，所以新像素一露出来就「凝固」成噪点。
+		//
+		// 改成 **6σ**：噪声（√2σ）只把权重压到 exp2(-0.24)≈0.85 且方差很小（不再抖），
+		// 而真实细节（≥ 6σ）仍被压到 0.1 以下 ⇒ 判据从「阈值噪声」变成「只挡细节」。
+		// 6 这个数的依据：残噪被定义成 σ 本身，所以要挡的是「远大于 σ」的结构；
+		// 低于 4σ 就会开始削噪声（回到抖动），高于 8σ 则连真实台阶都放过。
+		float _lumaTol = max(sqrt(_varY * rcp(_aSelf)) * 6.0, 2e-4);
+		float _centerY = float(centerSample.r);
+
+		// [2026-11-13 全像素同一图案] 角度是**常数**，既不做逐像素哈希、也不逐帧旋转。
+		// 理由是这一圈的误差性质：8 个 tap 对半径 16 的稀疏采样，误差 = 「8 点平均」与
+		// 「真实局部均值」之差。图案对所有像素相同 ⇒ 这个误差是**位置的平滑函数**，看不出来；
+		// 逐像素哈希 ⇒ 每个像素抽不同的 8 个点 ⇒ 同一个低频误差被打散成**高频麻点**（就是主人
+		// 看到的静态噪点）；逐帧旋转 ⇒ 麻点变成涌动，低累积帧数时压不住。
+		// 22.5° 是为了让轴点不正好压在像素网格的横竖方向上（避免轴向条纹）。
+		float _wideAng = 0.3926991;
+		mat2 _wideRot = mat2(cos(_wideAng), sin(_wideAng), -sin(_wideAng), cos(_wideAng));
+
+		for (int i = 0; i < 8; ++i) {
+			vec2 _d = _wideRot * SPATIAL_DIR[i];
+			_d *= NRD_WIDE_RADIUS * skew;
+			ivec2 _smp = texelPos + ivec2(round(_d));
+			if (clamp(_smp, ivec2(1), canvasEnd - 2) != _smp) continue;
+
+			vec4 _c = imageLoad(EAWF_SRC, _smp);
+			if (any(isnan(_c.rgb)) || any(isinf(_c.rgb))) continue;
+
+			vec3 _aux = texelFetch(colortex14, _smp, 0).xyz;
+			vec3 _vp = ScreenToViewPosRaw((vec2(_smp) + 0.5) / vec2(canvasEnd), _aux.z);
+			float _pd = abs(dot(_vp - centerViewPos, geoNormal));
+			float _w = NonExponentialWeight(_pd * rcp(_planeNorm));
+
+			float _a2 = acos(clamp(dot(OctDecodeSnorm(_aux.xy), centerNDirW), -1.0, 1.0));
+			_w *= NonExponentialWeight(_a2 * normalParam);
+
+			// 亮度判据：容差 = 6σ 残噪估计 ⇒ 噪声几乎全放行（不产生偏置），细节被挡在外面。
+			// 容差取到和噪声同量级时，这里会变成「只挑跟中心像的 tap」⇒ 退化成复制中心、
+			// 等于没滤波，还会逐像素抖（见 _lumaTol 处）。
+			_w *= exp2(-abs(float(_c.r) - _centerY) * rcp(_lumaTol));
+
+			_w *= exp(-0.66 * SPATIAL_GAUSS_R[i] * SPATIAL_GAUSS_R[i]);
+			_w *= NRD_WIDE_WEIGHT;
+
+			sumRGB += f16vec3(_c.rgb) * f16vec3(_w);
+			sumW += _w;
+		}
+	}
+#endif
 
 	f16vec3 result = sumRGB * f16vec3(rcp(sumW));
 

@@ -30,8 +30,9 @@
   stride（官方 historyFixBasePixelStride = 14，经 `*2/RADIUS(2)` 与 `/2` 折成半径）：
       stride = round( 7 × lerp(0.25 + 0.75·sqrt(hitDistFactor), 1, NLAS) )
       tap 位置 = offset × stride，offset ∈ [-2..2]²（去掉 4 个角）
-  即最大覆盖 ±14 个降噪纹素（= ±28 屏幕像素）。本包此前固定用 2（±4）是"怕贴出硬边界"，
-  但那是旧算法（借历史）的副作用；官方算法是对**本帧**信号做加权平均，不存在跨帧污染。
+  即最大覆盖 ±14 个降噪纹素（= ±28 屏幕像素）。
+  [2026-11-14] 重建窗口由 GUI `NRD_HISTORYFIX_FRAMES` 控制（默认 8，官方 3，末尾 2 帧淡出）；
+  半径恢复官方 2（20 tap）。窗口只影响年轻像素，稳定区不受影响。
 
   本 pass 在管线里的位置：**deferred5**（Accumulate 之后、EAWF 之前）。
   `deferred5` 原本跑 VarianceEstimate，但它在 NRD 路径里只是把 colortex2 复制到 colortex3
@@ -66,9 +67,19 @@ layout (rgba16f) restrict uniform image2D colorimg25;   // 输出：重建后的
 
 //======// Function //============================================================================//
 
-// 官方默认值
-#define HISTORY_FIX_FRAME_NUM 3.0     // historyFixFrameNum
-#define FIX_RADIUS 2                  // REBLUR_HISTORY_FIX_FILTER_RADIUS
+// [2026-11-14] 重建窗口是 GUI 项 `NRD_HISTORYFIX_FRAMES`（默认 8，官方 3）。
+// 官方 `historyFixFrameNum = 3`（NRDSettings.h:292）的前提是稠密输入；本包 1 spp + 1 m 体素
+// 量化，A 到 3 就断奶时新像素只剩 2~3 帧自己的样本 ⇒ 转头时露出大块模糊斑块。
+// 窗口只作用于年轻像素，稳定区不受影响；末尾 2 帧线性淡出，避免断奶台阶。
+// 设 3 即严格官方。
+#ifndef GI_HISTORYFIX_FRAMES
+    #define GI_HISTORYFIX_FRAMES 8.0
+#endif
+#define HISTORY_FIX_FRAME_NUM max(GI_HISTORYFIX_FRAMES, 1.0)
+// 官方 REBLUR_HISTORY_FIX_FILTER_RADIUS = 2（5x5 去掉中心与 4 角 = 20 tap）。
+// 此前改 3（44 tap）是为了让新区域中段也能借到边界外的历史；但官方 stride 最大 7、
+// 半径 2 的实际覆盖已是 ±14 降噪纹素（±28 屏幕像素），且重建只作用于 A<3 的两帧。
+#define FIX_RADIUS 2                  // REBLUR_HISTORY_FIX_FILTER_RADIUS（官方 2）
 #define FAST_CLAMP_RADIUS 2           // REBLUR_FAST_HISTORY_CLAMPING_RADIUS
 #ifndef NRD_HISTORYFIX_CLAMP_SIGMA
     #define NRD_HISTORYFIX_CLAMP_SIGMA 2.0
@@ -78,7 +89,9 @@ layout (rgba16f) restrict uniform image2D colorimg25;   // 输出：重建后的
 #endif
 #define FAST_CLAMP_SIGMA NRD_HISTORYFIX_CLAMP_SIGMA
 #define PLANE_DIST_SENS NRD_PLANE_DIST_SENS
-#define LOBE_ANGLE_FRACTION 0.15      // lobeAngleFraction
+// 官方 `gLobeAngleFraction = lobeAngleFraction²`（Reblur.cpp:376）⇒ 0.15² = 0.0225。
+// 此前直接用 0.15，法线拒绝角比官方宽约 2 倍。
+#define LOBE_ANGLE_FRACTION 0.0225
 // 官方 hitDist 归一化参数（ReblurHitDistanceParameters）：f = A + |viewZ|·B（diffuse，roughness=1）
 #define REBLUR_HITDIST_A 3.0
 #define REBLUR_HITDIST_B 0.1
@@ -149,8 +162,11 @@ void main() {
     FetchNormalData(rt, geoNormal, surfNormal);
     vec3 planeN = mat3(gbufferModelView) * geoNormal;
 
-    // ---- ① 重建（仅当帧数不足）----
-    if (frameNum < HISTORY_FIX_FRAME_NUM) {
+    // ---- ① 重建（窗口 = NRD_HISTORYFIX_FRAMES，末尾 2 帧线性淡出）----
+    // 官方是 `frameNum < gHistoryFixFrameNum` 硬门控；这里在窗口末尾多留 2 帧线性过渡，
+    // 因为本包的窗口更长（默认 8），硬切那一下会看到「突然变锐/变噪」。
+    float fixW = saturate((HISTORY_FIX_FRAME_NUM + 2.0 - frameNum) * 0.5);
+    if (fixW > 0.0) {
         // 官方 NLAS = 1/(1+frameNum)
         float nlas = rcp(1.0 + frameNum);
         float normalParam = NormalWeightParam(nlas);
@@ -164,14 +180,13 @@ void main() {
         float hitDistM = normHit * (REBLUR_HITDIST_A + abs(viewZ) * REBLUR_HITDIST_B);
         float hitDistFactor = saturate(hitDistM * rcp(max(frustumSize, 1e-3)));
 
-        // 官方 stride：基值 7 个降噪纹素，再按 hitDistFactor / NLAS 收缩，最后取整
+        // 官方 stride：基值 7 个降噪纹素（14 × 2/2 ÷ 2），再按 hitDistFactor / NLAS 收缩，最后取整
         float stride = round(7.0 * mix(0.25 + 0.75 * sqrt(hitDistFactor), 1.0, nlas));
-        stride = max(stride, 1.0);
 
         float sumd = 1.0 + frameNum;
         vec3 acc = diff * sumd;                 // 自己的权重就是 1+frameNum
 
-        for (int j = -FIX_RADIUS; j <= FIX_RADIUS; ++j) {
+        if (stride > 0.0) for (int j = -FIX_RADIUS; j <= FIX_RADIUS; ++j) {
             for (int i = -FIX_RADIUS; i <= FIX_RADIUS; ++i) {
                 if (i == 0 && j == 0) continue;
                 if (abs(i) + abs(j) == FIX_RADIUS * 2) continue;      // 官方跳过 4 个角
@@ -213,7 +228,7 @@ void main() {
                 sumd += w;
             }
         }
-        diff = acc * rcp(max(sumd, 1e-4));
+        diff = mix(diff, acc * rcp(max(sumd, 1e-4)), fixW);
     }
 
     // ---- ② fast-history 亮度夹取（官方无条件执行，与是否重建无关）----
