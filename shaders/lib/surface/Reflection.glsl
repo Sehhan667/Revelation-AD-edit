@@ -43,13 +43,13 @@
     #define ROUGH_REFLECTIONS_MAX 0.9 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0] 粗糙反射的最高界限
 #endif
 #ifndef ROUGH_REFLECTION_STEPS
-    #define ROUGH_REFLECTION_STEPS 6 // [2 4 6 8 10 12 16 24 32] 单独设置粗糙物体的 SSR 追踪步数（较低即可）
+    #define ROUGH_REFLECTION_STEPS 2 // [2 4 6 8 10 12 16 24 32] 单独设置粗糙物体的 SSR 追踪步数（较低即可）
 #endif
 #ifndef ROUGH_REFLECTION_BLUR_STRENGTH
-    #define ROUGH_REFLECTION_BLUR_STRENGTH 20.0 // [0.2 0.5 0.8 1.0 1.2 1.5 2.0 3.0 10.0 20.0 30.0 40.0 50.0 60.0 80.0 100.0 150.0] 粗糙反射的模糊强度倍率
+    #define ROUGH_REFLECTION_BLUR_STRENGTH 150.0 // [0.2 0.5 0.8 1.0 1.2 1.5 2.0 3.0 10.0 20.0 30.0 40.0 50.0 60.0 80.0 100.0 150.0] 粗糙反射的模糊强度倍率
 #endif
 #ifndef ROUGH_REFLECTION_BLUR_SAMPLES
-    #define ROUGH_REFLECTION_BLUR_SAMPLES 6 // [4 6 8 12 16 20 24 32] 粗糙反射的圆盘抽样数（越多"分界"越细、越平滑；性能开销线性增长）
+    #define ROUGH_REFLECTION_BLUR_SAMPLES 8 // [4 6 8 12 16 20 24 32] 粗糙反射的圆盘抽样数（越多"分界"越细、越平滑；性能开销线性增长）
 #endif
 // [2026-10-08] 环境光泽倍率：混合系数 = saturate(roughness × 本值)。
 // 1.0 = 线性（roughness 0.5 的物体一半是屏幕空间模糊结果、一半是低阶环境光泽）；
@@ -95,10 +95,10 @@
 
 // ====== 反射亮度控制 ======
 #ifndef REFLECTION_FALLBACK_BRIGHTNESS
-    #define REFLECTION_FALLBACK_BRIGHTNESS 1.0 // [0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.5 2.0]
+    #define REFLECTION_FALLBACK_BRIGHTNESS 0.6 // [0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.5 2.0]
 #endif
 #ifndef NONMETAL_REFLECTION_BRIGHTNESS
-    #define NONMETAL_REFLECTION_BRIGHTNESS 2.5 // [1.0 1.5 2.0 2.5 3.0 4.0 5.0]  增强非金属反射亮度
+    #define NONMETAL_REFLECTION_BRIGHTNESS 1.5 // [1.0 1.5 2.0 2.5 3.0 4.0 5.0]  增强非金属反射亮度
 #endif
 
 // 反射权重上限（防自激）：反射源 colortex4 存的是**上一帧已含反射**的画面，权重 ≥1 时
@@ -116,7 +116,7 @@
 #endif
 
 #define REFLECTION_GLOBAL
-//#define REFLECTION_SKY
+#define REFLECTION_SKY
 
 // [2026-10-08] **临时诊断宏**（硬编码，不经 Iris 选项机制）。0 = 关闭（正常渲染）。
 // 置 1 会把反射颜色替换成"来源热图"：R = 模糊半径/300px；G = 左侧绿条（条宽 = 抽样数/64 屏宽）；

@@ -109,13 +109,13 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
     return voxelCoord.xz;
 }
 #ifndef VOXEL_GI_STRENGTH
-    #define VOXEL_GI_STRENGTH 1.5  // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0] GI 整体强度
+    #define VOXEL_GI_STRENGTH 2.0  // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0] GI 整体强度
 #endif
 // 原版 Lightmap 混合（SSILVB_BLENDED_LIGHTMAP 同款滑条，供 DeferredLight 查询端使用）：
 // 1.0=完全保留原版 Lightmap（环境光+方块光），0.0=完全屏蔽原版，间接光照仅由体素 GI 提供。
 // 主定义在 settings.glsl 的 Global Illumination 区（Iris 滑条直接改写），此处仅作兜底。
 #ifndef VOXEL_GI_BLENDED_LIGHTMAP
-    #define VOXEL_GI_BLENDED_LIGHTMAP 0.0 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0] 原版 Lightmap 混合（1.0=保留，0.0=屏蔽，仅 GI）
+    #define VOXEL_GI_BLENDED_LIGHTMAP 0.05 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0] 原版 Lightmap 混合（1.0=保留，0.0=屏蔽，仅 GI）
 #endif
 
 // ------ 传播配置（风格 IRC 随机注入）------
@@ -201,7 +201,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // DeferredLight 在网格内边缘此距离内按距离渐进混入网格外同款 SH 环境光，
 // 外部光→内部 GI 平滑过渡。0 = 关闭过渡（老行为）。
 #ifndef VOXEL_EDGE_BLEND_DISTANCE
-#define VOXEL_EDGE_BLEND_DISTANCE 8.0 // [0.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0] 网格边缘环境光过渡带（格数）
+#define VOXEL_EDGE_BLEND_DISTANCE 6.0 // [0.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0] 网格边缘环境光过渡带（格数）
 #endif
 
 // ------ 注入内部系数（随 VOXEL_GI_STRENGTH 整体缩放，不单独暴露滑条）------
@@ -213,7 +213,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 #define VOXEL_GI_SUN_STRENGTH 1.0      // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] IRC 真阳光注入倍率（× sunLight 暖阳色，调大让阴影处阳光反弹更明显）
 #endif
 #ifndef VOXEL_GI_SKY_STRENGTH
-#define VOXEL_GI_SKY_STRENGTH 3.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 2.0→1.0：室内天光略过量）
+#define VOXEL_GI_SKY_STRENGTH 6.0    // [0.0 0.1 0.2 0.3 0.4 0.5 0.7 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 环境天空注入倍率（× skyMapTex 方向辐射 × 天空可见度；调大让阴影天光更明显。2026-08-17 2.0→1.0：室内天光略过量）
 #endif
 #ifndef VOXEL_GI_BLOCK_STRENGTH
 #define VOXEL_GI_BLOCK_STRENGTH 0.5    // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0] 方块光注入倍率（× blocklightColor，火把等光源）
@@ -238,7 +238,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // [FIX 2026-08-05] 默认 24 → 32：用户反馈"光线传播距离太短"，加大追踪最大步进让
 // 阳光反弹/方块光能传更远；已暴露为 GUI 滑条。
 #ifndef VOXEL_TRACE_DISTANCE
-#define VOXEL_TRACE_DISTANCE 32 // [8 16 24 32 48 64 96] 追踪光线最大步进体素数（越大传播越远，性能略降）
+#define VOXEL_TRACE_DISTANCE 24 // [8 16 24 32 48 64 96] 追踪光线最大步进体素数（越大传播越远，性能略降）
 #endif
 // 追踪 GI 强度总旋钮：信号量级 = 追踪值 × STRENGTH（命中/出界已按 语义全强度输出，
 // 过亮就降这个，过暗就升；洞穴不过量由 lightmap 泄漏衰减保证，不靠压低天空值）。
@@ -267,7 +267,7 @@ vec2 VoxelTexel_From_VoxelCoord(vec3 voxelCoord) {
 // 现在有降噪链与 firefly 中值，不需要靠过曝来"看见"；要更亮请调 VOXEL_GI_TRACE_STRENGTH
 // 或修天光/环境光链路，不要用本条倍率。
 #ifndef VOXEL_TRACE_SUN_STRENGTH
-#define VOXEL_TRACE_SUN_STRENGTH 1.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
+#define VOXEL_TRACE_SUN_STRENGTH 8.0 // [0.0 0.5 1.0 2.0 3.0 5.0 8.0 12.0 16.0 24.0 32.0] 追踪端阳光反弹强度
 #endif
 // [2026-10-02] 阳光反弹的**代码侧增益**（不占 GUI 滑条，与上面的强度滑条相乘）。
 // 为什么需要：追踪端本质是"半球 1 采样 + 时域平均"的估计器，收敛值 = 命中率 × 单次量级。

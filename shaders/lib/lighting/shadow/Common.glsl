@@ -2,7 +2,7 @@
 // Modified for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
 // Modified by AnotherCream, 2026.
 #define SHADOW_DISTORTION          // [OFF ON] 阴影形变开关
-#define SHADOW_DISTORTION_STRENGTH 4.0 // [1.0 1.5 2.0 2.25 2.5 2.75 3.0 3.25 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0]
+#define SHADOW_DISTORTION_STRENGTH 3.5 // [1.0 1.5 2.0 2.25 2.5 2.75 3.0 3.25 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0]
 
 // [2026-09-20 **RTWSM（表驱动可分离 warp）已从本分支移除**]
 // 原因：内容驱动的 warp 在掠射阳光场景下会产生"阴影内部等宽亮线"（完整排查记录见

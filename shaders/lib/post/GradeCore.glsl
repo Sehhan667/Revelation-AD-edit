@@ -29,11 +29,11 @@
 // [2026-11-12] gamma 固定为 sqrt 近似（原 POTATO_GAMMA_APPROX 恒定义 ⇒ GAMMA_CORRECTION 滑条
 // 从来不起作用，属于空旋钮，已随滑条一起删掉；这里保留常量只为说明 gamma 走的是 sqrt）。
 
-#define TONE_MAPPER AcademyFit // [None AcademyFit AcademyFull AgX_Minimal AgX_Full Lottes GT GT7 Fast_Reinhard]
+#define TONE_MAPPER GT // [None AcademyFit AcademyFull AgX_Minimal AgX_Full Lottes GT GT7 Fast_Reinhard]
 
-#define BLOOM_BLENDING_MODE 1 // [0 1 2]
-#define BLOOM_INTENSITY 1.6 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 3.0 4.0 5.0 7.0 10.0 15.0 20.0]
-#define BLOOMY_FOG_INTENSITY 1.0 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.75 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0 3.5 4.0 5.0]
+#define BLOOM_BLENDING_MODE 2 // [0 1 2]
+#define BLOOM_INTENSITY 1.7 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 3.0 4.0 5.0 7.0 10.0 15.0 20.0]
+#define BLOOMY_FOG_INTENSITY 3.0 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.75 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.5 3.0 3.5 4.0 5.0]
 
 #define PURKINJE_SHIFT
 // #define PURKINJE_SHIFT_NOISE

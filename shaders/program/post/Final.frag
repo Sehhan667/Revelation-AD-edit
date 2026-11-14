@@ -92,17 +92,17 @@ vec3 StartupPanelFallbackBlur(in vec2 uv) {
 
 // ---------- 实体区域故障 ----------
 #define ENTITY_AREA_GLITCH
-#define ENTITY_AREA_GLITCH_INTENSITY 0.3 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
+#define ENTITY_AREA_GLITCH_INTENSITY 0.2 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 
 // ---------- 撕裂层数（推荐 2~6） ----------
-#define GLITCH_TEAR_LAYERS 10 // [2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
+#define GLITCH_TEAR_LAYERS 8 // [2 3 4 5 6 7 8 9 10 11 12 13 14 15 16]
 
 // ---------- 实体撕裂模式 ----------
 #define ENTITY_GLITCH_OUTLINE_TEAR // [注释以关闭] 开启：实体轮廓随条带一起撕裂（缺口用邻近背景近似填充）；关闭：旧版仅内部颜色错位
 
 // ---------- 撕裂位移的距离衰减（两个半径；外圈 0 = 关闭衰减 = 旧行为） ----------
 // 内圈内满幅，内外圈之间线性降到 0，外圈之外**完全不撕**。见 GlitchTearDistanceFade 的长注释。
-#define GLITCH_TEAR_REF_DISTANCE 4.0  // [0 1 2 3 4 6 8 12 16 24 32]
+#define GLITCH_TEAR_REF_DISTANCE 1  // [0 1 2 3 4 6 8 12 16 24 32]
 #define GLITCH_TEAR_FADE_DISTANCE 24.0 // [0 4 8 12 16 20 24 32 48 64]
 
 // 手部/贴脸像素的 raw depth 阈值（与包内既有判手部写法同源：KillRipple 与 SSILVB_HAND_DEPTH_THRESHOLD

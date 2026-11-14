@@ -71,7 +71,7 @@ layout (rgba16f) restrict uniform image2D colorimg23;            // 稳定化输
 #define HISTORY_FIX_FRAME_NUM 3.0
 // 官方 planeDistanceSensitivity = 0.02（与 prepass / EAWF / HistoryFix 同一口径）
 #ifndef NRD_PLANE_DIST_SENS
-    #define NRD_PLANE_DIST_SENS 0.02
+    #define NRD_PLANE_DIST_SENS 0.05
 #endif
 #define PLANE_DIST_SENS_TS NRD_PLANE_DIST_SENS
 
@@ -122,7 +122,7 @@ void HistTap(in ivec2 sampleTexel, in vec3 centerViewPos, in vec3 geoNormalV,
 // 它乘在 accumSpeed 上（不是乘最终结果），因此会同时影响 antilag 与颜色盒：
 //   <1 更跟手（拖影短、残噪多）；>1 更稳；0 = 等价关闭稳定化。
 #ifndef NRD_STABILIZATION_STRENGTH
-    #define NRD_STABILIZATION_STRENGTH 1.0 // [0.0 0.25 0.5 0.75 1.0 1.5 2.0] 稳定化强度
+    #define NRD_STABILIZATION_STRENGTH 2.0 // [0.0 0.25 0.5 0.75 1.0 1.5 2.0] 稳定化强度
 #endif
 #ifndef GI_MOTION_RESPONSE
     #define GI_MOTION_RESPONSE 0.0

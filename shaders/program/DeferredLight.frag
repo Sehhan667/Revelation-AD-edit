@@ -57,7 +57,7 @@
 
 // ====== 镜面高光泛光增强 ======
 #ifndef SPECULAR_BLOOM_BOOST
-    #define SPECULAR_BLOOM_BOOST 2.0 // [1.0 1.5 2.0 2.5 3.0 4.0 5.0]
+    #define SPECULAR_BLOOM_BOOST 1.0 // [1.0 1.5 2.0 2.5 3.0 4.0 5.0]
 #endif
 
 // ====== 阳光 / 月光亮度控制 ======
@@ -65,12 +65,12 @@
     #define SUN_BRIGHTNESS_MULTIPLIER 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0 5.0]
 #endif
 #ifndef MOON_BRIGHTNESS_MULTIPLIER
-    #define MOON_BRIGHTNESS_MULTIPLIER 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0 5.0]
+    #define MOON_BRIGHTNESS_MULTIPLIER 2.0 // [0.0 0.5 1.0 1.5 2.0 3.0 5.0]
 #endif
 
 // ====== 环境光/天空光亮度与颜色控制 ======
 #ifndef AMBIENT_BRIGHTNESS_MULTIPLIER
-    #define AMBIENT_BRIGHTNESS_MULTIPLIER 1.5 // [0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0]
+    #define AMBIENT_BRIGHTNESS_MULTIPLIER 1.0 // [0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0]
 #endif
 #ifndef AMBIENT_COLOR_TINT
     #define AMBIENT_COLOR_TINT vec3(1.0, 1.0, 1.0) // 减少蓝色可改为 vec3(1.0, 1.0, 0.85)

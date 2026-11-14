@@ -82,10 +82,10 @@ layout (rgba16f) restrict uniform image2D colorimg25;   // 输出：重建后的
 #define FIX_RADIUS 2                  // REBLUR_HISTORY_FIX_FILTER_RADIUS（官方 2）
 #define FAST_CLAMP_RADIUS 2           // REBLUR_FAST_HISTORY_CLAMPING_RADIUS
 #ifndef NRD_HISTORYFIX_CLAMP_SIGMA
-    #define NRD_HISTORYFIX_CLAMP_SIGMA 2.0
+    #define NRD_HISTORYFIX_CLAMP_SIGMA 1.5
 #endif
 #ifndef NRD_PLANE_DIST_SENS
-    #define NRD_PLANE_DIST_SENS 0.02
+    #define NRD_PLANE_DIST_SENS 0.05
 #endif
 #define FAST_CLAMP_SIGMA NRD_HISTORYFIX_CLAMP_SIGMA
 #define PLANE_DIST_SENS NRD_PLANE_DIST_SENS

@@ -5,7 +5,7 @@
 // Modified by AnotherCream, 2026.
 
 #define SSRT_MAX_SAMPLES 16 // [1 2 4 6 8 12 16 18 20 24 28 32 36 40 48 64 128 256 512]
-//#define SSRT_SKY_TRACING
+#define SSRT_SKY_TRACING
 
 #define SSRT_REFINEMENT
 #define SSRT_REFINEMENT_STEPS 8 // [0 1 2 3 4 5 6 7 8 9 10 12 14 16 18 20 22 24 26 28 30 32]

@@ -27,15 +27,15 @@
 #define AUTHOR 0 // [0]
 #define AD 0 // [0]
 
-const int shadowMapResolution = 1024;  // [1024 1536 2048 4096 8192 16384 32768]（体素化平铺要求 ≥1024）
-const float	shadowDistance 	  = 64.0; // [32.0 48.0 64.0 80.0 96.0 112.0 128.0 160.0 192.0 224.0 256.0 320.0 384.0 512.0 768.0 1024.0 2048.0 4096.0 8192.0 16384.0 32768.0 65536.0]
+const int shadowMapResolution = 2048;  // [1024 1536 2048 4096 8192 16384 32768]（体素化平铺要求 ≥1024）
+const float	shadowDistance 	  = 128.0; // [32.0 48.0 64.0 80.0 96.0 112.0 128.0 160.0 192.0 224.0 256.0 320.0 384.0 512.0 768.0 1024.0 2048.0 4096.0 8192.0 16384.0 32768.0 65536.0]
 
 const float shadowDistanceRenderMul = 1.0; // [-1.0 1.0]
 
 // [2026-11-12 B4] 实体阴影距离倍率：Iris 常量指令，**只影响实体**（地形/方块仍按 shadowDistance）。
 // 0.5 = 32 格外实体不进 shadow pass（实体多时省 0.1–0.4 ms/帧），代价是远处实体没有阴影。
 // 1.0 = 旧行为。带值列表所以是可选的 GUI 项；不动 shadowDistance 本身是为了保留地形阴影距离。
-const float entityShadowDistanceMul = 0.5; // [0.0 0.25 0.5 0.75 1.0]
+const float entityShadowDistanceMul = 0.25; // [0.0 0.25 0.5 0.75 1.0]
 
 const float realShadowMapRes = float(shadowMapResolution) * MC_SHADOW_QUALITY;
 
@@ -77,25 +77,25 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 只作用于主世界的地面/水面像素（天空走天空模型，下界/末地走各自维度雾）。
 	// 洞穴/室内沿用体积雾同款门控 clamp(skylight*0.8+0.2)，保留 20% 底雾。
 	// 实现与标定说明见 lib/atmosphere/GroundScattering.glsl。
-	#define GROUND_SCATTERING // Ground atmospheric scattering (aerial perspective)
-	#define GS_DENSITY 3.0 // 大气散射浓度（整体浓度旋钮）。 [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0 4.0]
+	//#define GROUND_SCATTERING // Ground atmospheric scattering (aerial perspective)
+	#define GS_DENSITY 1.0 // 大气散射浓度（整体浓度旋钮）。 [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0 4.0]
 	#define GS_SUN_BRIGHTNESS 0.1 // 太阳散射亮度（米氏前向：朝太阳方向的远景发暖）。 [0.0 0.1 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0 4.0]
 	#define GS_SKY_BRIGHTNESS 1.0 // 天空散射亮度（各向同性底噪：远景整体偏蓝）。 [0.0 0.1 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0 4.0]
-	#define GS_MIE_G 0.2 // 前向散射各向异性 g（越大越集中在太阳方向）。 [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8]
-	#define GS_RAIN_BOOST 4.0 // 雨天增浓倍率（跟随 wetness）。 [0.0 0.5 1.0 1.5 2.0 3.0 4.0]
+	#define GS_MIE_G 0.0 // 前向散射各向异性 g（越大越集中在太阳方向）。 [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8]
+	#define GS_RAIN_BOOST 1.0 // 雨天增浓倍率（跟随 wetness）。 [0.0 0.5 1.0 1.5 2.0 3.0 4.0]
 
 	#define PER_BIOME_FOG // Enables per-biome fog
 
 	#define LAVA_FOG // Enables lava fog
 	#define POWDERED_SNOW_FOG // Enables powdered snow fog
-	#define BLINDNESS_DARKNESS_FOG // Enables blindness & darkness fog
-	#define BLINDNESS_STRENGTH 1.0 // 失明总强度（1.0 = 原版，0 = 关闭失明压黑，越大黑得越快）。 [0.0 0.25 0.5 0.75 1.0 1.25 1.5 2.0 3.0]
+	//#define BLINDNESS_DARKNESS_FOG // Enables blindness & darkness fog
+	#define BLINDNESS_STRENGTH 0.25 // 失明总强度（1.0 = 原版，0 = 关闭失明压黑，越大黑得越快）。 [0.0 0.25 0.5 0.75 1.0 1.25 1.5 2.0 3.0]
 
 	#define VOLUMETRIC_FOG // Enables volumetric fog
 	#define COLORED_VOLUMETRIC_FOG // Enables volumetric fog stained glass tint
 	//#define VF_CLOUD_SHADOWS // Enables cloud shadows in volumetric fog
 	#define VF_TIME_FADE // Adjussts the density of the volumetric fog based on time of day
-	#define VF_HEIGHT 67.0 // Height of the volumetric fog. [0.0 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0 17.0 18.0 19.0 20.0 21.0 22.0 23.0 24.0 25.0 26.0 27.0 28.0 29.0 30.0 31.0 32.0 33.0 34.0 35.0 36.0 37.0 38.0 39.0 40.0 41.0 42.0 43.0 44.0 45.0 46.0 47.0 48.0 49.0 50.0 51.0 52.0 53.0 54.0 55.0 56.0 57.0 58.0 59.0 60.0 61.0 62.0 63.0 64.0 65.0 66.0 67.0 68.0 69.0 70.0 71.0 72.0 73.0 74.0 75.0 76.0 77.0 78.0 79.0 80.0 81.0 82.0 83.0 84.0 85.0 86.0 87.0 88.0 89.0 90.0 91.0 92.0 93.0 94.0 95.0 96.0 97.0 98.0 99.0 100.0 101.0 102.0 103.0 104.0 105.0 106.0 107.0 108.0 109.0 110.0 111.0 112.0 113.0 114.0 115.0 116.0 117.0 118.0 119.0 120.0 121.0 122.0 123.0 124.0 125.0 126.0 127.0 128.0 129.0 130.0 131.0 132.0 133.0 134.0 135.0 136.0 137.0 138.0 139.0 140.0 141.0 142.0 143.0 144.0 145.0 146.0 147.0 148.0 149.0 150.0 151.0 152.0 153.0 154.0 155.0 156.0 157.0 158.0 159.0 160.0 161.0 162.0 163.0 164.0 165.0 166.0 167.0 168.0 169.0 170.0 171.0 172.0 173.0 174.0 175.0 176.0 177.0 178.0 179.0 180.0 181.0 182.0 183.0 184.0 185.0 186.0 187.0 188.0 189.0 190.0 191.0 192.0 193.0 194.0 195.0 196.0 197.0 198.0 199.0 200.0 201.0 202.0 203.0 204.0 205.0 206.0 207.0 208.0 209.0 210.0 211.0 212.0 213.0 214.0 215.0 216.0 217.0 218.0 219.0 220.0 221.0 222.0 223.0 224.0 225.0 226.0 227.0 228.0 229.0 230.0 231.0 232.0 233.0 234.0 235.0 236.0 237.0 238.0 239.0 240.0 241.0 242.0 243.0 244.0 245.0 246.0 247.0 248.0 249.0 250.0 251.0 252.0 253.0 254.0 255.0]
+	#define VF_HEIGHT 63.0 // Height of the volumetric fog. [0.0 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0 17.0 18.0 19.0 20.0 21.0 22.0 23.0 24.0 25.0 26.0 27.0 28.0 29.0 30.0 31.0 32.0 33.0 34.0 35.0 36.0 37.0 38.0 39.0 40.0 41.0 42.0 43.0 44.0 45.0 46.0 47.0 48.0 49.0 50.0 51.0 52.0 53.0 54.0 55.0 56.0 57.0 58.0 59.0 60.0 61.0 62.0 63.0 64.0 65.0 66.0 67.0 68.0 69.0 70.0 71.0 72.0 73.0 74.0 75.0 76.0 77.0 78.0 79.0 80.0 81.0 82.0 83.0 84.0 85.0 86.0 87.0 88.0 89.0 90.0 91.0 92.0 93.0 94.0 95.0 96.0 97.0 98.0 99.0 100.0 101.0 102.0 103.0 104.0 105.0 106.0 107.0 108.0 109.0 110.0 111.0 112.0 113.0 114.0 115.0 116.0 117.0 118.0 119.0 120.0 121.0 122.0 123.0 124.0 125.0 126.0 127.0 128.0 129.0 130.0 131.0 132.0 133.0 134.0 135.0 136.0 137.0 138.0 139.0 140.0 141.0 142.0 143.0 144.0 145.0 146.0 147.0 148.0 149.0 150.0 151.0 152.0 153.0 154.0 155.0 156.0 157.0 158.0 159.0 160.0 161.0 162.0 163.0 164.0 165.0 166.0 167.0 168.0 169.0 170.0 171.0 172.0 173.0 174.0 175.0 176.0 177.0 178.0 179.0 180.0 181.0 182.0 183.0 184.0 185.0 186.0 187.0 188.0 189.0 190.0 191.0 192.0 193.0 194.0 195.0 196.0 197.0 198.0 199.0 200.0 201.0 202.0 203.0 204.0 205.0 206.0 207.0 208.0 209.0 210.0 211.0 212.0 213.0 214.0 215.0 216.0 217.0 218.0 219.0 220.0 221.0 222.0 223.0 224.0 225.0 226.0 227.0 228.0 229.0 230.0 231.0 232.0 233.0 234.0 235.0 236.0 237.0 238.0 239.0 240.0 241.0 242.0 243.0 244.0 245.0 246.0 247.0 248.0 249.0 250.0 251.0 252.0 253.0 254.0 255.0]
 
 	// [2026-09-12] 雾层厚度：高度包络的尺度（按 Mie 通道的半衰高度计，格）。它决定「方块与天空
 	// 谁被遮得多」：薄层（默认 12）时站在层里抬头看天空，射线十几格就离开雾层 → 天空几乎不被遮，
@@ -144,7 +144,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//（eyeSkylightSmooth 开四次方还原天光亮度，再线性反解 [0,15] 格）。
 	// UW_AMBIENT_STRENGTH = 水下环境光整体强度（0 = 完全关掉本豁免，回到旧行为）。
 	// 默认 1.0 = 实测确认的档位（用户实机裁定）
-	#define UW_AMBIENT_STRENGTH 1.0 // [0.0 0.1 0.2 0.35 0.5 0.7 1.0]
+	#define UW_AMBIENT_STRENGTH 0.7 // [0.0 0.1 0.2 0.35 0.5 0.7 1.0]
 	// 天空半球的光穿水柱的等效路径倍率（1.0 = 垂直路径；越大衰减越快）
 	#define UW_AMBIENT_DEPTH_MULT 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 	// 体素天光（SimpleSkyLighting）在水下的门控下限——原来是硬编码的 0.003（千分之三），
@@ -164,7 +164,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define VF_VOLUME_SHADOW_SAMPLES 2 // 光束阴影采样数（沿视线分层采样，0 = 关闭光束）。 [0 1 2 3 4 6 8 12 16]
 	// 光束亮度：只乘太阳 in-scatter，不动环境雾 —— 「让光束更明显」的正解（抬雾浓度会把环境一起提亮，
 	// 对比度不变）。1.0 = 现状；2~3 已经很明显；再往上会开始过曝。
-	#define VF_SHAFT_BRIGHTNESS 2.0 // 光束亮度（只提亮被太阳照到的那部分）。 [0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0 4.0 6.0 8.0]
+	#define VF_SHAFT_BRIGHTNESS 1.25 // 光束亮度（只提亮被太阳照到的那部分）。 [0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0 4.0 6.0 8.0]
 	// [2026-09-12] 光柱作用距离：光柱沿视线多远淡出（格）。此前光柱会一路延伸到 256 格不衰减，
 	// 因为阴影可见度是整条射线的平均值、integralFactor 在远距离只是饱和而非衰减、且光柱对比度
 	// 本身是常数。本项只让「对比度」随距离淡出，远处光柱淡成普通雾而不是变黑。
@@ -173,7 +173,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 	// [2026-09] 太阳/月亮"日晕"：与体积雾浓度解耦的保底光晕（天空像素上绘制）。
 	// 完全独立开关 SUN_HALO：不开体积雾、不开体积光也生效，雾再薄也有基础强度。
-	#define SUN_HALO // 独立日晕开关（不开体积雾也生效，仅天空区域）
+	//#define SUN_HALO // 独立日晕开关（不开体积雾也生效，仅天空区域）
 	#define SUN_HALO_STRENGTH 0.2 // 日晕保底强度。 [0.0 0.2 0.4 0.6 0.8 1.0 1.5 2.0 3.0]
 	#define SUN_HALO_WIDTH 1.0 // 日晕角宽（越大越宽越柔）。 [0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0]
 
@@ -215,8 +215,8 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// [2026-11-11] 水坑尺寸倍率（不是频率）：1 = 旧默认观感，越大水坑越大。
 	// 旧版该值是直接乘进噪声 UV 的频率，越大越碎（旧上限 0.5 只剩米粒），故改为尺寸正比、内部取倒数。
 	// 覆盖率由 noise 阈值与降雨湿度决定，与尺寸解耦；调大不会让整片地面变湿。
-	#define RAIN_PUDDLE_SCALE 1.0 // 水坑尺寸倍率：1 = 默认，越大越成片（下限 1.0，旧配置的 0.5 会按 1.0 处理）。 [1.0 1.25 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0]
-	#define RAIN_PUDDLE_SMOOTHNESS 0.9 // Smoothness of the rain puddles. [0.0 0.1 0.2 0.3 0.4 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99 1.0]
+	#define RAIN_PUDDLE_SCALE 3.0 // 水坑尺寸倍率：1 = 默认，越大越成片（下限 1.0，旧配置的 0.5 会按 1.0 处理）。 [1.0 1.25 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0]
+	#define RAIN_PUDDLE_SMOOTHNESS 1.0 // Smoothness of the rain puddles. [0.0 0.1 0.2 0.3 0.4 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99 1.0]
 
 	#define RAIN_VISIBILITY	0.5 // Visibility of the rain particles. [0.0 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
 	#define RAIN_SCALE_X	3.0 // X-Scale of the rain particles. [0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0 8.5 9.0 9.5 10.0 10.5 11.0 11.5 12.0 12.5 13.0 13.5 14.0 14.5 15.0 15.5 16.0 20.0 24.0]
@@ -240,9 +240,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 夜里天空 SH 仅约 1e-4，环境光原本由 MINIMUM_AMBIENT_BRIGHTNESS 常量提供、与月相无关，
 	// 所以夜间阴面偏亮；本项随月光直射亮度联动，与直射同为 NIGHT_BRIGHTNESS 的一次幂。
 	// 0 = 阴面只保留天空光与常量底光；0.07 为实测默认（满月夜 环境光/直射 ≈ 0.10）。
-	#define NIGHT_AMBIENT_RATIO 0.07 // 夜间环境光 = 该比例 × 月光直射亮度。 [0.0 0.03 0.05 0.07 0.10 0.15 0.22 0.30]
+	#define NIGHT_AMBIENT_RATIO 0.03 // 夜间环境光 = 该比例 × 月光直射亮度。 [0.0 0.03 0.05 0.07 0.10 0.15 0.22 0.30]
 	// [2026-09-04 加到 GUI] 月光亮度（月盘/月光强度）。原只定义在 DeferredLight.frag（非 GUI 选项）。
-	#define MOON_BRIGHTNESS_MULTIPLIER 1.0 // Brightness of the moon. [0.0 0.5 1.0 1.5 2.0 3.0 5.0]
+	#define MOON_BRIGHTNESS_MULTIPLIER 2.0 // Brightness of the moon. [0.0 0.5 1.0 1.5 2.0 3.0 5.0]
 	// [2026-09 夜空修复] 月光大气散射（Hillaire 天空 LUT 的月光项）标定系数：
 	// 1.0 = 严格按全家 dev 的 moonIrradiance 物理量级（实测夜空仍≈纯黑，贡献 1e-5 量级）；
 	// 500 = 等效把月亮立体角放大（dev 的 MOON_RADIUS_MULT 方向），用于对齐 dev 夜空亮度。
@@ -288,7 +288,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define SSILVB_BLENDED_LIGHTMAP 0.25 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0]
 	#define SSPT_BLENDED_LIGHTMAP 0.0 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0]
 
-	#define VOXEL_GI_BLENDED_LIGHTMAP 0.0 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0] 原版 Lightmap 混合倍率（1.0=完全保留原版光照，0.0=完全屏蔽原版 Lightmap，间接光照仅由体素 GI 提供）
+	#define VOXEL_GI_BLENDED_LIGHTMAP 0.05 // [0.0 0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0] 原版 Lightmap 混合倍率（1.0=完全保留原版光照，0.0=完全屏蔽原版 Lightmap，间接光照仅由体素 GI 提供）
 
 	#define VOXEL_IRC_UPDATE_INTERVAL 4 // [1 2 4] IRC 注入降频（每个体素每 N 帧重注入 1 次，算力降到约 1/N；体素光照变化慢，默认不降频，2/4 可显著提速且几乎无视觉差异）
 
@@ -326,7 +326,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define SVGF_QUALITY 1 // [0 1] GI 上采样质量（0=仅中心值/2x2 块，1=4 邻域深度感知）
 
 	#define GI_DISOC_THRESHOLD 0.01 // [0.005 0.01 0.02 0.05 0.1] 历史去遮挡阈值（官方 disocclusionThreshold）
-	#define GI_ACCUM_TIME 1.0 // [0.35 0.5 0.75 1.0 1.5 2.0] 时域累积时间（秒）
+	#define GI_ACCUM_TIME 0.75 // [0.35 0.5 0.75 1.0 1.5 2.0] 时域累积时间（秒）
 	// 每帧输入的等效样本数（1.0 = 官方 1 spp 口径）。prepass 32 样本空间重用 + ReSTIR 复用
 	// 让每帧噪声远低于单样本；照搬官方「时间/帧时间」会把累积上限高估 ⇒ 过粘（拖影）。
 	// 上限 = GI_ACCUM_TIME / (低通帧时间 × 本值)，下限 8 帧、硬上限 SSILVB_MAX_ACCUM_FRAMES。
@@ -334,7 +334,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// [2026-11-11 官方口径修正] 官方 REBLUR 是 1 spp 输入（VOXEL_REUSE 已 #undef ⇒ 每画布像素
 	// 每帧 1 条新射线，与官方同构）。旧值 2.0 把累积上限腰斩成官方一半（0.5s ⇒ 15 帧而不是 30），
 	// 是「静止满屏噪点」的直接来源之一。改成 1.0 后 cap 恢复到官方 maxAccumulatedFrameNum=30。
-	#define GI_EFFECTIVE_SPP 1.0 // [1.0 1.5 2.0 3.0 4.0 6.0] 每帧等效样本数（折算累积上限）
+	#define GI_EFFECTIVE_SPP 1.5 // [1.0 1.5 2.0 3.0 4.0 6.0] 每帧等效样本数（折算累积上限）
 	// [2026-11-13 帧率塌陷修复] 累积帧数的**下限**。原来这里是 8，而 cap 是「时间 ÷ 帧时间」，
 	// 于是**帧率越低累积越少**：5 fps 时 GI_ACCUM_TIME=2.0 只换到 10 帧、10 fps 只有 20 帧，
 	// 残噪 15~22%。官方 NRD 用的是**固定帧数** maxAccumulatedFrameNum（默认 63），没有这层换算。
@@ -379,7 +379,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 后去夹 TS 的最终混合权重：63 ⇒ 0.984（几乎不夹），8 ⇒ 0.889，2 ⇒ 0.667。
 	// 调小 ⇒ 稳定化更弱、拖影更短、噪点更多。
 	#define GI_STABILIZE_FRAMES 63.0 // [2.0 4.0 8.0 16.0 32.0 63.0] maxStabilizedFrameNum（换算成 N/(1+N) 后夹历史权重）
-	#define NRD_STABILIZATION_STRENGTH 1.0 // [0.0 0.25 0.5 0.75 1.0 1.5 2.0] 稳定化强度（乘在 N/(1+N) 上，1.0 = 官方）
+	#define NRD_STABILIZATION_STRENGTH 2.0 // [0.0 0.25 0.5 0.75 1.0 1.5 2.0] 稳定化强度（乘在 N/(1+N) 上，1.0 = 官方）
 	// [运动自适应历史] 重投影位移 > 2 屏幕像素时，按位移抬高本帧权重、压低稳定化历史权重。
 	// 只影响移动时；静止（含 TAA 亚像素抖动）位移 < 1 px ⇒ 逐位不变。
 	// 0 = 关（回到纯时域累积），0.5 = 半强度，1.0 = 全强度（默认）。代价：移动时噪点略升。
@@ -454,7 +454,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 为什么必须下限 1：8 个 Vogel tap 在步长 0.5 时**全部 round 回中心**（8/8），那一级等于没滤波；
 	// 旧写法在稳定像素上正好算出 0.50/0.68 ⇒ 4 级 a-trous 的前两级是空转，这是残噪的直接来源。
 	// 调大更干净但更糊；调小保细节但残噪多（0.5-6.0 ⇒ 5-60 画布纹素）。
-	#define NRD_RADIUS_PX 3.0 // [0.5 0.75 1.0 1.5 2.0 3.0 4.0 6.0] 最大滤波半径（×10 画布纹素）
+	#define NRD_RADIUS_PX 6.0 // [0.5 0.75 1.0 1.5 2.0 3.0 4.0 6.0] 最大滤波半径（×10 画布纹素）
 
 	// [2026-11-13] 稳定区的最小滤波半径（画布纹素）。
 	// 为什么需要它：稳定像素（A 到顶）的公式值 `sqrt(hitDistFactor × NLAS) × maxBlurRadius`
@@ -474,7 +474,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 尺度掉到和普通残噪同量级，看不出结构。
 	// 官方没有这个下限（只有 gMinBlurRadius = 1，公式值 1.9 / 3.8）⇒ 3.0 已经比官方宽，
 	// 再往下（2.0）更接近官方、更锐，但残噪更明显。与远端曲线（64 m 到 6）取 max。
-	#define NRD_STABLE_MIN_RADIUS 3.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 16.0] 稳定区最小滤波半径（画布纹素）
+	#define NRD_STABLE_MIN_RADIUS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 16.0] 稳定区最小滤波半径（画布纹素）
 
 	// [2026-11-13 新增，**默认关**]
 	// 低频补刀：一圈固定半径的 8 tap，挂在 PostBlur 那一遍上，带一条按残噪估计收紧的亮度判据。
@@ -511,7 +511,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//   代价：跨度大 ⇒ 跨表面概率上升，几何判据（切平面 + 法线 + hitDist）会硬拒一部分 tap，
 	//   有效样本变少，边缘/细碎几何处可能反而更噪（不是渗色，是"少借了"）。
 	//   回退：边缘质量掉得明显 ⇒ 50；脏斑改善有限 ⇒ 试 100（上限受画布尺寸限制，别超过 ~120）。
-	#define NRD_PREPASS_RADIUS 30.0 // [1.0 2.0 4.0 6.0 8.0 12.0 16.0 20.0 24.0 30.0 36.0 48.0 64.0 80.0 100.0] 预滤波空间重用半径（画布纹素）
+	#define NRD_PREPASS_RADIUS 48.0 // [1.0 2.0 4.0 6.0 8.0 12.0 16.0 20.0 24.0 30.0 36.0 48.0 64.0 80.0 100.0] 预滤波空间重用半径（画布纹素）
 
 	// `minHitDistanceWeight`（默认 0.1）：空间滤波里「命中距离差很大」的邻居仍保留的最小权重。
 	//   命中距离 = 该像素的 GI 射线打到多远的表面。两个像素命中距离差大 ⇒ 它们很可能处在
@@ -525,7 +525,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//   prepass / Blur / PostBlur / HistoryFix / TS 五处共用同一个值。
 	//   调大 ⇒ 更容易跨小台阶与凹凸混合（更平滑，但台阶边缘渗色、拖影变长）；
 	//   调小 ⇒ 判据更严（保边缘，但斜面与法线贴图区域更难累积、残噪上升）。
-	#define NRD_PLANE_DIST_SENS 0.02 // [0.005 0.01 0.02 0.03 0.05 0.08 0.1 0.15] 同一平面的距离容差（×视锥尺寸）
+	#define NRD_PLANE_DIST_SENS 0.05 // [0.005 0.01 0.02 0.03 0.05 0.08 0.1 0.15] 同一平面的距离容差（×视锥尺寸）
 
 	// `fastHistoryClampingSigmaScale`（默认 2.0，官方在 **HistoryFix** 里生效）：
 	//   把空间滤波后的长历史亮度夹到「未经滤波的短历史（6 帧）」的 mean ± kσ。
@@ -533,14 +533,14 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//   调大 ⇒ 夹得更松（细节保得多、拖影更长）；调小 ⇒ 夹得更紧（拖影短、残噪多）。
 	//   官方注释：脏信号可降到 1.5，遮挡去噪用 1.1 更安全。
 	//   注意与 `GI_FAST_CLAMP_SIGMA` 区分：那个是已移除的 TA 自造 clamp（宏保留为 0），这个是官方位置。
-	#define NRD_HISTORYFIX_CLAMP_SIGMA 2.0 // [1.1 1.5 2.0 2.5 3.0] HistoryFix 短历史裁剪 sigma 倍数
+	#define NRD_HISTORYFIX_CLAMP_SIGMA 1.5 // [1.1 1.5 2.0 2.5 3.0] HistoryFix 短历史裁剪 sigma 倍数
 
 	// [2026-11-14 本项目偏离，官方 3] HistoryFix 重建窗口（只影响 A < 本值的年轻像素）。
 	// 官方 `historyFixFrameNum = 3` 的前提是稠密输入；本包是 1 spp + 1 m 体素量化，
 	// A 到 3 就停止借邻居时，转头新露出的像素只剩 2~3 帧自己的样本
 	// ⇒ 实机表现为「新像素大块模糊斑块 + 脏」。窗口只作用于年轻像素，稳定区完全不受影响；
 	// 最后 2 帧线性淡出，避免断奶台阶。3 = 严格官方（更锐、新像素更脏）。
-	#define NRD_HISTORYFIX_FRAMES 8.0 // [3.0 4.0 6.0 8.0 12.0] HistoryFix 重建窗口（官方 3）
+	#define NRD_HISTORYFIX_FRAMES 12.0 // [3.0 4.0 6.0 8.0 12.0] HistoryFix 重建窗口（官方 3）
 	// 注意：VOXEL_GI_NRD_ACTIVE 在文件后段（GI_MODE / GI_ACTIVE_VXGI 定义之后）才推导。
 	// 预处理器对"尚未定义的标识符"按 0 处理，因此任何 `#if GI_MODE == ...` 都必须写在
 	// 第 630 行 `#define GI_MODE` 之后，否则恒为假——这里曾经因此让整条 REBLUR 链形同虚设。
@@ -551,15 +551,15 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define SSAO 1
 	#define GTAO 2
 	#define AO_ENABLED GTAO // Enables ambient occlusion. [OFF SSAO GTAO]
-	// #define AO_MULTI_BOUNCE // Enables ambient occlusion multi-bounce
+	#define AO_MULTI_BOUNCE // Enables ambient occlusion multi-bounce
 
 /* Shadows */
 	#define COLORED_SHADOWS // Enables shadow stained glass tint
 
 	#define SCREEN_SPACE_SHADOWS // Enables screen space shadows
-	#define SCREEN_SPACE_SHADOWS_SAMPLES 10 // Sample count of screen space shadows. [2 4 6 8 9 10 12 14 15 16 18 20 22 24 26 28 30 40 50 70 100 150 200 300 500]
+	#define SCREEN_SPACE_SHADOWS_SAMPLES 12 // Sample count of screen space shadows. [2 4 6 8 9 10 12 14 15 16 18 20 22 24 26 28 30 40 50 70 100 150 200 300 500]
 
-	#define SHADOW_BACKFACE_CULLING // Enables backface culling for shadows
+	//#define SHADOW_BACKFACE_CULLING // Enables backface culling for shadows
 
 	// 阴影视锥剔除（Iris 官方指令 shadow.culling，实际发射在 shaders.properties 的 #if 块里）：
 	//   0 = DISTANCE   ：只做「shadowDistance(64) 格盒」剔除。实测最快（本包推荐）。
@@ -569,7 +569,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	//   2 = SAFE_ZONE  ：voxelDistance(48) 格内不剔除、之外视锥剔除 + 64 格上限。实测与 0 相当。
 	// 另注：剔除掉的投影者变少会让更多像素走屏幕空间阴影/SSR（`shadow > 0.03` 早退），deferred 反而更贵。
 	// 见 https://shaders.properties/current/reference/shadersproperties/rendering/#shadowculling
-	#define SHADOW_CULLING_MODE 0 // [0 1 2]
+	#define SHADOW_CULLING_MODE 2 // [0 1 2]
 
 //======// Materials //===========================================================================//
 
@@ -593,18 +593,18 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 /* Parallax */
 	//#define PARALLAX // Enables parallax mapping
-	//#define PARALLAX_DEPTH_WRITE // Enables parallax depth write
+	#define PARALLAX_DEPTH_WRITE // Enables parallax depth write
 
-	//#define PARALLAX_SHADOW // Enables parallax shadow
-	//#define PARALLAX_BASED_NORMAL // Enables parallax based normal
+	#define PARALLAX_SHADOW // Enables parallax shadow
+	#define PARALLAX_BASED_NORMAL // Enables parallax based normal
 
 	// [2026-10-06 视差接线] 三个"数值型"选项必须保持启用（不能连注释一起关掉）：
 	// 它们是 PARALLAX 的子参数，被 lib/surface/Parallax.glsl 无条件引用；一旦为空，
 	// 只要用户打开「视差」就会编译失败（error C1503: undefined variable PARALLAX_SAMPLES）。
 	// 父开关 PARALLAX 默认关，故把它们启用在画面上零影响（默认观感不变）。
 	#define PARALLAX_SAMPLES 15 // Sample count of parallax. [5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200]
-	#define PARALLAX_DEPTH 0.35 // Parallax depth. [0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0][0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.5 0.75 1.0 1.25 1.5 1.75 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
-	//#define PARALLAX_REFINEMENT // Enables parallax refinement
+	#define PARALLAX_DEPTH 0.25 // Parallax depth. [0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0][0.01 0.02 0.05 0.07 0.1 0.15 0.2 0.25 0.5 0.75 1.0 1.25 1.5 1.75 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
+	#define PARALLAX_REFINEMENT // Enables parallax refinement
 	#define PARALLAX_REFINEMENT_STEPS 8 // Sample count of parallax refinement. [4 8 12 16 20 24 28 32 36 40 44 48 52 56 60 64 68 72 76 80 84 88 92 96 100] [2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 18 24]
 	//#define PHYSICS_OCEAN_SUPPORT
 /* Reflections */
@@ -621,7 +621,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// Fresnel 叠加到已着色漫反射上（金属那条 mix 路径不变）。默认关 = 与原行为逐位一致。
 	// 代价：符合条件的像素会真的跑一趟 SSR（覆盖率见反射页阈值）；GTX 1050 上建议同时降
 	// SSRT_MAX_SAMPLES（本机当前 32）。
-	//#define OPAQUE_SPECULAR
+	#define OPAQUE_SPECULAR
 	#define ROUGH_REFLECTIONS_THRESHOLD 0.005 // Threshold for rough reflections. [0.0001 0.0002 0.0005 0.0007 0.001 0.002 0.005 0.007 0.01 0.02 0.05 0.07 0.1 0.2 0.5]
 
 	#define REFLECTION_FILTER // Enables reflection filter
@@ -634,7 +634,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 /* Refractions */
 	// #define RAYTRACED_REFRACTION
-	#define REFRACTION_STRENGTH 1.7 // [0.0 0.1 0.2 0.25 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.2 2.4 2.6 2.8 3.0 3.2 3.4 3.6 3.8 4.0 4.2 4.4 4.6 4.8 5.0 5.5 6.0 6.5 7.0 7.5 8.0 9.5 10.0 11.0 12.0 13.0 14.0 15.0 16.0 17.0 18.0 19.0 20.0]
+	#define REFRACTION_STRENGTH 2.0 // [0.0 0.1 0.2 0.25 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.2 2.4 2.6 2.8 3.0 3.2 3.4 3.6 3.8 4.0 4.2 4.4 4.6 4.8 5.0 5.5 6.0 6.5 7.0 7.5 8.0 9.5 10.0 11.0 12.0 13.0 14.0 15.0 16.0 17.0 18.0 19.0 20.0]
 
 /* Emissive */
 	#define EMISSIVE_MODE 1 // [0 1 2]
@@ -653,7 +653,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 上限会让远处 SSS 变成与当地光照无关的固定亮度，看起来假，因此整条移除。
 	// 现在远处 SSS 亮度与距离无关，明暗完全交给屏幕空间接触阴影（贴图停采时与直接光同刻接管）。
 	#define SUBSURFACE_SCATTERING_MODE 1 // [0 1 2]
-	#define SUBSURFACE_SCATTERING_STRENGTH 1.0 // [0.0 0.01 0.02 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 3.0 4.0 5.0 7.0 10.0 15.0]
+	#define SUBSURFACE_SCATTERING_STRENGTH 1.6 // [0.0 0.01 0.02 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 3.0 4.0 5.0 7.0 10.0 15.0]
 	#define SUBSURFACE_SCATTERING_BRIGHTNESS 1.0 // [0.0 0.1 0.2 0.3 0.5 0.7 1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0 8.5 9.0 9.5 10.0]
 	// [2026-09] 阳面抑制（只对旧版模型 SUBSURFACE_SCATTERING_MODEL = 0 生效）。
 	// **原版 Revelation 没有任何 N·L 抑制**（SSS 是平加性项，受光面也有一份）。
@@ -695,14 +695,14 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// （默认开启是显式决策：用户要求不开 PCSS 也能复刻原版 PCSS 的 SSS 外观，
 	//   偏离 CODE_STYLE 的「新能力默认无视觉变化」约定。）
 	#define SUBSURFACE_SCATTERING_PCF_BLOCKER // Enables a few shadow-map depth samples for legacy SSS in PCF mode (replicates vanilla PCSS thickness)
-	#define SUBSURFACE_SCATTERING_BLOCKER_SAMPLES 4 // [2 4 6 8]
-	#define SUBSURFACE_SCATTERING_BLOCKER_SCALE 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0]
+	#define SUBSURFACE_SCATTERING_BLOCKER_SAMPLES 2 // [2 4 6 8]
+	#define SUBSURFACE_SCATTERING_BLOCKER_SCALE 3.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0]
 	#define SUBSURFACE_SCATTERING_RADIUS 0.25 // [0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.11 0.12 0.13 0.14 0.15 0.16 0.17 0.18 0.19 0.2 0.21 0.22 0.23 0.24 0.25 0.26 0.27 0.28 0.29 0.3 0.31 0.32 0.33 0.34 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
 	// [2026-09 SSS 重构] 扩散平均自由程 = RADIUS × 4（方块）。RADIUS 此前是死选项（代码零引用），
 	// 现在同时决定体积衰减强度，并将在屏幕空间扩散 pass 里决定模糊半径。
 	// [2026-09] 薄片（树叶/草/藤）背光透光强度。这一项含相机方向，是**视角相关**的
 	// （只有逆光看薄片才亮，转视角会明暗跳动）——所以默认 0（关）。想要逆光辉光再往上调。
-	#define SUBSURFACE_SCATTERING_TRANSMISSION 0.2 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0 3.0]
+	#define SUBSURFACE_SCATTERING_TRANSMISSION 0.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5 2.0 3.0]
 	// [2026-09] 正面（受光面）扩散强度：不依赖相机，只随 N·L 与阴影可见性变化（旧实现的优点）。
 	// 0 = 完全关闭正面项。默认 0.35 时受光面大约比普通方块亮 20%（x1.5 亮度倍率后约 30%）。
 	#define SUBSURFACE_SCATTERING_DIFFUSE 0.0 // [0.0 0.05 0.1 0.15 0.2 0.25 0.3 0.4 0.5 0.6 0.8 1.0 1.5 2.0 3.0]
@@ -746,10 +746,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 //======// Post-Processing //=====================================================================//
 
 /* Depth of Field */
-	#define DEPTH_OF_FIELD // Enables depth of field
+	//#define DEPTH_OF_FIELD // Enables depth of field
 	#ifdef DEPTH_OF_FIELD
 	#endif
-	// #define DOF_APERTURE_VIGNETTING // Enables aperture vignetting
+	#define DOF_APERTURE_VIGNETTING // Enables aperture vignetting
 	#define CAMERA_FOCUS_MODE 0 // [0 1]
 	#define DOF_FOCAL_LENGTH 35.0 // [18.0 24.0 35.0 50.0 75.0 100.0]
 	#define DOF_F_STOP 4.0 // [1.0 1.4 2.0 2.8 4.0 5.6 8.0 11.0 16.0]
@@ -759,26 +759,26 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define DOF_MAX_BLUR_RADIUS 8.0 // [4.0 6.0 8.0 10.0 12.0 16.0 20.0 24.0 32.0]
 	#define DOF_FOCUS_HALFLIFE 0.05 // [0.04 0.05 0.075 0.1 0.15 0.2 0.25 0.3 0.4 0.5 0.75 1.0]
 	#define DOF_MANUAL_FOCUS_DISTANCE 10.0 // [1.0 2.0 3.0 4.0 5.0 6.0 8.0 10.0 12.0 16.0 20.0 24.0 32.0 48.0 64.0 96.0 128.0 192.0 256.0 512.0]
-	//#define DOF_FOCUS_IGNORE_HAND // Ignore the hand when finding the autofocus target
+	#define DOF_FOCUS_IGNORE_HAND // Ignore the hand when finding the autofocus target
 
 /* TAA */
 	#define TAA_ENABLED // Enables temporal Anti-Aliasing
 	#define TAA_CLOSEST_FRAGMENT // Caclulates the closest fragment for TAA. Improves ghosting in the motion objects
-	#define TAA_MAX_ACCUM_FRAMES 64.0 // Maximum number of accumulated frames for TAA. [20.0 24.0 28.0 32.0 36.0 40.0 48.0 56.0 64.0 72.0 80.0 96.0 112.0 128.0 144.0 160.0 192.0 224.0 256.0 320.0 384.0 448.0 512.0 640.0 768.0 896.0 1024.0]
-	#define TAA_HISTORY_WEIGHT 0.9 // 性能模式的历史权重：越大越干净、拖影越长（0.9 = 当前帧占 10%）[0.5 0.6 0.7 0.75 0.8 0.85 0.875 0.9 0.925 0.95 0.975 0.99]
+	#define TAA_MAX_ACCUM_FRAMES 36.0 // Maximum number of accumulated frames for TAA. [20.0 24.0 28.0 32.0 36.0 40.0 48.0 56.0 64.0 72.0 80.0 96.0 112.0 128.0 144.0 160.0 192.0 224.0 256.0 320.0 384.0 448.0 512.0 640.0 768.0 896.0 1024.0]
+	#define TAA_HISTORY_WEIGHT 0.95 // 性能模式的历史权重：越大越干净、拖影越长（0.9 = 当前帧占 10%）[0.5 0.6 0.7 0.75 0.8 0.85 0.875 0.9 0.925 0.95 0.975 0.99]
 
 	#define TAA_CLIPPING
 	#define TAA_AGGRESSION 2.0 // [1.0 1.05 1.1 1.15 1.2 1.25 1.3 1.35 1.4 1.45 1.5 1.55 1.6 1.65 1.7 1.75 1.8 1.85 1.9 1.95 2.0 2.05 2.1 2.15 2.2 2.25 2.3 2.35 2.4 2.45 2.5 2.55 2.6 2.65 2.7 2.75 2.8 2.85 2.9 2.95 3.0]
-	#define TAA_ANTIFLICKER 0.0 // [0.0 0.25 0.5 0.75 1.0]
+	#define TAA_ANTIFLICKER 0.25 // [0.0 0.25 0.5 0.75 1.0]
 
-	//#define TAA_SHARPEN
+	#define TAA_SHARPEN
 
-	#define TAA_CLIP_STDDEV_MIN 0.0 // 方差裁切的标准差下限（仅质量模式）：防平坦区域 0/0 = NaN [0.0 0.0001 0.001 0.01 0.1]
+	#define TAA_CLIP_STDDEV_MIN 0.0001 // 方差裁切的标准差下限（仅质量模式）：防平坦区域 0/0 = NaN [0.0 0.0001 0.001 0.01 0.1]
 
 /* Motion Blur */
 	#define MOTION_BLUR // Enables motion blur
-	#define MOTION_BLUR_SAMPLES 4 // Sample count of motion blur. [2 3 4 5 6 7 8 9 10 12 14 16 18 20 22 24]
-	#define MOTION_BLUR_STRENGTH 1.0 // Strength of the motion blur. [0.0 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.5 1.7 2.0 2.5 3.0 3.5 4.0 4.5 5.0 7.0 10.0 12.0 14.0 16.0 18.0 20.0]
+	#define MOTION_BLUR_SAMPLES 6 // Sample count of motion blur. [2 3 4 5 6 7 8 9 10 12 14 16 18 20 22 24]
+	#define MOTION_BLUR_STRENGTH 1.7 // Strength of the motion blur. [0.0 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.5 1.7 2.0 2.5 3.0 3.5 4.0 4.5 5.0 7.0 10.0 12.0 14.0 16.0 18.0 20.0]
 
 /* Bloom */
 	#define BLOOM
@@ -796,7 +796,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 	#define AUTO_EV_MIN -5.0 // Minimum EV value for auto exposure. [-32.0 -31.0 -30.0 -29.0 -28.0 -27.0 -26.0 -25.0 -24.0 -23.0 -22.0 -21.0 -20.0 -19.0 -18.0 -17.0 -16.0 -15.0 -14.0 -13.0 -12.0 -11.0 -10.0 -9.0 -8.0 -7.0 -6.0 -5.0 -4.0 -3.0 -2.0 -1.0 0.0 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0 17.0 18.0 19.0 20.0 21.0 22.0 23.0 24.0 25.0 26.0 27.0 28.0 29.0 30.0 31.0 32.0]
 	#define AUTO_EV_MAX 10.0 // Maximum EV value for auto exposure. [-32.0 -31.0 -30.0 -29.0 -28.0 -27.0 -26.0 -25.0 -24.0 -23.0 -22.0 -21.0 -20.0 -19.0 -18.0 -17.0 -16.0 -15.0 -14.0 -13.0 -12.0 -11.0 -10.0 -9.0 -8.0 -7.0 -6.0 -5.0 -4.0 -3.0 -2.0 -1.0 0.0 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0 17.0 18.0 19.0 20.0 21.0 22.0 23.0 24.0 25.0 26.0 27.0 28.0 29.0 30.0 31.0 32.0]
-	#define AUTO_EV_BIAS 0.0 // EV bias for auto exposure. [-2.0 -1.9 -1.8 -1.7 -1.6 -1.5 -1.4 -1.3 -1.2 -1.1 -1.0 -0.9 -0.8 -0.7 -0.6 -0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0]
+	#define AUTO_EV_BIAS -0.4 // EV bias for auto exposure. [-2.0 -1.9 -1.8 -1.7 -1.6 -1.5 -1.4 -1.3 -1.2 -1.1 -1.0 -0.9 -0.8 -0.7 -0.6 -0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0]
 	#define MANUAL_EV 4.0 // Manual exposure value. [0.1 0.3 0.5 1.0 1.5 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 12.0 14.0 16.0 18.0 20.0 25.0 30.0 40.0 50.0]
 
 	#define EXPOSURE_SPEED_UP 2.0 // Dim to bright speed. [0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.6 2.0 2.5 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0 14.0 15.0 16.0 17.0 18.0 19.0 20.0 25.0 30.0 40.0 50.0]
@@ -808,10 +808,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 
 /* FidelityFX */
 	//#define CAS_ENABLED // Sharpens the final image using AMD FidelityFX CAS (Contrast-Adaptive Sharpening)
-	#define CAS_STRENGTH 0.5 // Strength of the CAS. [0.0 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
+	#define CAS_STRENGTH 0.95 // Strength of the CAS. [0.0 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
 
 /* Chromatic Aberration */
-	#define CHROMATIC_ABERRATION // Enables lateral chromatic aberration (RGB channel separation at the lens barrel)
+	//#define CHROMATIC_ABERRATION // Enables lateral chromatic aberration (RGB channel separation at the lens barrel)
 	#define CHROMATIC_ABERRATION_STRENGTH 4.0 // Maximum offset in pixels at the screen corners. [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 12.0 14.0 16.0 18.0 20.0 25.0 30.0]
 
 	#if RENDER_MODE == 0
@@ -846,17 +846,17 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 // 相机的转向先低通，再用「低通朝向 - 当前朝向」的差换算成屏幕位移与滚转。
 // 0 延迟 = 完全固定跟随（旧行为）；延迟越大，快速转身时板子越明显地「甩在后面」。
 #ifndef LOGO_FOLLOW_DELAY
-    #define LOGO_FOLLOW_DELAY 0.12 // [0.0 0.04 0.06 0.08 0.1 0.12 0.15 0.2 0.3 0.5] 跟随延迟（秒，0=固定跟随）
+    #define LOGO_FOLLOW_DELAY 0.0 // [0.0 0.04 0.06 0.08 0.1 0.12 0.15 0.2 0.3 0.5] 跟随延迟（秒，0=固定跟随）
 #endif
 #ifndef LOGO_FOLLOW_STRENGTH
-    #define LOGO_FOLLOW_STRENGTH 1.5 // [0.0 0.25 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 滞后量→屏幕位移（焦距倍率，0=不位移；内部再 ×2）
+    #define LOGO_FOLLOW_STRENGTH 0.0 // [0.0 0.25 0.5 1.0 1.5 2.0 3.0 4.0 6.0 8.0] 滞后量→屏幕位移（焦距倍率，0=不位移；内部再 ×2）
 #endif
 #ifndef LOGO_FOLLOW_ROLL
-    #define LOGO_FOLLOW_ROLL 0.5 // [0.0 0.2 0.35 0.5 0.75 1.0 1.5 2.0 2.5 3.0] 滞后量→滚转角（弧度/弧度；内部再 ×3）
+    #define LOGO_FOLLOW_ROLL 0.0 // [0.0 0.2 0.35 0.5 0.75 1.0 1.5 2.0 2.5 3.0] 滞后量→滚转角（弧度/弧度；内部再 ×3）
 #endif
 
 	// #define FORCE_DISABLE_SUBGROUP_OPS
-	#define GI_MODE 0 // [0 1 2 3]
+	#define GI_MODE 2 // [0 1 2 3]
 	// Keep internal boolean aliases for Iris' program-toggle preprocessor.
 	// GI_MODE is the only user-facing selector; these aliases are deliberately
 	// not referenced by any screen entry.
@@ -903,7 +903,7 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// 【2026-11-11 实测】暗处 ×4 = 累积上限 120 帧（0.5 s→2 s）：光照变化的恢复时间翻四倍，
 	//   在暗场景里表现为「拖影一大条」。官方 REBLUR 没有这个机制（cap 全场一致）。
 	//   默认保持关闭；只有在「暗处噪点实在压不住」时才考虑开。
-	//#define VOXEL_GI_DARK_ACCUM
+	#define VOXEL_GI_DARK_ACCUM
 	//#define VOXEL_GI_FULLRES
 	#ifdef VOXEL_GI_FULLRES
 		#ifdef GI_ACTIVE_VXGI

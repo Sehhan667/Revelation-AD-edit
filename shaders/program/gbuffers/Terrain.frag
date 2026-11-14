@@ -20,11 +20,11 @@
 
 */
 // 视差映射最大距离（米），超出此距离视差完全失效
-#define PARALLAX_MAX_DISTANCE 64  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+#define PARALLAX_MAX_DISTANCE 32  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
 
 // 视差映射淡化距离（米）：内圈（FADE_END）满强度，外圈（FADE_START）淡到 0
-#define PARALLAX_FADE_START 64  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
-#define PARALLAX_FADE_END   32  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+#define PARALLAX_FADE_START 32  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+#define PARALLAX_FADE_END   16  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
 // [2026-10-06 视差阴影可视距离] 满强度半径 16->32 m、淡出终点 32->64 m，MAX_DISTANCE 同步 64。
 // 为什么原来"看不到"：视差自阴影只乘直射阳光，且两者共用同一条 fade —— fade 归零时射线横向
 // 步长也归零，只剩 z 方向爬升，必定判定无遮挡。所以 32 m 外结构上不可能有自阴影，
@@ -37,7 +37,7 @@
 // doParallax=false 掐断，深度会在 MAX_DISTANCE 处硬切 —— 保持 FADE_START <= MAX_DISTANCE（现在 64/64 齐平）。
 
 // 方块法线/高光贴图裁剪最大距离（米）
-#define BLOCK_TEXTURE_CULL_DISTANCE 64  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
+#define BLOCK_TEXTURE_CULL_DISTANCE 128  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
 
 // === Voxel Settings ===
 // ENABLE_VOXELIZATION 和 VISUALIZE_VOXELS 由 shaders.properties 注入，此处不再重复定义

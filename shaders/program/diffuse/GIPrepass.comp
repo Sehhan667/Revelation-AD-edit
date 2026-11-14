@@ -61,7 +61,7 @@ layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时�
 // 实际值由 settings.glsl 的 GUI 选项 `NRD_PREPASS_RADIUS` 决定（默认 30，与官方一致）。
 // 这里只是 settings 未定义时的兜底，必须与 settings 的默认值一致，否则会误导（改这里不生效）。
 #ifndef NRD_PREPASS_RADIUS
-    #define NRD_PREPASS_RADIUS 30.0
+    #define NRD_PREPASS_RADIUS 48.0
 #endif
 // [2026-11-11 更正] 官方 REBLUR_POISSON_SAMPLE_NUM = 8，且官方 prepass **本身就跑在半分辨率**，
 // 输入同样是 1 spp。所以「我们是半分辨率所以要更多样本」不成立 —— 两边同分辨率、同半径、同 spp。
@@ -73,7 +73,7 @@ layout (rgba16f) restrict uniform image2D colorimg26;   // 输入/输出：时�
 
 // 官方 planeDistanceSensitivity = 0.02（相对视锥短边世界尺寸）
 #ifndef NRD_PLANE_DIST_SENS
-    #define NRD_PLANE_DIST_SENS 0.02
+    #define NRD_PLANE_DIST_SENS 0.05
 #endif
 
 // [2026-11-13 修正] 官方传入 GetNormalWeightParam 的不是 0.15，而是 **0.15²**：

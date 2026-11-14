@@ -129,7 +129,7 @@ layout (rgba16f) restrict uniform image2D colorimg25;
 
 // 官方空间滤波参数（Common.hlsli / REBLUR_Config.hlsli / NRDSettings.h 默认值）
 #ifndef NRD_PLANE_DIST_SENS
-	#define NRD_PLANE_DIST_SENS 0.02
+	#define NRD_PLANE_DIST_SENS 0.05
 #endif
 // [2026-11-13 修正] 官方 `gLobeAngleFraction = lobeAngleFraction²`（Reblur.cpp:376），
 // 默认 0.15 ⇒ 实际传入 0.0225。此前直接用 0.15，稳定区允许跨法线约 20.5°，

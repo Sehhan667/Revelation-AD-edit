@@ -14,7 +14,7 @@
 // 之前只有水柱消光（mix(4,1,worldLightDir.y)）在起作用，实测「水下太阳光晕过亮、且几乎
 // 不随太阳高度变化」，这里补上这一项。两个旋钮都在「透明/水」页。
 #ifndef UW_SUN_GLOW_STRENGTH
-	#define UW_SUN_GLOW_STRENGTH 0.6 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5] 水下太阳光晕强度（0 = 关掉前向散射光晕）
+	#define UW_SUN_GLOW_STRENGTH 0.2 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.5] 水下太阳光晕强度（0 = 关掉前向散射光晕）
 #endif
 #ifndef UW_SUN_GLOW_FALLOFF
 	#define UW_SUN_GLOW_FALLOFF 0.35 // [0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.45 0.6 0.8] 太阳高度衰减终点（越小 = 太阳稍低就变暗）

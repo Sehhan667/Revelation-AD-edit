@@ -6,7 +6,7 @@
 // 基准 0.03 时 256 纹素噪声约 33 格一循环（约 0.13 格/纹素），与旧默认逐位一致（除以 1.0 精确）。
 // 下限 1.0：旧配置文件里残留的 0.5（旧上限）会被当作默认尺寸，避免旧频率语义再次生效。
 #ifndef RAIN_PUDDLE_SCALE
-    #define RAIN_PUDDLE_SCALE 1.0
+    #define RAIN_PUDDLE_SCALE 3.0
 #endif
 
 const float puddleBaseFrequency = 0.03;
