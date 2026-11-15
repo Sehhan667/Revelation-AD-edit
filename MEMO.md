@@ -2976,3 +2976,81 @@ Final 里如果画布读回 ≈0（`dot(blur, 1) < 1e-5`），退到 5 tap 十�
 
 **规则**：凡是**浮点**选项（0.12、0.25、0.35…）都不要放进 #if 比较，一律改成运行期
 if (OPTION > 0.0) { ... }。整数选项（[0 1 2 3]）可以放心用 #if OPTION == 2。
+
+
+## 2026-11-13 官方 NRD 源码入库 + ReBLUR 第七轮修正
+
+**源码位置**：`docs/nrd-official/`（NVIDIA-RTX/NRD master，commit `90dea8bd`，2026-11-12）。
+含 PrePass / SpatialFilter / TA / TS / HistoryFix / Blur / PostBlur / Common / Poisson / NRDSettings / Reblur.cpp
+与论文 `REBLUR_paper_RTG2_ch49.pdf`。以后引用官方公式先查这里，不要再凭记忆写行号。
+
+**本轮确认的 4 处误读（都已修）**：
+1. `gLobeAngleFraction` 官方是 **设置值的平方**（`Source/Reblur.cpp:376`）⇒ 默认 0.0225，不是 0.15。
+   prepass 法线 param = 1.70357（不是 1.1748），EAWF/HistoryFix 同值。
+2. firefly suppressor 的速度是**累积帧数**，`amount = x/(1+x)`（`REBLUR_TemporalAccumulation.cs.hlsl:962-965`）；
+   不是 alpha、也不是 saturate。
+3. TA 的混合率是**纯 1/(1+N)**（TA:949）；`GetAdvancedNonLinearAccumSpeed` 只用于 EAWF 半径与 TS 历史权重。
+4. 官方 HistoryFix 只修 `frameNum < 3`（`NRDSettings.h:292`），半径 2（20 tap）；没有渐近退场。
+
+**新增/修正的结构**：
+- `Accumulate` 的累积帧数改从 `colortex23.a`（上一帧 TS 的 ageOut）读取并 +1，
+  再乘官方置信度衰减 `N *= lerp(conf, 1, 1/(1+N))`（TA:903）；TS 的 antilag 由此回流到下一帧 TA。
+- `Accumulate` 的 `conf` = sqrt(逐 tap 二值遮挡位的双线性平均)，与官方 `smbFootprintQuality` 同构。
+- `EAWF` 的 NLAS 用完整 `GetAdvancedNonLinearAccumSpeed`（s=1/b=0.2/p=0.8）。
+- `EAWF` 补 `MirrorUv`：越界 tap 镜像回屏内、权重 1.0。
+- `GIPrepass` 改 `g_Special8` + 高斯 z 权重；删除自造物理尺度半径下限。
+- `GIHistoryFix` 恢复 `frameNum<3` / 半径 2 / stride≤7 硬门控。
+- `GIStabilize` 补官方年轻像素亮度清理（`data1.x < 3`）。
+
+**验证状态**：三套脚本全绿（语义 / 静态 / 预处理 340 入口）。观感项全部待主人实机，
+清单见 `REBLUR-CHECKLIST.md` 第七轮 S1~S4。
+
+## 2026-11-14 新像素大块模糊斑块 → HistoryFix 窗口做成 GUI
+
+主人在第七轮后反馈「转头时的新像素有些脏（大块的模糊斑块），其他还可以」。
+定位：官方 `historyFixFrameNum = 3` 的前提是稠密输入；本包 1 spp + 1 m 体素量化，
+A 到 3 就停止借邻居，新露出像素只剩 2~3 帧自己的样本 ⇒ 斑块。
+
+改法：新增 GUI `NRD_HISTORYFIX_FRAMES`（默认 **8**，官方 3，可选 3/4/6/8/12），
+只在 `frameNum < 本值 + 2` 时做重建，末尾 2 帧线性淡出（`fixW = saturate((W+2-A)/2)`），
+稳定区完全不受影响。设 3 即回到严格官方。四处接线：settings / shaders.properties
+（screen.VXGI + sliders）/ 双语 lang / comp 内 `#ifndef` 兜底。
+
+同期关闭了上一轮遗留的 `DEBUG_GI_ACCUM_STATS`（整屏 R/G 诊断覆盖，非画面问题）。
+
+## 2026-11-14 「没出屏、只转视角 GI 也变噪」的两个敏感点
+
+官方 TS 的 antilag 反馈回 TA（第七轮 E）之后出现：稳定区域只要转视角就变噪。两处过度敏感：
+
+1. `GIStabilize` 的 `accumSpeed = quality * taAge` 直接吃到 120+ 帧（GI_ACCUM_TIME=2.0），
+   而官方 `magic = luminanceSensitivity·(2·fps)²` 是按 `maxAccumulatedFrameNum=30` 标定的。
+   转头时亚像素重投影造成的几个百分点亮度差 → `antilag = 1/(1+d·120/12)` → ageOut 掉到 30
+   → 反馈回 TA，alpha 从 1/120 涨到 1/30。已把 **antilag 输入**夹到 30；hw/ageOut 仍用真实帧数。
+2. `Accumulate` 的 conf 用 `tapPlane > 0.5` 二值化：掠射/凹凸面 tapPlane 本来就在 0.5 附近，
+   转头时 4 个 tap 落点变化会跨阈值 → fpq 从 1 掉到 0.5 → `N *= lerp(conf,1,1/(1+N))` 直接减半。
+   已改为**连续** tapPlane 加权（官方二值位配的是 frustum 尺度容差，阈值不能照搬）。
+
+两者都是「按官方形式、去掉过度敏感」，不改结构。三套检查全绿。
+
+## 2026-11-14 天空图/SH 环境光刷新频率宏
+
+球谐环境光（GenSkySH）每帧从 skyMapTex(colortex5) 积分，而 skyMapTex 原来用 2x2 棋盘
+降频：每帧只写 1/4 纹素、4 帧一轮，再由历史累积补全。
+
+新增 `SKY_MAP_DOWNFREQ_REFRESH`（settings.glsl，天空环境光衰减块之后）：
+- 注释（默认）= 每帧全量刷新，SH 环境光每帧更新，skyMap 计算量 ×4；
+- 取消注释 = 恢复 2x2 棋盘降频（每帧 1/4，省约 75%）。
+GenSkyMap.comp 里按宏切换 `writeTexel`。编译期分支，切换后需重载光影。
+
+## 2026-11-14 VXGI 阳光 GI：雨雪衰减 + 末地淡紫色
+
+阳光 GI 有两条等价路径，必须同时改（历史教训：两端口径不一致会漏光/变色）：
+- 注入端 `program/gi/VoxelGI.frag` 的 `sunLight`（写进 IRC 体素缓存）；
+- 追踪端 `lib/lighting/VoxelTracing.glsl` 的 sunlight 项（直接进屏幕 GI）。
+
+新增两个宏（`lib/lighting/VoxelLighting.glsl`，经 settings.glsl 全局可见）：
+- `VOXEL_SUN_WEATHER_ATTEN`（0.96）：`sunGI *= 1 - rainStrength * 本值`。
+  用 `rainStrength` 而不是 `wetness` —— 雪天 wetness=0，会漏掉雪。
+  阴影贴图只判遮挡、不含云层衰减，所以 GI 侧必须自己乘。
+- `VOXEL_END_SUN_GI_TINT`（vec3(0.90, 0.82, 0.98)）：仅 `DIMENSION_THE_END` 下乘到
+  阳光 GI 上，用于对齐末地淡紫色环境光。要更淡就把它推向 vec3(1.0)。

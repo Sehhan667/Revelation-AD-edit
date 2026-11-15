@@ -131,6 +131,310 @@
 - 四处接线齐全（settings / properties 的 screen.VXGI 与 sliders / 双语 lang），两个 comp 有 `#ifndef` 兜底。
 - 三套检查全绿。**待实机**：重载后沿墙平移 3 秒，报「拖影是否变短 + 移动噪点能否接受」。
 
+### 第四轮（2026-11-13）：`taAge > 63` 误判 —— 「逐渐清晰后瞬间变噪」的根因
+
+**现象**（主人）：转头后 GI 从模糊逐渐清晰（符合预期），随后**一瞬间**变成缺失降噪的噪点。
+
+**根因**：`GIStabilize.comp` 把官方 `maxStabilizedFrameNum = 63` 当成了**本级帧数上限**：
+
+```glsl
+if (!(taAge >= 0.0) || taAge > STABILIZE_MAX_FRAMES) taAge = 0.0;   // 63
+```
+
+但 7.5 那次语义修正之后，63 已经只是 `strength = N/(1+N)` 的换算输入，**不是上限**。
+真正上限是 TA 的 `accumCap`。主人的选项文件 `GI_ACCUM_TIME=2.0` ⇒ `cap = clamp(2/0.0167, 8, 64) = 64`
+⇒ 站定第 64 帧（约 1.07 s）A 刚跨过 63，本级把 `taAge` 判成 0
+⇒ `historyWeight = quality·(1-NLAS)·antilag = 0` ⇒ `_hwMix = 0` ⇒ 输出 = 裸 EAWF（0.98 的 IIR 整级消失）。
+
+**时间线完全对得上**：半径随 A 增长按 `sqrt(NLAS)` 收缩 ⇒ 越看越清晰；收到最小的那一帧稳定化同时归零 ⇒ 断崖。
+暗处 `VOXEL_GI_DARK_ACCUM` 再 ×4（cap 256）只是把这个断崖拖到 1 s 之后才发生。
+
+**离线数值**（`alpha = 1/(1+kN)`，残噪幅度 = `√(α/(2-α)) · √((1-hw)/(1+hw))`，相对单帧）：
+
+| N | α | hw（修复后） | hw（修复前） | 残噪（后） | 残噪（前） |
+|---|---|---|---|---|---|
+| 48 | 2.15% | 0.970 | 0.970 | 1.29% | 1.29% |
+| 63 | 1.56% | 0.975 | 0.975 | 1.01% | 1.01% |
+| **64** | 1.54% | **0.975** | **0** | **1.00%** | **8.80%** |
+| 256 | 1.54% | 0.986 | 0 | 0.74% | 8.80% |
+
+**改法**：判据换成垃圾值兜底 `taAge > 1e6`（与 `GIHistoryFix` 同口径），本级不设帧数上限。
+**代价**：无。N > 63 时直接沿用 TA 的真实帧数，与官方同构。
+**一键回退**：把该行改回 `taAge > 63 ⇒ 0`（即复现原现象，仅供诊断）。
+**待实机**：站定 3 秒，确认「清晰之后不再突变」；再把 `GI_ACCUM_TIME` 拖到 0.5 复看一次（此时 cap=30，从未触发，应无差别）。
+
+**顺带记录（未改动，属取舍）**：主人选项 `VOXEL_GI_DARK_ACCUM=true` + `GI_ACCUM_TIME=2.0` ⇒ 暗处 cap = 256 ≈ 4.3 s，
+官方没有这个机制；配合 TS 的 `accumSpeed = 256` 会让 antilag 异常敏感（`d·256/12`）。若暗处拖影明显，先关掉它。
+
+### 第五轮（2026-11-13）：改用非递归历史，换 iterationRP 的观感
+
+**背景**（主人）：用 iterationRP 的体感是「从头到尾都平滑，静止后细节在平滑画面上逐渐浮出，全程不噪」。
+核对 itrp 的缓冲流向（`Lib/Programs/Composite/*`）：时域 pass 只写 `colortex8`，8 级 a-trous 全在 `colortex1` 上接力
+⇒ **滤波结果从不回写历史**，是 SVGF 式非递归。同量级参数：`PT_DIFFUSE_SPP=1`、`PT_DIFFUSE_TEMPORAL_MAX_ACCUM=64`，与本包一致
+⇒ 差距不在采样量，只在「历史存什么」。
+
+**改动 1（结构，故意偏离官方）**：`GI_RECURRENT_HISTORY` 默认 `1 → 0`。
+- 影响面只有 `GIHistoryStore.comp:78` 一处：不再把 `colortex25.rgb` 回写 `colortex2`，`.a`（累积帧数）本来就不写。
+- 效果：细节始终留在历史里，遮住它的只有噪声，而噪声按 1/√A 自己下降 ⇒ 不需要靠收半径让细节回来。
+- **这是本包唯一一处故意偏离官方 REBLUR 的结构项**。改回 1 即回到严格对齐（也会回到「越清晰越露噪」的老问题）。
+- 为什么官方能接受递归而本包不能：官方 prepass 已把 1 spp 稠密化，收小半径后仍有足够降噪；本包输入是
+  1 spp + 1 m 体素量化，收小半径后只剩时域平均。
+
+**改动 2（配套，新增 GUI 项）**：`NRD_WIDE_RADIUS`（默认 16 画布纹素，0 = 关）。
+- 位置：`EAWF.comp` 的 **PostBlur 那一遍**（`FILTER_PASS_INDEX == 1`），NRD 路径才编译。
+- 8 个 tap、**半径固定**、不乘 `sqrt(hitDistFactor × NLAS)` ⇒ 稳定之后仍在工作，专治 8~20 画布纹素的低频斑块。
+- 点采样（`imageLoad` 取整），不做双线性：低频内容不需要亚像素精度，省 3/4 取数。
+- **多一条亮度判据**：`w *= exp2(-|ΔY| / (1.5·σ_noise))`，`σ_noise = √(colortex26.g / A)`。
+  A 小 ⇒ 容差宽 ⇒ 抹平噪声；A 大 ⇒ 容差紧 ⇒ 只平均亮度几乎相同的邻居 ⇒ 真实细节留下。
+  这条是「平滑但保细节」的唯一来源；没有它，宽核等于永久性的糊。
+- 旋转**不跟帧**（只用像素哈希）：8 个 tap 逐帧换图案会让低频输出整片抽动。
+- **不加命中距离权重**：它按 NLAS 收紧，稳定后 NLAS≈1/65 ⇒ 该权重≈0，加进去等于把这一圈整体筛没。
+- 量级：16 画布纹素 = 32 屏幕像素，接近 itrp 最宽那一级（36 屏幕像素）。每 tap 权重上限 `NRD_WIDE_WEIGHT=0.6`。
+
+**2026-11-13 实机反馈 1：新像素迅速凝固成「全是噪点的静态状态」**。定位到补刀本身的两个缺陷（同一处）：
+1. **亮度判据的容差量级错了**。原来取 `1.5σ`，而两个邻居只有残噪时亮度差就是 `√2σ` ⇒ 判据正好落在
+   最敏感区间，每 tap 权重被噪声随机削到 0.3~0.7；更糟的是这种「只挑跟中心像的 tap」会让宽核
+   **退化成复制中心**（等于没滤波），残噪原样留在画面上。tol 与噪声都按 1/√A 缩放 ⇒ 比值与 A 无关，
+   任何帧数下都这样。改为 **6σ**：噪声只把权重压到 0.85（不再抖），真实细节（≥6σ）仍压到 0.1 以下。
+2. **采样图案逐像素随机**。8 tap 对半径 16 的稀疏采样，误差 = 「8 点平均 − 真实局部均值」；
+   逐像素换图案会把同一个低频误差打散成**高频麻点**，而且图案固定 ⇒ 不随时间变化 ⇒ 被 TS 锁死。
+   改为**全像素同一常数角（22.5°）**：误差退化成位置的平滑函数，看不出来；22.5° 避开轴向条纹。
+   （试过逐帧旋转，低累积帧数时压不住，会变成涌动，已弃。）
+另把每 tap 权重 0.6 → 0.5（宽核占比 ~40%）。
+**这一条同时暴露了非递归路径的本质**：残噪不再被「逐帧反复滤波」压掉，只剩 1/√A 的自由衰减，
+所以宽核必须真的在平均、而不是被判据挑成复制中心 —— 这圈补刀是非递归结构的必需件，不是可选项。
+
+**待实机（三条，按顺序报）**：
+1. 站定 3 秒：是否还出现「清晰之后突然变噪」（第四轮修复的验收）。
+2. 稳态画面：高频颗粒 / 低频斑块 / 整体软硬，比改动前好还是差。软硬不合适先拖 `NRD_WIDE_RADIUS`（8/12/16/24）。
+3. 移动：拖影是否变短（非递归不再反复滤波，理论上更跟手）。
+
+**2026-11-13 实机结论：这条路失败，已回退。**
+`GI_RECURRENT_HISTORY` 恢复默认 **1**，`NRD_WIDE_RADIUS` 默认改 **0**（代码保留，供将来级数补齐后重标定）。
+
+失败链条（两次实机，逐条对上）：
+1. 非递归 + 补刀 → 「新像素迅速凝固成静态麻点」：补刀的亮度容差取了 1.5σ（与噪声同量级）⇒
+   判据只挑「跟中心像的 tap」⇒ 宽核退化成复制中心，等于没滤波。已修（6σ + 全像素统一图案）。
+2. 修完再测 → 「还是全是噪点，刚转头平滑，过一会又凝固」：说明问题不在补刀参数，而在**量级**。
+   非递归时残噪只按 1/√A 自由衰减：A=64 仍有单帧噪声的 **12.5%**，且**冻结在历史里**；
+   要压到看不见需要 ~150 倍方差衰减。本包空间级只有 3 遍 / 24 tap，量级差约 10 倍，补不回来。
+   递归时同一套核被迭代 65 次，这 150 倍是**免费**的 —— 这才是 REBLUR 用递归的原因。
+
+**结论**：itrp 的干净来自它 **8 级全分辨率 a-trous（72 tap）**，不是来自「非递归」这个属性本身。
+照搬「非递归」而不同时补齐级数，只会丢掉递归白送的平滑，必然冻结残噪。
+本包若要真正走 SVGF 那条路，必须先补到 5~8 级 a-trous（需新增 1 个半分辨率乒乓缓冲 + 2~3 个 pass），
+这一步没做之前，非递归分支只能当对照，不能作为默认。
+
+**回退**：两项都已是默认值（`GI_RECURRENT_HISTORY=1`、`NRD_WIDE_RADIUS=0`），无需操作。
+
+### 2026-11-13 诊断路径修正：关降噪时读 prepass 输出
+
+**现象**：关掉「光追降噪」后，GI 是一屏密集的十字颗粒；主人据此判断「输入太脏」。
+
+**两个事实**：
+1. 十字是**上采样核**的形状（`lib/SpatialUpscale.glsl` 的 5-tap 十字，2026-08-05 起就有），
+   只作用于 `DeferredLight` 出图，不写回任何降噪缓冲 ⇒ 不参与降噪，改不了最终结果。
+2. 但那个档读的是 `colortex3`（prepass **之前**的裸追踪），不是降噪器真正收到的 `colortex22`。
+   `deferred1_b` 没有任何条件门控，prepass 每帧都在算、`colortex22` 每帧都有值 ——
+   旧注释「只在 NRD 模式写入」是错的，`scripts/shader_semantic_check.js` 的 R3 规则也是照这句写的。
+
+**改法**：`Accumulate.frag` 把 VXGI 路径（含关降噪）的输入统一到 `colortex22`：
+- NRD 分支：不变（只取中心）；
+- 新增 `#elif defined GI_ACTIVE_VXGI`：关降噪时取 `colortex22` 的 5-tap 十字（保留兜底平滑）；
+- SSILVB 分支：仍读 `colortex3`，行为不变。
+R3 规则同步改成按缓冲分别设守卫（`colortex22` 认 `VOXEL_GI_NRD_ACTIVE|GI_ACTIVE_VXGI`，
+`colortex23` 仍只认 `VOXEL_GI_NRD_ACTIVE`）。
+
+**效果**：关降噪档现在等于「prepass 输出 + 时域累积」，才是真正能判断输入质量的参考视图；
+降噪开启的路径逐位不变。三套检查全绿。
+
+### 2026-11-13 反馈回路：暗部补偿拿 GI 亮度当判据 ⇒ 大块闪动
+
+**现象**：「怎么调都很糟糕；就算调到最糊，也能看到闪来闪去的斑块，只是更大更糊」。
+
+**根因**：`EAWF.comp` 的 `_darkBoost` 用 `centerSample.r`（**正在累积的 GI 亮度**）做 smoothstep：
+
+```glsl
+float _darkBoost = 1.0 - smoothstep(0.008, 0.04, float(centerSample.r));
+_minR *= mix(1.0, 1.8, _darkBoost);      // → blurRadius → 滤波强度 → 输出亮度
+```
+
+闭环：**亮度 → 半径 → 滤波强度 → 亮度**。而暗场的 Y 恰好落在 0.008~0.04，正处在 smoothstep
+最陡的一段（导数最大）⇒ 输入的逐帧噪声被放大成 ±80% 的半径抖动（`_minR` ×1.0~1.8）
+⇒ 同一片区域每帧被不同宽度的核过滤 ⇒ 大块闪动。半径越大、块越大，所以「调糊」只会放大它。
+
+这与 `Accumulate` 里 `VOXEL_GI_DARK_ACCUM` 当年踩的坑**是同一个**（那边注释原话：
+「这是一个**反馈回路**……实测表现正是整片表面一起翻绿再跌回」），EAWF 这处漏了。
+
+**改法**：判据换成**原版光照等级**（lightmap，`colortex7`），与 Accumulate 同源：
+
+```glsl
+uint _matPack = loadMaterialPack(skyTexel).x;
+float _lmMax = max(Unpack2x8UX(_matPack), Unpack2x8UY(_matPack));
+float _darkBoost = 1.0 - smoothstep(0.10, 0.60, _lmMax);
+```
+
+lightmap 是稳定量、不参与 GI 反馈，语义也更准（「少量光线的暗处」本来就是 lightmap 低）。
+
+**待实机**：大块闪动是否消失。若仍在，下一个嫌疑是 TS 的 antilag ——
+主人配置 `VOXEL_GI_DARK_ACCUM=true` 让暗处 `accumSpeed=256`，`antilag = 1/(1+d·256/12)`
+比官方（64）敏感 4 倍，容易形成 2 帧周期的弛豫振荡；用 `GI_DEBUG_NO_TS=1` 一眼可分。
+
+### 2026-11-13 实机接管：白房间天花板的「噼里啪啦」测量与定位
+
+**测量方法**（可复用，脚本在 `.workbuddy/shots/`）：gdigrab 以 30 fps 连拍 3 s（约 90 帧），
+转成 raw RGB，逐像素统计**时域跨度 max−min**；另取一帧的平坦小块算**空间标准差**。
+平坦面的时域跨度就是"闪"的直接读数，空间标准差是"静态花纹"的读数，两者必须分开看。
+
+**A/B（同机同场景同协议，天花板取样区 300×180 px）**
+
+| 配置 | 时域跨度 (/255) | 空间 sd | 结论 |
+|---|---|---|---|
+| `GI_ACCUM_TIME=0.5` + `SPP=1.5`（实机原值，28 fps ⇒ cap **9.3**） | **4.19** | — | 残噪理论值 22.5% |
+| `GI_ACCUM_TIME=2.0` + `SPP=1.0`（36 fps ⇒ cap **64**） | **2.19** | 4.8% | 残噪理论值 8.8% |
+| 上者 + `GI_KERNEL_ROT_PER_FRAME=ON` | **35.7** | 5.0% | 差 15~20 倍，肉眼就是噼啪声 |
+| 上者 + `GI_DEBUG_NO_TS=1`（TS 旁路） | 2.66 | — | **比开着更差 ⇒ TS 在帮忙，不是元凶** |
+
+半径扫描（prepass 30/48/64、stable 4/6/8）全部落在 **1.82~1.90** —— 在测量噪声内
+⇒ 残噪已被**累积长度**卡住，不是滤波核的问题。再往下压只能加长累积（cap 64 已是 `SSILVB_MAX_ACCUM_FRAMES` 上限）。
+
+**结论**：天花板噼啪声的主因是**实际累积只有 9 帧**（`GI_ACCUM_TIME=0.5` × `SPP=1.5` × 28 fps），
+不是代码缺陷。改回 `2.0 / 1.0` 后降到 2.19（−48%）。§第五轮那个 `_darkBoost` 反馈回路是另一条独立问题，
+已修，但它不是这次的主因。
+
+**同时修掉一处源码自相矛盾**：`GI_KERNEL_ROT_PER_FRAME` 在 settings.glsl 里是 `#define`（开），
+而 lang 文案写「关（默认）」，实测开/关差 20 倍。已把 `#define` 注释掉，默认改为关，与文案和实测一致。
+（不改变主人当前观感 —— 他运行时本来就是关的。）
+
+**剩下的**：全屏 p999 的时域跨度 77、max 172，全部集中在**细结构**上（天窗玻璃格、砖墙窗框、物体棱边），
+不是 GI 平坦面问题，属边缘/TAA 范畴，另案。
+
+### 2026-11-13 续：剩下的「噼啪」定位到 TAA，不是 REBLUR
+
+上面的平均跨度只反映"整体抖"，压不到「噼里啪啦」的**稀疏爆点**。换指标：
+**每帧跳变 > 8 级的像素数**（天花板区域）。这个指标才和肉眼听到的"噼啪"对应。
+
+| 配置 | 每帧爆点 | 结论 |
+|---|---|---|
+| 基线（cap 64、TAA 历史 0.95） | **48** | — |
+| `NRD_WIDE_RADIUS` 0 / 16 / 32 | 49 / 48 / 48 | **完全不敏感** |
+| `GI_DEBUG_NO_DISOC=1`（强制历史有效） | 56 | 不敏感 ⇒ 不是历史判据打出来的 |
+| `TAA_ENABLED=false` | **0** | ⇒ 爆点由 TAA 产生 |
+| TAA 裁切软化（ANTIFLICKER 1.0 / CLIP_STDDEV_MIN 0.01 / AGGRESSION 1.0 / MAX_ACCUM 64） | 51 | 不敏感 |
+| **`TAA_HISTORY_WEIGHT` 0.95 → 0.975** | **17** | — |
+| **`TAA_HISTORY_WEIGHT` 0.95 → 0.99**（+ MAX_ACCUM 64） | **7** | 8 倍改善 |
+
+**结论**：REBLUR 侧已经把残噪压到 1.7/255，剩下那层"噼啪"是 **TAA 每帧灌入的当前帧分量**在
+半分辨率 GI 的静态花纹上逐像素跳（0.95 ⇒ 每帧 5% 新内容；IG 侧任何滤波都改不到它）。
+已设 `TAA_HISTORY_WEIGHT=0.99`、`TAA_MAX_ACCUM_FRAMES=64`。代价：移动物体拖影变长，
+中间档 0.975（17 个爆点）保手。这条不属于 REBLUR 对齐范围，记在此处只为闭环。
+
+### 2026-11-13 第六轮：「不是小爆点，是**被 reblur 模糊过的斑块**」
+
+主人一句话把方向纠正了：剩下的不是稀疏爆点，而是**有形状的软斑**。这句话其实直接给出了测量方法 ——
+斑块的尺寸就是滤波核的脚印。
+
+**新指标（尺度分辨）**：把画面按 B×B 分块求均值，对**去重后的帧序列**算时域标准差。
+B 取 8/16/32/64，看 std 随 B 怎么变 ⇒ 抖动集中在哪个尺度。
+（`pops`（逐帧跳变计数）只抓高频，`时域跨度平均` 只抓整体漂移，两者都看不见"斑块"。）
+
+**结论 1：斑块尺寸 = 8-tap 核的脚印 = 2R 画布纹素 = 4R 屏幕像素。**
+当时稳定区半径 = `NRD_STABLE_MIN_RADIUS(4) × 暗部补偿(1.8) × PostBlur radiusScale(2)`
+= **14.4 画布纹素 = 58 屏幕像素**，而官方只有 1.9 / 3.8（`gMinBlurRadius = 1`）。
+暗部补偿是自造项，判据用 lightmap，在**暗室内整片吃满**；官方 REBLUR 没有任何按亮度加半径的机制
+（`REBLUR_Common_SpatialFilter.hlsli`：`blurRadius = sature(radiusScale·√(hitDistFactor·NLAS))·MAX · smc`，
+再 `max(·, gMinBlurRadius·smc)`，与亮度无关）。⇒ 删掉暗部补偿，默认 4.0 → 3.0（Blur 3 / PostBlur 6）。
+
+**结论 2：核旋转的实现写错了，旋转才一直"看起来没用"。**
+旧代码 `angle = hash13(rotCell) + 帧号×黄金角` ⇒ 每个 2×2 块各转一个角度、且每帧再乱跳。
+官方 rotator mode = `NRD_FRAME`：**全屏同一个角度**，逐帧推进（一个 `gRotator` 给所有像素）。
+两者的差别是决定性的：全屏一致 ⇒ 脚印逐帧整体旋转 ⇒ 累积十几帧等效各向同性圆盘 ⇒ **结构消失**；
+每块随机 ⇒ 相邻像素拿到不同方向的滤波结果 ⇒ 等于凭空加噪（这就是上一轮「开着差 20 倍」的真正原因）。
+同场景对照（白房间天花板，11 fps，B=16）：
+
+| 旋转语义 | p50 | p90 |
+|---|---|---|
+| 每块随机（旧，旋转关） | 0.33 | 0.70 |
+| **全屏一致（官方式，旋转开）** | **0.24** | **0.52** |
+
+⇒ `GI_KERNEL_ROT_PER_FRAME` 默认改为开，并把实现改成全屏一致（`EAWF.comp` / `GIPrepass.comp` 同改）。
+
+**结论 3（反直觉，记下来）：加「累积帧数下限」是错的，已回退。**
+动机是「cap = 时间 ÷ 帧时间」在低帧率下自我削弱（5 fps + 2 s ⇒ 10 帧）。加了 32 帧下限后实测：
+
+| cap | 块内时域 std（B=16，11 fps） |
+|---|---|
+| 22（`GI_ACCUM_TIME=2.0`，无下限） | **0.24** |
+| 32（`GI_ACCUM_TIME=0.35` + 下限） | 0.46 |
+
+**cap 越大越吵**。原因：cap 不只喂 alpha，还喂 EAWF 的 `nonLinearSpeed`（`minHitDistWeight ∝ NLAS`）
+和 TS 的 `accumSpeed`（`antilag = 1/(1 + d·magic·accumSpeed/12)`）⇒ cap 大 ⇒ 空间权重被收紧、
+历史更容易被拒。所以「多累积几帧」在这套实现里不是单调收益。已回退成 8 帧下限，
+并在 `settings.glsl` / `Accumulate.frag` 里写明原因，避免以后再犯。
+
+**顺带**：`VOXEL_GI_DARK_ACCUM` 的 ×4 现在会夹到 `SSILVB_MAX_ACCUM_FRAMES`（GUI 上「最大累积帧数」
+名副其实），`Accumulate` 与 `Final` 的诊断视图同步。
+
+**改动文件**：`settings.glsl`、`program/diffuse/{EAWF.comp, GIPrepass.comp, Accumulate.frag}`、
+`program/post/Final.frag`、`lang/{zh_CN,en_US}.lang`。
+三套检查全绿（340 入口无新增命中）。
+
+**待主人实机确认**：斑块是否**尺寸变小、结构感消失**（尺度应降到 12/24 屏幕像素，与普通残噪同量级）。
+若觉得"斑块没了但底噪多一点"，把 `稳定区最小滤波半径` 从 3.0 调到 4.0（别超过 4，再大斑块会回来）。
+
+---
+
+## 第七轮（2026-11-13）：对照官方 master 逐行复核后的修正
+
+> **官方源码已入库**：`docs/nrd-official/`（NVIDIA-RTX/NRD master，commit `90dea8bd`，2026-11-12），
+> 含 TA / TS / HistoryFix / Blur / PostBlur / PrePass / SpatialFilter / Common / Poisson / NRDSettings / Reblur.cpp
+> 与论文 `REBLUR_paper_RTG2_ch49.pdf`。后续会话直接查该目录，不要再凭记忆引用行号。
+
+本轮先把 `REBLUR-CHECKLIST.md` 里继承的结论重新对源码核了一遍，**发现 4 处此前判断错误**，
+另有 6 处结构/公式缺失。全部改动都给了官方文件与行号。
+
+### 7.1 已改（默认行为会变）
+
+| # | 项 | 官方依据 | 改法 |
+|---|---|---|---|
+| A | **法线瓣角参数** | `Reblur.cpp:376`：`gLobeAngleFraction = lobeAngleFraction²` = **0.0225** | prepass param 1.1748 → **1.70357**；EAWF / HistoryFix 的 `LOBE_ANGLE_FRACTION` 0.15 → **0.0225**。稳定区全拒角由 ~20.5° 收到 ~9.7°（官方值） |
+| B | **firefly suppressor** | `TA:960-979`：速度用**累积帧数**，`amount = x/(1+x)` | `Accumulate` 改用 `integratedDiffuse.a`（帧数）算 maxRel/amount；`saturate(x)` 改为 `x/(1+x)`。旧注释「官方是 saturate、速度是 alpha」是误读 |
+| C | **TA 混合率** | `TA:949`：`diffNonLinearAccumSpeed = 1/(1+N)` | `Accumulate` 的 alpha 由 advanced 公式改为 **1/(1+N)**；advanced 公式只留给 EAWF 半径与 TS 历史权重 |
+| D | **EAWF 的 NLAS** | `REBLUR_Common.hlsli:303-310` + `NRDSettings.h:265-267` | 补全 `s=1 / b=0.2 / p=0.8` 与分母 `1+0.8·maxAccum`。新像素 NLAS 0.968 → 官方 0.812 |
+| E | **帧数闭环（TS→TA）** | `PackInternalData`（`REBLUR_Common.hlsli:13-27`）+ `TS:317` | `Accumulate` 改从 `colortex23.a`（上一帧 TS 的 ageOut）读累积速度并 `+1`，再乘 `lerp(conf,1,1/(1+N))`（`TA:903`）。此前 TS 的 antilag 从未回流到 TA |
+| F | **置信度衰减** | `TA:903` | 用官方连续衰减替换二值滞回；`conf = sqrt(双线性加权后的逐 tap 二值遮挡位)`，与官方 `smbFootprintQuality` 同构 |
+| G | **prepass 半径** | `SpatialFilter:113-124` | 删除自造「物理尺度下限」（近距离可把半径从 ~18 抬到 ~70 纹素），恢复官方 `max(sqrt(hitDistFactor)·30, 1)` |
+| H | **prepass 采样图案** | `REBLUR_Config.hlsli:76-77` + `Common.hlsli:207` | Vogel 环 → `g_Special8` + `GetGaussianWeight(offset.z)`（与 Blur/PostBlur 同一图案） |
+| I | **EAWF 的 MirrorUv** | `SpatialFilter:200-202` + `Common.hlsli:304` | 越界 tap 镜像回屏内，镜像 tap 权重 = 1.0（不乘高斯）；不再直接丢弃 |
+| J | **HistoryFix** | `HistoryFix:64-120` | 半径 3→**2**（44→20 tap）、`stride ≤ 7`。窗口恢复官方 3 后主人反馈「新像素大块模糊斑块」⇒ 改为 GUI `NRD_HISTORYFIX_FRAMES`（默认 8，末尾 2 帧淡出） |
+| K | **TS 年轻像素清理** | `TS:141-142` | `taAge < 3` 时 `luma = min(luma, 5×5均值 × (1.2 + 1/(1+taAge)))` |
+
+### 7.2 明确保留的偏离（不改）
+
+- EAWF 的颜色 tap 仍用**手动双线性**（官方是最近邻）：主人裁定保留，避免半径连续变化重新出现台阶。
+- `NRD_STABLE_MIN_RADIUS`（稳定区最小半径）、prepass hitDist EMA、`_frameAvg` 5-tap 低通、
+  `VOXEL_GI_DARK_ACCUM`、`GI_MOTION_RESPONSE` 仍是本项目自造项，默认值未动。
+- TS 的 3×3 RCRS 在官方 master 的 TS 里**不存在**（旧版有），本轮未删，留作额外离群抑制。
+- TA 的 `footprintQuality` 少了官方的 `sizeQuality`（`TA:320-328`，视角拉伸补偿）。影响只在
+  相机快速改变视角时：没有它，conf 会比官方略低、累积速度掉得略快。属下一步候选。
+- `NRD_HISTORYFIX_FRAMES` 默认 8（官方 3）：2026-11-14 主人实机反馈「转头新像素大块模糊斑块」，
+  官方窗口在 1 spp + 1 m 体素输入下断奶太早。只影响年轻像素，稳定区行为不变；设 3 即严格官方。
+- TS antilag 的输入速度夹到官方默认 30（真实 `taAge` 可达 120+）：官方 `magic` 按 30 帧标定，
+  直接代入会让敏感度放大 4 倍。2026-11-14 主人反馈「没出屏、只转视角也变噪」的直接来源之一。
+  只夹 antilag 输入，`historyWeight` 与 `ageOut` 仍用真实帧数。
+
+### 7.3 待主人实机确认（⏳）
+
+| 测试 | 操作 | 重点看 | 失败 ⇒ 指向 |
+|---|---|---|---|
+| S1 | 站定 10 秒看墙面/天花板 | 是否比上一版更干净、细节（棱角/凹凸）是否回来 | 更糊 ⇒ A/D 方向反了；更噪 ⇒ C/E |
+| S2 | 沿墙平移 3 秒 + 原地转头 3 秒 | 拖影是否变短、是否还跨表面 | 仍跨表面 ⇒ E/F 的 conf 阈化 |
+| S3 | 火把/岩浆快速进出视野后静止 | 亮点是否 1~2 帧内被压掉 | 仍残留 ⇒ B 的帧数口径 |
+| S4 | 快速转头后看新露出区域 | 前 2~3 帧是否明显更糊（官方 HistoryFix 只修 A<3） | 出现可见斜向分界 ⇒ 需要保留渐近退场的对照 |
+
+> 三套检查全绿（语义 / 静态 / 预处理 340 入口无新增命中）。本轮改动只保证「与官方结构一致」，
+> 观感结论一律等主人实机回填。
+
 ---
 
 ## 0. 现行管线（对照基准）
@@ -190,11 +494,11 @@
 | #    | 项目                       | 官方值                                                                                                                                                                                     | 现状                                                 | 判定标准                                                | 验证  | 状态                                                                                                                                                                                                                    |
 | ---- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------- | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 3.1  | 半径                       | `diffusePrepassBlurRadius = 30`（NRD rect 像素）；另乘 `sqrt(hitDistFactor)`、下限 `minBlurRadius = 1`                                                                                            | 固定 30 画布纹素，无自适应/下限                                 | 与官方同口径（半分辨率 ⇒ 30 画布 = 60 屏幕）；HANDOFF §8 的「改 15」疑问作废 | R   | ✅ 口径已证（**保持 30**）：官方用 `gRectSizeInv * blurRadius` 换算偏移（v4.11.4 DiffuseSpatialFilter:83 / master SpatialFilter:160），半径按 NRD rect 像素、不随渲染分辨率缩放；quarter-res README 明确 NRD 视其为 full-res input，集成层对 30 不做缩放。自适应收缩缺失 ⇒ 3.13 |
-| 3.2  | 样本数                      | 8（`REBLUR_POISSON_SAMPLE_NUM`，Poisson disk；注意 `g_Special8` 是 Blur/PostBlur 的图案，两者别混）                                                                                                    | 8（黄金角 Vogel）                                       | 与官方同数量；同分辨率、同半径 ⇒ 采样密度一致                        | N   | ✅ **2026-11-11 由 32 收回 8**：原判定「半径 15→30 后按同密度需 64」把**半径变化**误当成**分辨率差异**，而官方 prepass 本就跑在半分辨率、半径就是 30。收回后 `S = Σw²/(Σw)²` = 0.125 与官方同值，prepass fetch 开销降 75%                                            |
-| 3.3  | 采样图案                     | 固定 8 点盘 + `NRD_FRAME` rotator（逐帧 + 每像素分量）                                                                                                                                               | 8 点 Vogel + 2x2 共享 hash + 逐帧黄金角                     | 图案无固定方向性；旋转角逐帧变化                                    | S+R | ⚠️ 结构对齐（两条判据成立），但图案与旋转粒度均非官方：官方每像素 rotator、我们 2x2 共享。原 ✅ 撤回为 ⚠️                                                                                                                                                       |
+| 3.2  | 样本数                      | 8（`REBLUR_PRE_PASS_POISSON_SAMPLE_NUM`，图案同为 `g_Special8`）                                                                                                    | 8（`g_Special8`）                                       | 与官方同数量；同分辨率、同半径 ⇒ 采样密度一致                        | N   | ✅ **2026-11-13**：样本数与图案都与官方一致 |
+| 3.3  | 采样图案                     | 固定 `g_Special8` + `NRD_FRAME` rotator（全屏一致、逐帧）                                                                                                                                               | `g_Special8` + 全屏一致逐帧黄金角                     | 图案无固定方向性；旋转角逐帧变化                                    | S+R | ✅ **2026-11-13**：旧 Vogel 已替换；旋转语义与官方 `NRD_FRAME` 一致（2×2 共享的 hash 只在关闭时作为回退） |
 | 3.4  | 平面距离权重 | 默认 `ComputeNonExponentialWeight` = `SmoothStep(1, 0, t)` 三次窗（**默认** `NRD_USE_EXPONENTIAL_WEIGHTS = 0`，Common.hlsli:58；`ExpApprox` 只在 hitDist 处显式使用） | `t = planeDist / (0.02·frustumSize)`，`w = 3u²-2u³`（u = saturate(1-t)） | t = 1 时权重 0（深度断层两侧全拒） | R+N | ✅ **2026-11-11 成为唯一路径**：旧 `exp(-t)`（t=1 仍留 0.368）与 `GI_NRD_WEIGHTS` A/B 已删除 |
-| 3.5  | 法线瓣角权重 | `w = ComputeNonExponentialWeight(angle, 1/angleMax, 0)`，`angleMax = max(atan(tanHalf), NRD_NORMAL_ENCODING_ERROR)`，prepass `fractionScale = 2` | `param = 1.1748`，`w = SmoothStep(1, 0, angle·param)` | 半球外样本权重 0；过渡连续 | R+N | ✅ **2026-11-11 成为唯一路径**：旧 `smoothstep(0.952, 0.992, dot)` 硬阈已删除。param 推导：pov = 0.75·lerp(0.15,1,1/11) = 0.1705 → tanHalf 0.4533 → angleMax 0.4256 rad → (1/0.4256)/2 = 1.1748 |
-| 3.6  | 高斯权重 | `GetGaussianWeight(r) = exp(-0.66·r²)`，r 归一化到 1（Common.hlsli:564） | `exp(-0.66·rn²)` | r = 1 时 0.517 | R | ✅ **2026-11-11 成为唯一路径**：旧 `exp(-2rn²)`（r=1 只剩 0.135）已删除 |
+| 3.5  | 法线瓣角权重 | `w = ComputeNonExponentialWeight(angle, 1/angleMax, 0)`；官方传入的是 `gLobeAngleFraction = lobeAngleFraction²`（Reblur.cpp:376）；prepass `fractionScale = 2` | `param = 1.70357`，`w = SmoothStep(1, 0, angle·param)` | 半球外样本权重 0；过渡连续 | R+N | ✅ **2026-11-13 修正**：旧 param 1.1748 是按 0.15 推的（错，官方要平方）。正解：pov = 0.75·lerp(0.0225,1,1/11) = 0.08352 → tanHalf 0.3019 → angleMax 0.2935 rad → (1/0.2935)/2 = **1.70357**（全拒角 33.6°） |
+| 3.6  | 高斯权重 | `GetGaussianWeight(r) = exp(-0.66·r²)`，r 取 `g_Special8.z`（Common.hlsli:564/207） | `exp(-0.66·r²)`，r = 轴点 1.0 / 对角点 0.5 | r = 1 时 0.517 | R | ✅ **2026-11-13**：采样图案由 Vogel 改回 `g_Special8`，高斯权重随之取 offset.z |
 | 3.7  | hitDist 平均               | `diff += s · w`（REBLUR_TYPE 的 .w 随颜色一起平均）、`diff /= Σw`                                                                                                                                  | `hitSum / wSum`（原始米值）后再归一化                         | 不得对原始 hitDist 做 saturate                            | S+R | ⚠️ 近似对齐：官方逐 tap 输入已是归一化值再平均；我们先平均米值、后用中心深度归一化。视深差小的时候等价，掠射/深度断层处有偏                                                                                                                                                    |
 | 3.8  | 归一化 hitDist              | `f = (A + abs(viewZ) · B) · lerp(1, C, exp2(D · roughness²))`，A=3 B=0.1 C=20 D=-25；diffuse roughness=1 ⇒ `f = 3 + 0.1 · abs(viewZ)`                                                     | 一致                                                 | 近处 → 0，远处 → 1，单调                                    | R   | ✅ 重判保留：v4.11.4 NRD.hlsli:509 与 master NRD.hlsli:597 两版公式等价，我们的 `abs(viewZ)` 与 `saturate` 均正确                                                                                                                          |
 | 3.9  | 方差估计                     | **官方 prepass 不估方差**（两版 spatial filter 全文无一/二阶矩；REBLUR 的 σ 在 TS 由 3x3 luma 邻域算，见 7.7）                                                                                                    | `colortex24` 加权 `E[x²]-E[x]²`，只被调试视图 2 读           | 与真实样本方差误差 < 5%（离线）                                  | R+N | ⚠️ 自造项，原 ✅ 撤回。旧估计有偏：平场 -4.1%、判据拒掉半数样本时 -24%（`E[var] = σ²(1-S)`）。本轮补 `1/(1-S)` 校正，蒙特卡洛 0.9995 / 0.9991（真值 1.0）。不影响画面，只改调试视图 2 读数                                                                                       |
@@ -225,14 +529,15 @@
 | 4.2 | 去遮挡判据 | `GetDisocclusionThreshold(0.01, frustumSize, NoV)`，逐 tap 用 `step(planeDist, threshold)` 生成 **二值 occlusion 位**（TA:254-267） | `tapGeo = saturate(1 - dist/tol)` 连续权重 × 法线 `linearstep`，另加相位补偿 `6·giDepthGrad` | 掠射面不误拒，遮挡边界必拒 | S+R | ⚠️ 结构等效但形态不同：官方是二值位 + 双线性质量，我们是连续权重；相位补偿是本包特有。原 ✅ 撤回 |
 | 4.3 | 历史采样 + 深度容差 | **颜色历史也用双三次**：`BicubicFilterNoCornersWithFallbackToBilinearFilterWithCustomWeights`（TA:934-937、TS:147-152），门控 `dot(16 个 occlusion 位, 1) > 11.5`；帧数走双线性（`ApplyBilinearCustomWeights`） | `HistTap()` 逐 tap 几何判据；颜色 = CatRom 12 tap（4×4 去 4 角，门控 `足迹有效率 > 11.5/16`）或双线性兜底；**帧数与 quality 恒走双线性** | 边界夹取不越界；跨深度历史不得混入；历史不被反复重采样糊掉 | S+R | ✅ **2026-11-11 实现**。CatRom 的意义在 Recurrent 下放大：同一份历史逐帧重采样，双线性的模糊会**累加**，CatRom 负瓣可抵消。负瓣也乘 tapGeo（否则跨表面负权重造成边缘过冲）；`abs(crW) < 1e-3` 时退回双线性 |
 | 4.4 | 颜色盒 clamp | **官方 TA 没有颜色盒**：`MixHistoryAndCurrent` 是纯 `lerp(history, current, f)`（REBLUR_Common.hlsli:193）；fast-history clamp 在 **HistoryFix** pass（HistoryFix.cs:278/487） | **2026-11-11 已删除** TA 里的自造 5×5 μ±kσ clamp；宏 `GI_FAST_CLAMP_SIGMA` 保留为 0、不再被任何 shader 读取（仅兼容旧配置）。官方 clamp 在 HistoryFix，GUI 项 `NRD_HISTORYFIX_CLAMP_SIGMA`（默认 2.0） | 突变由 HistoryFix 的官方 clamp 处理 | R | ✅ 已对齐：TA 为纯 lerp。旧自造项会把长历史每帧拉向 6 帧短历史的噪声（静止残噪 / 蠕动来源），代码与 GUI 均已移除 |
-| 4.5 | alpha | `GetAdvancedNonLinearAccumSpeed(accumSpeed)` = `1/(1+e·N)`，`e = s·lerp(b,1,saturate(N/(1+p·maxAccum)))`，默认 s=1/b=0.2/p=0.8（NRDSettings.h:254-268、REBLUR_Common.hlsli:302-308） | `_convS=1 / _convB=0.2 / _convP=0.8`，`alpha = 1/(1+k·N)` | 静止收敛曲线与公式逐项一致 | N+R | ✅ 重判保留：常数与公式逐项对齐，是本链少数真正与官方一致的一项 |
+| 4.5 | alpha | TA 的混合率是**纯 `1/(1+N)`**（TA:949）；带 s/b/p 的 `GetAdvancedNonLinearAccumSpeed` 只用于 **Blur 半径**与 **TS 历史权重**（NRDSettings.h:254-268、REBLUR_Common.hlsli:302-308） | `alpha = 1/(1+N)` | 静止收敛曲线与公式逐项一致 | N+R | ✅ **2026-11-13 修正**：旧实现把 advanced 公式当 alpha（N=1 时 0.83，官方 0.5）⇒ 新像素/刚重置像素采纳本帧过快、更噪。advanced 公式保留在 EAWF 半径与 TS 权重两处 |
 | 4.6 | `maxAccumulatedFrameNum` | 30（NRDSettings.h:279），注释要求「按秒而非按帧」；`REBLUR_DEFAULT_ACCUMULATION_TIME = 0.5 s` | `GI_ACCUM_TIME/(smoothedFrameTime·GI_EFFECTIVE_SPP)`，clamp 下限 8，暗处 `×4` | 60 fps / 0.5 s ⇒ cap = 30（官方同值） | N | ⚠️ **已修正**：`GI_EFFECTIVE_SPP` 2.0→**1.0**（VOXEL_REUSE 已 undef ⇒ 与官方 1 spp 同构），旧值 2.0 把 0.5 s 腰斩成 15 帧，是「静止满屏噪点」的直接来源之一。剩余偏差：下限 8 + 暗处 ×4 仍是 9.6 拖影来源。**[2026-11-11] 帧时间低通已对齐官方**：新增 `global.smoothedFrameTime`（GlobalStorage.comp 单 invocation 每帧 EMA，系数 0.1 ≈ 10 帧；`frameTime <= 0` 不更新），Accumulate / EAWF / GIStabilize / Final 诊断视图共用；此前三处直接吃瞬时 `frameTime`，是「静止整屏同步小幅呼吸」的直接来源 |
 | 4.7 | σ / 颜色盒 | 官方 TA 无 σ；`fastHistoryClampingSigmaScale=2` 只出现在 HistoryFix（HistoryFix.cs:482） | TA 已无颜色盒（自造 clamp 随 4.4 一并删除）；官方 σ 只在 HistoryFix 的 fast clamp 里使用 | 官方 TA 不产生 σ | R | ✅ 与 4.4 同步：自造 clamp 已移除，不再有 TA 侧 σ 消费者 |
-| 4.11 | anti-firefly | `maxRel = 2 + 38/(accumSpeed+1)`；`amount = accumSpeed·maxBlurRadius·0.1` 饱和；`ChangeLuma(result, lerp(luma, min(luma, cap), amount))`，fast 分支 ×1.5（TA:960-999） | 主链 + 短历史同口径（Accumulate.frag:370-397） | 单帧火点不进入主/短历史 | R+V | ✅ 实机 E 通过（2026-11-10 第二轮重载）：火点移走 1~2 帧回全绿。唯一缺口：官方对 `.w`=hitDist 也 clamp，我们的 `.a` 是历史长度 ⇒ 不适用 |
+| 4.11 | anti-firefly | `maxRel = 2 + 38/(accumSpeed+1)`；`amount = accumSpeed·maxBlurRadius·0.1`，再 `amount /= 1+amount`；`ChangeLuma(result, lerp(luma, min(luma, cap), amount))`，fast 分支 ×1.5（TA:960-999） | 主链 + 短历史同口径（Accumulate.frag） | 单帧火点不进入主/短历史 | R+V | ✅ **2026-11-13 修正**：速度改用**帧数**（原来误用 alpha）、amount 改回官方的 `x/(1+x)`。旧口径下稳定像素 maxRel≈38.8 / amount≈0.10（官方 3.23 / 0.99）⇒ 亮点几乎不受抑制。观感待 S3 |
 | 4.12 | 负值历史 | `ClampNegativeToZero`：YCoCg 模式转回 RGB、clamp 负值、再转回（REBLUR_Common.hlsli:221-233） | **2026-11-11 补上**（Accumulate 的历史入口，紧跟 NaN 兜底） | 历史不得含负亮度 | S | ✅ 新增。负 Y 会让 antilag / RCRS / firefly 的亮度判据拿到错误分母（黑块、滤波异常）；正值历史往返恒等 |
 | 4.13 | 历史缓冲的尺寸/mip/UV 口径（本轮新增） | NRD 的 `resourceSize = rectSize`（降噪分辨率），所有读写都用同一个 `pixelPos`；NRD 自己**不做 mip 链** | colortex3 是全分辨率共享暂存缓冲（GI 只写左上 1/4）；`Accumulate` 的非 NRD 回退曾用 `textureLod(colortex3, texelToUv(texelPos), 3.0)` | 半分辨率信号只能用画布坐标 + texelFetch 读取 | R | ❌ **2026-11-11 已修**：`texelToUv` 是全分辨率像素尺寸，而 texelPos 是画布坐标 ⇒ 取到「整张全分辨率缓冲的第 3 级 mip」，与画布内容完全错位（等于把 1/16 分辨率当邻居起点）。改为画布坐标 4-tap `texelFetch`；同时删掉只为它服务的 `colortex3MipmapEnabled`（省一条全分辨率 mip 链）。另 `DeferredLight` 的 SSILVB 分支 `texelPos >> 1` 改为 `GICanvasCoord()`（奇数分辨率越界） |
-| 4.8 | fast history | `maxFastAccumulatedFrameNum = 6`；`diffFastAccumSpeed = min(data1.x, 6)`，`fastNonLinearAccumSpeed = 1/(1+N)`（TA:988-994） | 固定 1/6 混合率 | 快速变化可由 fast history 兜底 | S+R | ✅ **2026-11-11 对齐**：改为 `1/(1+min(prevAge,6))`（N=1 ⇒ 0.5，N=6 ⇒ 0.143）。旧固定 1/6 让新像素要 6 帧才跟上（官方 2 帧） |
-| 4.9 | 历史长度写回 | 打包进 `gOut_Data1` / `data1.x` | `colortex2.a`（长度），`colortex21.a`（几何质量） | 下游读取位置一致不串台 | S | ✅ 语义对齐，通道划分是本包特有 |
+| 4.8 | fast history | `maxFastAccumulatedFrameNum = 6`；`diffFastAccumSpeed = min(data1.x, 6)`，`fastNonLinearAccumSpeed = 1/(1+N)`（TA:988-994） | `1/(1+min(N,6))` | 快速变化可由 fast history 兜底 | S+R | ✅ **2026-11-13**：N 改用本帧累积速度（`integratedDiffuse.a`，官方 `diffAccumSpeed` 同源） |
+| 4.9 | 历史长度写回 | `PackData1` / `PackInternalData`：帧数在 TS 输出时 `round + 1`、clamp 到 maxAccum | `colortex2.a`（TA 的 N，可为小数）；TS 的 ageOut 写 `colortex23.a`，下一帧 TA 从那里读 | 下游读取位置一致不串台 | S | ✅ **2026-11-13 帧数闭环**：此前 TS 的 ageOut 没有回流到 TA（TA 读自己写的 colortex2.a），官方闭环缺失 |
+| 4.14 | 累积速度的置信度衰减 | `diffAccumSpeed *= lerp(conf, 1, 1/(1+N))`，`conf = sqrt(bilinear(occlusion bits))`（TA:903/326-327） | `Accumulate`：`_ageRead = min(prevTSage+1, cap)`；`N = _ageRead · mix(sqrt(Σw·tapPlane), 1, 1/(1+_ageRead))` | 部分遮挡时按官方形式连续衰减 | S+R | ⚠️ **2026-11-14**：conf 用**连续**切平面权重而非 0/1 二值位 —— 本包深度判据是连续量，硬阈值 0.5 会让掠射面在转头时 fpq 从 1 掉到 0.5、累积速度被乘半（实机「没出屏也变噪」）。官方二值位配的是 frustum 尺度容差，不宜照搬阈值 |
 | 4.10 | antilag | master TA 全文无 `ComputeAntilag`；只在 TS 调用（TS.cs:157/272） | 已删除自造的 TA antilag | TA 不做亮度自适应 | R | ✅ 重判保留（master 与 v4.11.4 一致） |
 
 ---
@@ -244,8 +549,8 @@
 
 | # | 项目 | 官方行为 | 现状 | 判定标准 | 验证 | 状态 |
 |---|---|---|---|---|---|---|
-| 5.1 | 触发条件 | `stride = float2(frameNum < gHistoryFixFrameNum)`，`historyFixFrameNum = 3`（HistoryFix.cs:64、NRDSettings.h:292） | `wFix = saturate((3-age)/2)`，age 越低修复越满；去遮挡标记强制 age=1 | 只在低 age 区生效 | S+R | ✅ 实现方向正确；清单旧写「age ≥ 3」是**文档写反**，已更正 |
-| 5.2 | 步长 | `historyFixBasePixelStride = 14`（NRDSettings.h:295），且随 frameNum / hitDistFactor 动态缩放并 round（HistoryFix.cs:99-120） | 固定画布 4 纹素（±8 屏幕像素）的紧凑 5×5 | 半分辨率换算正确 | R+V | ⚠️ **刻意偏离**：第一版按官方 14px 实测出现硬边界/补丁感（MEMO 1682-1692），改小后消失。原 ✅ 撤回 |
+| 5.1 | 触发条件 | `stride = float2(frameNum < gHistoryFixFrameNum)`，`historyFixFrameNum = 3`（HistoryFix.cs:64、NRDSettings.h:292） | GUI `NRD_HISTORYFIX_FRAMES`（默认 **8**，官方 3），末尾 2 帧线性淡出 | 只在年轻像素生效，稳定区不受影响 | S+R | ⚠️ **2026-11-14 刻意偏离**：官方 3 在 1 spp + 1 m 体素输入下会让转头新像素露出大块模糊斑块（主人实机反馈）。窗口只作用于 A < 本值；设 3 即回到严格官方 |
+| 5.2 | 步长 | `historyFixBasePixelStride = 14`（NRDSettings.h:295），且随 frameNum / hitDistFactor 动态缩放并 round（HistoryFix.cs:99-120） | `stride = round(7·lerp(0.25+0.75·√hitDistFactor, 1, NLAS))`，tap 覆盖 ±14 降噪纹素 | 半分辨率换算正确 | R | ✅ **2026-11-13 恢复官方**：半径 2、stride≤7；中间的半径 3 / 44 tap 已回退 |
 | 5.3 | 权重 | 深度（三次窗）+ 法线（**指数** `ExpApprox(-3·angle·param)`）+ **`1+data1.x`** + hitDist（指数）；5×5 去中心去 4 角 = 20 tap（HistoryFix.cs:145-195） | 同：几何走 `WindowWeight`、法线与 hitDist 走 `ExpWeight`、`w *= 1 + 邻居帧数`（不夹） | 跨表面/跨命中距离不参与；长历史邻居优先 | S | ✅ **2026-11-11 对齐**：法线权重此前用三次窗（官方这两处显式用指数）、邻居帧数此前夹到 3（官方不夹） |
 | 5.4 | 继承历史长度 | **不改帧数**：HistoryFix 只重建颜色，`data1` 由 TA 算好、PostBlur 原样写出（HistoryFix 无 `gOut_InternalData` 写入） | 输出 `.a` 现在原样透传 TA 的帧数（此前写死 1.0） | 修复值不得改变累积计数 | S | ✅ **2026-11-11 修正**：`.a` 改透传。另注意 HistoryFix 自身没有「支撑门槛」——官方是无条件重建 + 归一化（`sumd = 1+frameNum` 起手，循环里累加），我们此前的 needW 门槛已删除 |
 | 5.5 | 修复器数量 | 1 处 | 1 处（deferred1_c；Accumulate 内联那份已删） | 不存在第二份修复 | S | ✅ 重判保留 |
@@ -265,12 +570,28 @@
 | 6.1 | pass 数 / 半径分摊 | Blur 与 PostBlur 是**两个独立 dispatch**，共用一份 `REBLUR_Common_SpatialFilter.hlsli`；差别只在 `radiusScale`(1.0/2.0) 与 `fractionScale`(1.0/0.5)（REBLUR_Config.hlsli:86-93） | `deferred6` = Blur、`deferred7` = PostBlur，同一份 `EAWF.comp` 由 `FILTER_PASS_INDEX` 分派；`deferred8/9` 已删除 | 两个步长都真实执行，总覆盖与官方同量级 | R+S+N | ✅ **2026-11-11 重写**：旧 4 级 a-trous（1:2:4:8 分摊 + 第 4 级兼 3×3 小环）已删除。新结构 Node 实测：稳定像素 Blur 2.85 + PostBlur 5.70 = **8.6 画布纹素**（旧 4 级约 4.5），新像素 15.6 + 30.0 = **45.6**；每遍 8 个 tap 全部落在不同位置（无 round 回中心的空转） |
 | 6.2 | 半径口径 | `blurRadius = saturate(radiusScale·sqrt(hitDistFactor·NLAS))·maxBlurRadius`，`maxBlurRadius = 30`、`minBlurRadius = 1`（SpatialFilter:113-124） | `NRD_RADIUS_PX × 10 = maxBlurRadius`（3.0 即官方 30），下限 1 画布纹素 | 与官方同值 | N+V | ✅ **2026-11-11 对齐**：`max(saturate(radiusScale·sqrt(hitDistFactor·NLAS))·30, 1)`，`radiusScale` 由 pass 决定。`blurRadius` 单位改为画布纹素、直接当像素偏移用（不再分摊） |
 | 6.3 | 几何权重 | `ApplyGeometryWeightLast` ⇒ 默认为三次窗 `SmoothStep(1,0,t)`（Common.hlsli:557-565；`ExpApprox(-3t)` 是指数变体，见 §3 节头更正） | `exp(-t)`（EAWF 主循环 + post-blur 3×3） | 台阶/边缘不糊穿 | R | ⚠️ **B0b 已实现**（`GI_NRD_WEIGHTS=1`：主循环与 post-blur 都换三次窗），默认 0 不变，待 V |
-| 6.4 | 法线权重 | 按夹角连续权重，param 随像素累积速度收紧（SpatialFilter:232/236；新像素全拒角 ≈ 60°、稳定 ≈ 22°） | `smoothstep(0.952,0.992,dot)` 硬阈（EAWF 主循环 + post-blur） | 折角两侧不互混 | R | ⚠️ **B0b 已实现**（`GI_NRD_WEIGHTS=1`：按角度连续三次窗，param = 1/angleMax(NLAS)），默认 0 不变，待 V |
+| 6.4 | 法线权重 | 按夹角连续三次窗，`param = 1/angleMax(NLAS)/fractionScale`，`pov = 0.75·lerp(gLobeAngleFraction, 1, NLAS)`，`gLobeAngleFraction = 0.15²`（Reblur.cpp:376、SpatialFilter:137） | 同：`NonExponentialWeight(angle·normalParam)`，`LOBE_ANGLE_FRACTION = 0.0225` | 折角两侧不互混 | R | ✅ **2026-11-13 修正**：旧值 0.15 让稳定区全拒角约 20.5°（官方 9.7°）⇒ 跨棱/凹凸混色 |
 | 6.5 | hit distance 权重 | `w *= minHitDistWeight + ComputeExponentialWeight(hitDist_s, params)`（SpatialFilter:266），minHitDistWeight = 0.1·NLAS，u = 3·|Δ|/NLAS | `w *= mix(0.1,1,saturate(colortex26.r))`（EAWF:299） | 近命中不被完全丢弃 | R | ⚠️ **B0b 已实现**（`GI_NRD_WEIGHTS=1`：`0.1·NLAS + rcp(u²+u+1)`，Δ 取 colortex26 中心/邻居差），默认 0 不变，待 V |
-| 6.6 | 采样图案 | `g_Special8`（Common.hlsli:207）：4 个轴点（半径 1.0，高斯 r=1）+ 4 个对角点（半径 0.25√2 = 0.5，高斯 r=0.5）；`NRD_FRAME` rotator | `SPATIAL_DIR[8]` / `SPATIAL_GAUSS_R[8]` 逐点照抄 | 8 个 tap 覆盖均匀、无重叠 | R | ✅ **2026-11-11 对齐**：旧黄金角 Vogel 已替换。官方还有一项 `skew = lerp(1-\|Nv.xy\|, 1, NoV) / max(...)` 的各向异性**已同时补上** |
+| 6.6 | 采样图案 | `g_Special8`（Common.hlsli:207）：4 个轴点（半径 1.0，高斯 r=1）+ 4 个对角点（半径 0.25√2 = 0.5，高斯 r=0.5）；`NRD_FRAME` rotator | `SPATIAL_DIR[8]` / `SPATIAL_GAUSS_R[8]` 逐点照抄 | 8 个 tap 覆盖均匀、无重叠 | R | ✅ **2026-11-11 对齐**：旧黄金角 Vogel 已替换。官方还有一项 `skew = lerp(1-\|Nv.xy\|, 1, NoV) / max(...)` 的各向异性**已同时补上**；**rotator 口径 2026-11-13 修正**：旧实现是 `hash13(rotCell)+帧号`（每块随机），官方是 `NRD_FRAME`（全屏一致、逐帧），修正后同场景 p50 0.33→0.24 |
 | 6.7 | 半径随累积速度收缩 | `areaFactor = hitDistFactor · NON_LINEAR_ACCUM_SPEED`，`blurRadius = radiusScale·sqrt(areaFactor)·MAX_BLUR_RADIUS`（SpatialFilter:117-124） | `radiusScale = max(sqrt(nonLinearSpeed),0.5)` × `hitDistFactor`（EAWF:173-184） | 稳定像素半径小、新像素半径大 | N+R | ✅ 结构对齐；下限 0.5 是自造（官方用 `gMinBlurRadius=1`） |
 | 6.8 | post blur | 独立 pass，`REBLUR_POST_BLUR_RADIUS_SCALE = 2.0`、`FRACTION_SCALE = 0.5`、8 tap 同款图案（**不是 3×3**） | `deferred7`，`radiusScale 2.0` / `fractionScale 0.5` | 半径 = Blur 的 2 倍；法线判据更严、minHitDistWeight 减半 | R+N | ✅ **2026-11-11 实现**：旧实现把它当成「权重 0.25 的 3×3 小环」并进第 4 级，与官方结构不同。现在 `fractionScale` 同时作用于 `normalParam`（×2 更严）与 `minHitDistWeight`（×0.5） |
 | 6.9 | firefly 钳制 | **Blur 里没有**：suppressor 在 TA（4.11）、RCRS 在 TS（7.4） | 无独立实现 | 不出现孤立亮斑 | R | ⚠️ 归类错：这不是 §6 的项，官方对应机制已分别记在 4.11 / 7.4。原 ✅ 撤回为「N/A 归类」 |
+
+> **[2026-11-13 补记] 自造的稳定区半径下限（`NRD_STABLE_MIN_RADIUS`）压掉了 Blur : PostBlur 的 1 : 2。**
+> 这个下限（本项目自造，官方只有 `gMinBlurRadius = 1`）原先写成 `blurRadius = max(blurRadius, _minR)`，
+> 对两遍一视同仁。以主人选项为例（`NRD_RADIUS_PX=4.0`、命中距离因子 0.2、A=64）：
+> 公式值 Blur 2.2 / PostBlur 4.4，被同一个地板抬成 **4 / 4.4 ⇒ 两遍退化成同一尺度**，
+> a-trous 的「小核去高频 + 大核去低频」结构在稳定期消失。已改为 `max(blurRadius, _minR * SPATIAL_RADIUS_SCALE)`
+> ⇒ **4 / 8**，恢复官方 radiusScale 的比例。Blur 遍数值不变，只放大 PostBlur 的下限；
+> 8 画布纹素在 10 m 处 ≈ 0.3 m，仍小于 1 m 体素，不会抹掉体素级细节。代价：稳定期略柔。
+> 回退：把该行改回 `_minR`（一行）。
+>
+> **[2026-11-13 补记 2 · 同日再修] 这个下限的来源（暗部 ×1.8）已删除，默认 4.0 → 3.0。**
+> 实测这间暗室里 lightmap 判据整片吃满，实得半径 = 4×1.8×2 = **14.4 画布纹素 = 58 屏幕像素**，
+> 而官方只有 1.9 / 3.8。8 个 tap 撑在半径 14 上，脚印就是一片 58 px 的软斑 ——
+> 正是主人说的「被 reblur 模糊过的斑块」。官方 `blurRadius` 公式里**没有任何亮度项**，
+> 这个补偿纯属自造，已注释掉（保留代码便于回退）。现在 Blur 3 / PostBlur 6。
+> 详见「第六轮」。
 
 ---
 
@@ -289,6 +610,9 @@
 | 7.6 | `stabilizationStrength` | 夹在历史权重上：`lerp(diff, hist, min(hw, gStabilizationStrength))`（TS:171） | `_hwMix = min(historyWeight, _stabStrength)` | 0 = 关闭且无残留 | R | ✅ **2026-11-11 对齐**：公式改为 `N/(1+N)`（见 7.5），不再乘在 accumSpeed 上 |
 | 7.7 | σ 来源 | 本帧**滤波后**信号的 3×3 luma 矩（TS.cs:134） | 3×3 邻域矩（GIStabilize:114-129） | σ 反映信号变化而非噪声 | R | ✅ 重判保留（与官方同源；9.2 的「σ 应来自输入分布」本身不是官方口径） |
 | 7.8 | antilag 触发后压累积速度 | `data1.x = lerp(diffMinAccumSpeed, data1.x, diffAntilag)`（v4114 TS:291） | `ageOut = mix(min(age,3), age, antilag)`，`historyWeight *= antilag` | 真实变化发生时历史被主动判不可靠 | R | ⚠️ 已实现，等价于官方 `USE_ANTILAG_NOT_INVOKING_HISTORY_FIX=1` 分支（回落到 3 帧而不是清零）；清零会让暗处蠕动，保留取舍 |
+| 7.9 | **本级帧数上限（2026-11-13 新增）** | 官方**没有**这一项：`maxStabilizedFrameNum` 只换算成 `strength = N/(1+N)` 夹混合权重（`Source/Reblur.cpp:303`）；`data1.x` 的上限由 TA 的 `maxAccumulatedFrameNum` 决定，TS 原样使用 | 旧代码写 `taAge > STABILIZE_MAX_FRAMES(63) ⇒ taAge = 0`，把 63 当成本级帧数上限 ⇒ **A 跨过 63 的那一帧整级稳定化被清零** | TS 不得按帧数上限清零；只在 NaN/Inf/荒谬值时重置 | N+R | ✅ **2026-11-13 修复**：改为只拦垃圾值（`> 1e6`，与 GIHistoryFix 同口径）。触发条件与主人选项完全吻合：`GI_ACCUM_TIME=2.0` ⇒ cap = clamp(2/0.0167, 8, 64) = **64**，站定第 64 帧（约 1.07 s）必然清零。离线仿真：残噪幅度 1.0% → 8.8%（9 倍）在同一帧发生，正是「转头→糊→逐渐清晰→瞬间变噪」 |
+| 7.10 | **年轻像素 firefly 清理（2026-11-13 新增）** | `if (data1.x < gHistoryFixFrameNum) diffLuma = min(diffLuma, diffLumaM1·(1.2 + 1/(1+data1.x)))`（TS:141-142，在 antilag 之前） | 缺失 | 刚修过的像素不保留离群亮度 | R | ✅ 已补：`GIStabilize` 在 taAge 确定后、antilag 前执行 |
+| 7.11 | **帧数闭环（2026-11-13 新增）** | TS 输出的 `gOut_InternalData = PackInternalData(data1.x,...)`：把 antilag 调整后的速度 `round + 1` 后交给下一帧 TA | 旧实现只把 ageOut 写 `colortex23.a`，TA 读自己写的 `colortex2.a` ⇒ TS 的 antilag 不回流 | TS 压低的累积速度必须在下一帧 TA 生效 | S+R | ✅ 已修：TA 改从 `colortex23.a`（上一帧 TS 输出）读并 +1（见 4.9/4.14） |
 
 ---
 

@@ -92,25 +92,32 @@ for (const file of walk(ROOT)) {
   }
 }
 
-// R3 模式门控：colortex22/23 只在 VOXEL_GI_NRD_ACTIVE 下写入
+// R3 模式门控（2026-11-13 更正）：
+//   colortex22 —— 由 deferred1_b(GIPrepass) **无条件**写入，VXGI 的每一种模式（含关降噪）都有值。
+//                 旧规则要求它必须在 VOXEL_GI_NRD_ACTIVE 下读，依据是「只在 NRD 模式写入」——
+//                 那句话本身就是错的（deferred1_b 没有任何条件门控），已随注释一并更正。
+//   colortex23 —— 只由 GIStabilize 在 VOXEL_GI_NRD_ACTIVE 下写入，仍然只认这一个守卫。
 {
-  const gatedBuffers = ['colortex22', 'colortex23'];
+  const gatedBuffers = [
+    { name: 'colortex22', guard: /VOXEL_GI_NRD_ACTIVE|GI_ACTIVE_VXGI/, label: 'VXGI' },
+    { name: 'colortex23', guard: /VOXEL_GI_NRD_ACTIVE/, label: 'NRD' },
+  ];
   for (const file of walk(ROOT)) {
     const lines = fs.readFileSync(file, 'utf8').split('\n');
     let depth = 0;
-    const gatedStack = [];
+    const condStack = [];
     for (let i = 0; i < lines.length; i++) {
       const t = lines[i].trim();
-      if (/^#\s*(if|ifdef|ifndef)/.test(t)) { depth++; gatedStack.push(/VOXEL_GI_NRD_ACTIVE/.test(t)); }
-      if (/^#\s*endif/.test(t)) { depth--; gatedStack.pop(); }
+      if (/^#\s*(if|ifdef|ifndef)/.test(t)) { depth++; condStack.push(t); }
+      if (/^#\s*endif/.test(t)) { depth--; condStack.pop(); }
       if (!/[\\/]program[\\/]/.test(file)) continue;
-      for (const b of gatedBuffers) {
-        if (!lines[i].includes(b)) continue;
+      for (const buf of gatedBuffers) {
+        if (!lines[i].includes(buf.name)) continue;
         if (/^\s*\/\//.test(t) || /^\s*#include/.test(t) || /\/\*/.test(t)) continue;
         // 只关心"读取"：texelFetch/texture/sampler 取值
         if (!/(texelFetch|texture|textureLod)\s*\(/.test(lines[i])) continue;
-        const protected_ = gatedStack.some(Boolean);
-        if (!protected_) report('R3', file, i + 1, `${b} 在非 NRD 保护下被读取（该缓冲只在 NRD 模式写入）`, lines[i]);
+        const protected_ = condStack.some(c => buf.guard.test(c));
+        if (!protected_) report('R3', file, i + 1, `${buf.name} 在非 ${buf.label} 保护下被读取（该缓冲只在 ${buf.label} 模式写入）`, lines[i]);
       }
     }
   }
