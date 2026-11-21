@@ -87,8 +87,8 @@
 #endif
 
 // ====== Precomputed Constants ======
-#define INV_HAND_DEPTH (1.0 / MC_HAND_DEPTH)
-#define HAND_DEPTH_OFFSET (0.5 - 0.5 * INV_HAND_DEPTH)
+// 手部深度：判据 IsHandScreenDepth() 与还原函数 UncompressHandDepth() 都在
+// lib/universal/Transform.glsl —— 26.3 的手部投影变了（见那里的说明），别在这里再写 0.56。
 // [2026-09] 旧版 SSS 模型的阴影幂门控指数（重写版模型不使用它）。
 // 之前随「SSS 与阴影门控解耦」被删过；现在旧版模型回归，这里一并恢复。
 #define SSS_CONTRAST_POW (1.2 / SHADOW_CONTRAST_STRENGTH)
@@ -225,6 +225,10 @@ void main() {
 
     vec3 screenPos = vec3(screenCoord, loadDepth0(texelPos));
 
+    // 材质包要提前读：下面的手部深度修正要排除玻璃/水（materialID 2/3）。
+    uvec4 materialPack = loadMaterialPack(texelPos);
+    uint materialID = materialPack.y;
+
     #if defined LOD_MOD
         bool lodMask = screenPos.z > 1.0 - EPS;
         if (lodMask) {
@@ -232,11 +236,32 @@ void main() {
         }
     #endif
 
-    if (screenPos.z < 0.56) {
-        screenPos.z = screenPos.z * INV_HAND_DEPTH + HAND_DEPTH_OFFSET;
+    // 第一人称手/手持模型的识别（两条渲染路径都要覆盖）：
+    //   a) 走 Iris hand 相位 ⇒ depth 被压缩，落进 IsHandScreenDepth 区间（原版手）；
+    //   b) 走 26.3 的提交式渲染（SubmitNodeCollector，mod 手臂如 Punchy/TaCZ 移植）⇒ depth 可能是
+    //      真实值。这类几何不在 depthtex2 里 —— depthtex2 按定义排除了手与半透明，
+    //      而正常地形/实体在 depth2 里（depth0 == depth2）。<0.96 把范围限制在 1.5 m 内。
+    // [2026-11-21 分色探测结论] 手的**一部分像素没进 isHandPixel**，剩下的正是 materialID == 2u：
+    // Entities.frag 把 albedo.a < 0.999 的像素改写成 2u（当玻璃），mod 手臂贴图里这类像素很多，
+    // 于是它们被当玻璃走折射/廉价路径 —— 折射背景随手的动画变化，看起来就是「阴影处仍在闪」。
+    // 只有真正的手持透明物（原版 hand 相位）才会写 2u 以外的值，所以这里不再排除 2u；
+    // 水(3)与粒子(500)仍然排除。
+    bool compressedHand = IsHandScreenDepth(screenPos.z);
+    bool isHandPixel = materialID != 3u && materialID != 500u
+                    && (compressedHand
+                        || (screenPos.z < 0.96 && screenPos.z < loadDepth2(texelPos) - 1e-6));
+
+    if (isHandPixel) {
+        // 深度用真实值：这是给 TAA / DOF / 重投影用的几何量。
+        if (compressedHand) screenPos.z = UncompressHandDepth(screenPos.z);
     }
 
     vec3 viewPos = ScreenToViewPos(screenPos);
+    if (isHandPixel) {
+        // 但**光照位置**不能用手的世界坐标：手在相机空间里随动画移动，按世界位置打光会让
+        // 采样点扫过场景，跨阴影边界就是忽明忽暗（见 Transform.glsl 的 HAND_LIGHT_DIST）。
+        viewPos = vec3(0.0, 0.0, -HAND_LIGHT_DIST);
+    }
     vec3 worldPos = mat3(gbufferModelViewInverse) * viewPos;
     // 相机相对世界坐标备份：L224 会把 worldPos 改成绝对坐标，但 gbufferModelViewInverse
     // 不含相机平移（Terrain.vert L98 证据），L224 加的不是 cameraPosition，其后 worldPos
@@ -263,8 +288,7 @@ void main() {
         }
     #endif
 
-    uvec4 materialPack = loadMaterialPack(texelPos);
-    uint materialID = materialPack.y;
+    // materialPack / materialID 已在上方（手部深度修正之前）读取。
     vec3 albedo = sRGBToLinear(loadAlbedo(texelPos));
     float dither = BlueNoise(texelPos, frameCounter);
 
@@ -283,7 +307,9 @@ void main() {
     // lightmap），然后直接 return，省掉那一整套。
     // 注意：水面（materialID == 3）不走这里 —— 它的底色是 Translucent 水体着色的基础，
     // 要替换得先决定「水面底色用什么」，留作后续。
-    if (materialID == 2u) {
+    // [2026-11-21] 手部像素即使 materialID 是 2u 也不走这里：mod 手臂的 alpha 像素会被
+    // Entities.frag 改写成 2u，一旦当玻璃做折射，折射背景随手的动画变化就是「闪」。
+    if (materialID == 2u && !isHandPixel) {
         vec4 glassPack = ExtractSpecularTex(materialPack);      // 玻璃：c7.zw 存的是 albedo
         vec3 glassAlbedo = sRGBToLinear(glassPack.rgb);
         vec2 glassLightmap = Unpack2x8U(materialPack.x);

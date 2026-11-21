@@ -103,7 +103,12 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 	// ⇒ `maxGeometryWeight` 缓慢起伏 ⇒ 稳态累积帧数 a* = 1/(1-w) 在档位间平滑移动。
 	// 掠射面深度斜率大，抖动偏移被放大 ⇒ 垂直墙最明显。
 	// 抖动只应影响**采样位置**，不应参与几何判据；这里统一改成无抖动口径。
-	vec3 viewPos = ScreenToViewPosRaw(screenPos);
+	// [2026-11-21 手部] raw depth 是压缩编码，直接反投影会落到相机后方 ⇒ 手部 GI 的重投影
+	// 与深度判据全错，表现为「手静止还行、一播动画就闪」。这里一次性换成真实视深，后续
+	// （含写进 encodedNormalDepth 的历史深度）都用同一口径。
+	bool isHandPixel = IsHandScreenDepth(screenPos.z);
+	float realScreenDepth = isHandPixel ? clamp(UncompressHandDepth(screenPos.z), 0.0, 1.0) : screenPos.z;
+	vec3 viewPos = ScreenToViewPosRaw(vec3(screenPos.xy, realScreenDepth));
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
     // GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
 #ifdef VXGI_FULLRES
@@ -112,7 +117,9 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     ivec2 canvasEnd = ivec2(halfViewSize);
 #endif
 
-	vec3 prevWorldPos = worldPos + (cameraPosition - previousCameraPosition) * step(0.56, screenPos.z); // To previous frame's world space
+	// 手跟着相机走，不能叠加相机平移（否则历史错位 → 手部 GI 无法累积、裸 1spp 噪声闪）。
+	// [2026-11-21] 原来的 step(0.56, z) 在 26.3 上恒为 1（手 depth ≈0.77，见 Transform.glsl）。
+	vec3 prevWorldPos = worldPos + (cameraPosition - previousCameraPosition) * (isHandPixel ? 0.0 : 1.0); // To previous frame's world space
     vec3 prevViewPos = transMAD(gbufferPreviousModelView, prevWorldPos); // To previous frame's view space
 	vec3 prevNDCPos = projMAD(gbufferPreviousProjection, prevViewPos) * rcp(-prevViewPos.z); // To previous frame's NDC space
 
@@ -133,7 +140,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     // 与 TemporalFilter 里无抖动的 `viewPos` 同口径。
     // 若这里写 `viewPos.z`（带抖动），下一帧的判据就会读到上一帧抖动相位的深度，
     // 造成"静止时累积帧数平滑缓慢起伏"（见 TemporalFilter 顶部注释）。
-    encodedNormalDepth = vec4(OctEncodeSnorm(worldNormal), ScreenToViewDepth(screenPos.z), 0.0);
+    encodedNormalDepth = vec4(OctEncodeSnorm(worldNormal), ScreenToViewDepth(realScreenDepth), 0.0);
 
     // [诊断] GI_DEBUG_NO_DISOC = 1：取消一切历史拒绝（越界/重置/深度/法线全不看），
     // 强制历史永远有效。用途：一键判断闪是来自「历史被拒 + 重建」还是「采样/滤波」。

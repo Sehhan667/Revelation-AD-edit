@@ -105,9 +105,10 @@ vec3 StartupPanelFallbackBlur(in vec2 uv) {
 #define GLITCH_TEAR_REF_DISTANCE 1  // [0 1 2 3 4 6 8 12 16 24 32]
 #define GLITCH_TEAR_FADE_DISTANCE 24.0 // [0 4 8 12 16 20 24 32 48 64]
 
-// 手部/贴脸像素的 raw depth 阈值（与包内既有判手部写法同源：KillRipple 与 SSILVB_HAND_DEPTH_THRESHOLD
-// 都用 0.56）。手部深度是压缩编码，直接当视距换算会读成"很远"，必须单独放行。
-#define GLITCH_HAND_DEPTH 0.56
+// 手部/贴脸像素：手部深度是压缩编码，直接当视距换算会读成"很远"，必须单独放行。
+// [2026-11-21] 判定交给 Transform.glsl 的 IsHandScreenDepth()：26.3（Iris 1.12）把手部
+// 投影改成 0.125*z + 0.4375*w，手的 raw depth 从 ≤0.5625 挪到 0.656..0.781，
+// 旧的 `rawDepth < 0.56` 在 26.3 上恒不成立（手会被按"很远"衰减掉撕裂）。
 
 // ---------- 调试：撕裂距离衰减读数（默认关；GUI「调试」页也能开） ----------
 // 打开后整屏变成读数：R = 视距/64 m（越红越远）；G = 撕裂位移系数（亮=满幅、黑=此处完全不撕）；
@@ -127,12 +128,12 @@ uniform bool is_hurt;
 //     外圈 GLITCH_TEAR_FADE_DISTANCE 之外   → 完全不撕
 // 外圈设 0（或 ≤ 内圈）＝ 关闭衰减 ＝ 旧的全屏等幅行为。
 // 视距取 depthtex1（含半透明 = 看得见的表面；水面/彩色玻璃才吃到自己的深度，DOF 也用这张）。
-// raw depth < GLITCH_HAND_DEPTH 的像素（手部、贴脸几何）恒满幅：手部深度是压缩编码，
-// 直接当视距换算会读成很远（见 DeferredLight.frag 的 HAND_DEPTH_OFFSET）。
+// 手部/贴脸像素恒满幅：手部深度是压缩编码，直接当视距换算会读成很远
+// （判据见 lib/universal/Transform.glsl 的 IsHandScreenDepth）。
 // 判断"关闭"用运行期比较，不用 #if 比浮点 —— 实测 Iris 的 jcpp 只按整数部分比较浮点。
 // 作用范围：实体区域故障两个分支；全屏受伤屏闪按用户要求保持等幅。
 float GlitchTearDistanceFade(in ivec2 texel) {
-    if (loadDepth0(texel) < GLITCH_HAND_DEPTH) return 1.0;
+    if (IsHandScreenDepth(loadDepth0(texel))) return 1.0;
     // [2026-10-06 符号修正（前三次"没用"的真因）] ScreenToViewDepth 返回的是**视空间 z（负数）**，
     // 不是距离：GL 视空间相机前方 z < 0。所以负数直接和 4.0 比会**恒为真**（永远"在内圈"）⇒ 恒满幅。
     // 包内取距离的写法都带负号（DOF/Prepare.comp:58、DOF/Gather.comp:224 都是 -ScreenToViewDepth...），

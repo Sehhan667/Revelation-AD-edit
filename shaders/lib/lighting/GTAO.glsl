@@ -29,8 +29,10 @@ void SampleHorizonCosOptimized(
     float dPos = loadDepth0(uvToTexel(uvPos));
     float dNeg = loadDepth0(uvToTexel(uvNeg));
 
-    // Early-out：如果两侧都在第一人称手臂/极近距离内，直接跳过计算
-    if (dPos < 0.56 && dNeg < 0.56) return;
+    // Early-out：如果两侧都在第一人称手臂/极近距离内，直接跳过计算。
+    // [2026-11-21] 26.3 的手部 raw depth 是 0.656..0.781（Iris 1.12 改了手部投影），
+    // 只比 0.56 会让手参与 GTAO。
+    if (IsHandScreenDepth(dPos) && IsHandScreenDepth(dNeg)) return;
 
     vec3 posV, negV;
 
@@ -70,9 +72,9 @@ void SampleHorizonCosOptimized(
     // Mix 并更新最大 Cos 值
     sHorizonCos = mix(sHorizonCos, cHorizonCos, weight);
     
-    // 如果原始深度小于 0.56，强制当前端使用旧值 (修复跳出逻辑造成的单侧遮蔽)
-    cHorizonCos.x = dPos < 0.56 ? cHorizonCos.x : max(sHorizonCos.x, cHorizonCos.x);
-    cHorizonCos.y = dNeg < 0.56 ? cHorizonCos.y : max(sHorizonCos.y, cHorizonCos.y);
+    // 如果原始深度落在第一人称手臂区间，强制当前端使用旧值 (修复跳出逻辑造成的单侧遮蔽)
+    cHorizonCos.x = IsHandScreenDepth(dPos) ? cHorizonCos.x : max(sHorizonCos.x, cHorizonCos.x);
+    cHorizonCos.y = IsHandScreenDepth(dNeg) ? cHorizonCos.y : max(sHorizonCos.y, cHorizonCos.y);
 }
 
 float CalculateGTAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dither) {
