@@ -345,7 +345,7 @@ writeonly restrict uniform image2D skyViewImg;
         float sunZenithCos = dot(up, worldSunDir);
         vec3 sunDir = normalize(vec3(sqrt(1.0 - sqr(sunZenithCos)), sunZenithCos, 0.0));
 
-        float turbidity = ATMOSPHERE_TURBIDITY * HAZE_STRENGTH;
+        float turbidity = atmosphereTurbidity * HAZE_STRENGTH;
 
         float sunVisible = smoothstep(-0.08, -0.02, sunZenithCos);
         vec3 lum = vec3(0.0);
@@ -404,9 +404,18 @@ const uint skyViewLutVersion = (atmosMsVersion * 13u
     #endif
     ) ^ 0xC2B2AE35u;
 
-// 太阳方向阈值 cos(0.5°)：MC 日周期 20 分钟 ≈ 0.3°/s，单 texel 覆盖角 ~1°，
-// 重建间隔约 1.7s；误差为子 texel 级，查表双线性插值下视觉无感。
-const float SKYVIEW_SUN_DOT_EPS = 0.99996;
+// [2026-11-16 动态门控] 允许的太阳滞后角 = SKY_REFRESH_SUN_ANGLE_MAX_DEG × sin(太阳高度角)。
+// 依据：天空辐亮度对太阳位置的敏感度 ∝ d(airmass)/d(高度角) ∝ 1/sin(e)，所以把允许滞后角
+// 按 sin(e) 缩放，等价于「每次重建时天空的相对变化量恒定」：
+//   正午（sin≈1）0.5°/1.7 s —— 肉眼看不出；
+//   太阳 20°  0.17°/约 17 帧；
+//   太阳 10°  0.087°/约 9 帧；
+//   10° 以下  由 SKY_REFRESH_FULL_SUN_ANGLE_DEG 硬判据直接逐帧重建（见 main）。
+// 这里存 1-cos 而非 cos：比较用 dot，避免每帧算 acos。
+// 小角近似 1-cosθ = θ²/2（0.5° 时与精确值差 <1e-9）；写成纯乘法是为了不依赖
+// 「builtin 调用能否作为 const 初始化」这条编译器差异——踩过一次编译失败即光影整体禁用。
+const float SKYVIEW_SUN_ANGLE_MAX = SKY_REFRESH_SUN_ANGLE_MAX_DEG * PI / 180.0;
+const float SKYVIEW_SUN_ONE_MINUS_COS_MAX = 0.5 * SKYVIEW_SUN_ANGLE_MAX * SKYVIEW_SUN_ANGLE_MAX;
 // 相机绝对高度阈值（米）：跳跃/楼梯不触发，鞘翅飞行（~30m/s）约 2s 一次。
 const float SKYVIEW_HEIGHT_EPS = 64.0;
 // wetness 阈值：雨天渐变期触发频率约为逐帧重建的 1/6。
@@ -440,14 +449,28 @@ void main() {
         #endif
     }
 
-    bool fresh = global.skyViewVersion == skyViewLutVersion
-        && dot(global.skyViewPrevState.xyz, worldSunDir) >= SKYVIEW_SUN_DOT_EPS
-        && abs(global.skyViewPrevState.w - atmosphereViewHeight) <= SKYVIEW_HEIGHT_EPS
-        && abs(global.skyViewPrevWetness - wetness) <= SKYVIEW_WETNESS_EPS;
-    #if SKY_MODEL == 1
-        fresh = fresh && abs(global.skyViewPrevMoonMult - moonlightMult) <= 1e-4;
+    // [2026-11-16] 刷新密度统一由 SKY_MAP_DOWNFREQ_REFRESH 控制（与 GenSkyMap /
+    // GenCloudShadow 同一宏），且阈值是**动态**的：
+    //   掠射时段（|sunY| < sin(SKY_REFRESH_FULL_SUN_ANGLE_DEG)）→ 无条件逐帧重建。这一档必须是硬判据：
+    //     逐帧太阳位移的 (1-cos) ≈ 1.5e-8，已在 fp32 分辨率边缘，靠 dot 比较会误判「没动」；
+    //   其余时段 → 允许滞后角按 sin(高度角) 缩放后与 dot 比较，正午仍是约 1.7 s 一次。
+    // 宏关闭时整段失效，任何时段都逐帧重建。
+    #ifdef SKY_MAP_DOWNFREQ_REFRESH
+        // sin 在运行时算（不用 const 初始化）：这个选项现在由 GUI 改写 #define 的值，
+        // 走普通局部变量最稳，代价是每线程每帧一次 sin。
+        bool twilight = abs(worldSunDir.y) < sin(radians(SKY_REFRESH_FULL_SUN_ANGLE_DEG));
+        float sunSin = abs(worldSunDir.y);
+        float sunDotEps = 1.0 - SKYVIEW_SUN_ONE_MINUS_COS_MAX * sunSin * sunSin;
+        bool fresh = global.skyViewVersion == skyViewLutVersion
+            && !twilight
+            && dot(global.skyViewPrevState.xyz, worldSunDir) >= sunDotEps
+            && abs(global.skyViewPrevState.w - atmosphereViewHeight) <= SKYVIEW_HEIGHT_EPS
+            && abs(global.skyViewPrevWetness - wetness) <= SKYVIEW_WETNESS_EPS;
+        #if SKY_MODEL == 1
+            fresh = fresh && abs(global.skyViewPrevMoonMult - moonlightMult) <= 1e-4;
+        #endif
+        if (fresh) return;
     #endif
-    if (fresh) return;
 
     // [2026-11-12 B9] 网格步进：24x24 组 × 8x8 = 192x192，正常情况下每线程正好 1 个 texel；
     // 若 LUT 尺寸变了（或 Iris 没有按 workGroups 派发），这里会自动多跑几轮把 LUT 写满。

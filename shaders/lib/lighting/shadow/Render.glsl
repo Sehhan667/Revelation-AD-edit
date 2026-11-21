@@ -40,9 +40,11 @@
 
 #include "Common.glsl"
 
-// 缓存投影矩阵的关键元素，减少重复索引
-const float shadowProjInv1y = shadowProjectionInverse[1].y;
-const float shadowProjInv2z = shadowProjectionInverse[2].z;
+// 缓存投影矩阵的关键元素，减少重复索引。
+// 用宏而不是 const：初始值来自 uniform，全局 const 只能是常量表达式，
+// glslang（Iris Vulkan 后端）会报 global const initializers must be constant。
+#define shadowProjInv1y (shadowProjectionInverse[1].y)
+#define shadowProjInv2z (shadowProjectionInverse[2].z)
 
 // ---------- 预计算Vogel盘半径序列（假设最大采样数为16，可扩展） ----------
 const float vogelRadii[16] = float[16](
@@ -148,7 +150,7 @@ vec3 CalculateWaterCaustics(in vec3 worldPos, in float waterDepth, in float dith
         vec2 sampleCoord = WorldToShadowScreenSpace(samplePos).xy;
         vec3 waveNormal = OctDecodeUnorm(texture(shadowcolor1, sampleCoord).xy);
 
-        vec3 refractDir = refract(vec3(0.0, 1.0, 0.0), waveNormal, 1.0 / WATER_IOR);
+        vec3 refractDir = refractRay(vec3(0.0, 1.0, 0.0), waveNormal, 1.0 / WATER_IOR);
         
         // 优化：消除 abs()。因光线朝下，refractDir.y 必为负。
         vec3 refractedPos = samplePos - refractDir / refractDir.y;

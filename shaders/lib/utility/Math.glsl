@@ -237,7 +237,9 @@ vec2 sampleVogelDisk(in uint idx, in uint num, in float phi) {
 }
 
 // https://developer.download.nvidia.cn/cg/refract.html
-vec3 refract(in vec3 i, in vec3 n, in float eta) {
+// 不能叫 refract：与 GLSL 内建同名同参，Iris 的 Vulkan 后端（glslang→SPIR-V）把 precision
+// 限定符也算进函数签名，会报 overloaded functions must have the same parameter precision。
+vec3 refractRay(in vec3 i, in vec3 n, in float eta) {
     float cosi = -dot(i, n);
     float cost2 = 1.0 - eta * eta * oms(cosi * cosi);
     if (cost2 < 0.0) return vec3(0.0);

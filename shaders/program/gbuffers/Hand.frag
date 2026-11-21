@@ -23,6 +23,9 @@
 //#include "/lib/lighting/shadow/render.glsl"
 //======// Output //==============================================================================//
 
+// gbuffers_hand_water 也复用本文件（见 world*/gbuffers_hand_water.fsh）。
+// 26.3 Vulkan 后端下第一人称手（含空手手臂）会走 hand_water 程序；若沿用旧写法
+// materialID=2u，会被 IntegrateScene 当成玻璃/水套上折射+反射。
 /* RENDERTARGETS: 6,7,8 */
 layout (location = 0) out vec4 albedoOut;
 layout (location = 1) out uvec4 materialOut;

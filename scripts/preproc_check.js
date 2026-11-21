@@ -359,6 +359,33 @@ if (args.length === 0 || args[0] === '--help') {
 const UPDATE_BASELINE = args.includes('--update-baseline');
 const entryArgs = args.filter(a => !a.startsWith('--'));
 
+// ---------- 前置检查：shaders.properties 必须是纯 ASCII ----------
+// 2026-11-17 事故：往里写了一句中文注释，Iris 的 PropertiesPreprocessor（anarres jcpp）
+// 在第一个非 ASCII 字节上抛 `Bad token`，catch 分支把**已处理到一半的文本**原样返回，
+// 于是整个 properties 被静默截断在该行之前 —— 后面所有 image.* / screen.* / 选项全部消失。
+// 表现成 `no image registered for skyViewImg`（程序声明了 image，但注册表里没有），
+// 极难反推到「注释里有中文」上面。GLSL 源码里的中文注释不受影响（不走这个预处理器），
+// 只有 shaders.properties 有这个限制。
+{
+    const propsPath = path.join(SHADERS, 'shaders.properties');
+    const buf = fs.readFileSync(propsPath);
+    const badLines = [];
+    let line = 1;
+    for (let i = 0; i < buf.length; i++) {
+        if (buf[i] === 0x0a) { line++; continue; }
+        if (buf[i] > 0x7f && !badLines.includes(line)) badLines.push(line);
+    }
+    if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) badLines.unshift(1);
+    if (badLines.length) {
+        console.error('shaders.properties 含非 ASCII 字节（Iris 的 C 预处理器会报 Bad token，');
+        console.error('并把整个 properties 截断在该行之前，导致 image/选项全部丢失）：');
+        for (const l of badLines.slice(0, 20)) console.error(`    第 ${l} 行`);
+        if (badLines.length > 20) console.error(`    ……共 ${badLines.length} 行`);
+        console.error('注释请一律用 ASCII 英文；解释性中文放到 .glsl 源码里。');
+        process.exitCode = 1;
+    }
+}
+
 let entries = [];
 if (args.includes('--all') || UPDATE_BASELINE) {
     const walk = dir => {

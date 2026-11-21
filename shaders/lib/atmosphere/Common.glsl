@@ -25,12 +25,23 @@
 #define VIEWER_BASE_ALTITUDE 256.0 // [64.0 128.0 256.0 384.0 512.0 1024.0 2048.0 4096.0 8192.0 16384.0 32768.0 65536.0 131072.0 262144.0 524288.0 1048576.0 2097152.0 4194304.0 8388608.0 16777216.0 33554432.0 67108864.0 134217728.0 268435456.0 536870912.0 1073741824.0]
 #define ATMOSPHERE_THICKNESS 100000.0 // [0.0 5000.0 10000.0 20000.0 30000.0 40000.0 50000.0 60000.0 70000.0 80000.0 90000.0 100000.0 110000.0 120000.0 130000.0 140000.0 150000.0 160000.0]
 
-// 根据维度切换大气浑浊度
+// [2026-11-15] Iris 选项歧义修复。原来左右分支各写一条 ATMOSPHERE_TURBIDITY（末地 2.5 / 其他 1.0）。
+// Iris 是纯文本扫描全部源文件、不展开条件分支：同名 + 同可选值列表 + 默认值不同 -> 判定
+// Ignoring ambiguous string option，并把该选项从选项表整条移除（将来接 GUI 会变成拖了不生效）。
+// 改法：只留一条可配置的基础值（默认 1.0，等于主世界现状），末地的浑浊度用维度倍率还原成 2.5。
+// 默认观感逐位不变：主世界 1.0 x 1.0 = 1.0，末地 1.0 x 2.5 = 2.5。
+#define ATMOSPHERE_TURBIDITY 1.0 // [0.0 0.25 0.5 0.75 1.0 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0 3.25 3.5 3.75 4.0 4.25 4.5 4.75 5.0]
+
+// 维度倍率：末地空气比主世界更浑浊（对应改动前那条固定的 2.5）。
+// 用 const 而非 #define，避免再产生一条同名常量被 Iris 的文本扫描看到。
 #ifdef DIMENSION_THE_END
-    #define ATMOSPHERE_TURBIDITY 2.5 // [0.0 0.25 0.5 0.75 1.0 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0 3.25 3.5 3.75 4.0 4.25 4.5 4.75 5.0]
+    const float atmosphereTurbidityDimMul = 2.5;
 #else
-    #define ATMOSPHERE_TURBIDITY 1.0 // [0.0 0.25 0.5 0.75 1.0 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0 3.25 3.5 3.75 4.0 4.25 4.5 4.75 5.0]
+    const float atmosphereTurbidityDimMul = 1.0;
 #endif
+
+// 实际参与计算的浑浊度（常量表达式，可用于 const 全局初始化）
+const float atmosphereTurbidity = ATMOSPHERE_TURBIDITY * atmosphereTurbidityDimMul;
 
 #define ATMOSPHERE_SKY_SAMPLES 4 // [2 4 6 8 16 24 32 40 48 56 64 72 80 88 96 104 112 120 128]
 #define ATMOSPHERE_TLUT_SAMPLES 4 // [2 4 6 8 16 24 32 40 48 56 64 72 80 88 96 104 112 120 128]
@@ -67,7 +78,7 @@ const float aerosol_d = 1.6; // Mean diameter in µm
 	max(vec3(-7.67542206226e-6, -8.22772032997e-6, -1.21707541321e-5) + \
 		vec3( 7.71550875198e-6,  8.27069152678e-6, 	1.22343187466e-5) * turbidity, 0.0)
 
-const vec3 mieCoeffBase = PreethamMieScatteringCoeff(exp2(ATMOSPHERE_TURBIDITY));
+const vec3 mieCoeffBase = PreethamMieScatteringCoeff(exp2(atmosphereTurbidity));
 
 // Every length is in m
 const AtmosphereParameters atmosphere = AtmosphereParameters(
@@ -133,7 +144,7 @@ vec3 atmosphereViewPos = vec3(0.0, atmosphereViewHeight, 0.0);
 #endif
 
 const uint atmosTlutVersionRaw = (uint(ATMOS_DIM_TAG * 101 + ATMOSPHERE_TLUT_SAMPLES) * 7919u
-    ^ uint(ATMOSPHERE_THICKNESS) ^ uint(ATMOSPHERE_TURBIDITY * 100.0 + 0.5) * 104729u)
+    ^ uint(ATMOSPHERE_THICKNESS) ^ uint(atmosphereTurbidity * 100.0 + 0.5) * 104729u)
     ^ 0x9E3779B9u ^ 2u;
 const uint atmosTlutVersion = atmosTlutVersionRaw == 0u ? 0x9E3779B9u : atmosTlutVersionRaw;
 const uint atmosMsVersionRaw = (atmosTlutVersion * 31u

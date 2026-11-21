@@ -19,6 +19,7 @@ screen.Debug=Debug
 screen.Compatibility=Compatibility
 
 screen.Atmosphere=Atmosphere
+screen.SkyRefresh=Sky Refresh
 screen.OuterSpace=Outer Space
 screen.Weather=Weather
 screen.Foliage=Foliage
@@ -870,3 +871,11 @@ option.NRD_STABLE_MIN_RADIUS=Stabilized-region minimum filter radius
 option.NRD_STABLE_MIN_RADIUS.comment=In canvas texels. For a fully stabilized pixel the formula gives sqrt(hitDistFactor*NLAS)*maxBlurRadius ~= 1.9 texels (official). This value directly sets the SIZE of residual blotches: 8 taps spread over radius R leave a footprint of 2R canvas texels = 4R screen pixels, so raising it does not just soften the image, it turns noise into visible cloud-shaped patches. 3.0 gives Blur 3 / PostBlur 6 canvas texels = 12/24 screen px, the same order as ordinary residual noise, so no structure is readable. 4.0 and above start to show blotches that look blurred by the denoiser. Lower (2.0) is closer to official and sharper, but residual noise is more visible. Combined with the distance curve (6 at 64 m) via max. Not present in official NRD (only gMinBlurRadius=1)
 option.NRD_WIDE_RADIUS=Low-frequency cleanup radius (experimental, off by default)
 option.NRD_WIDE_RADIUS.comment=In canvas texels (x2 = screen pixels). A fixed-radius ring of 8 taps plus a luma test tightened by an estimated residual, originally written for the non-recurrent history. Field result: the frozen residual of the non-recurrent path is about 10x beyond what 3 passes can recover, so it cannot clean it; and with recurrence back on it gets applied every frame and permanently flattens the steady state at a 16-texel scale. Hence 0 by default. Kept for re-calibration once the spatial stage reaches 5-8 a-trous levels
+option.SKY_MAP_DOWNFREQ_REFRESH=Sky light dynamic downfrequency
+option.SKY_MAP_DOWNFREQ_REFRESH.comment=Adaptively lowers the refresh rate of the sky LUT / sky map / cloud shadow map based on sun elevation. At noon and midnight the sky LUT is rebuilt about every 1.7 s, the sky map runs a 2x2 checkerboard (4 frames per pass) and the cloud shadow map a 4x4 one (16 frames) - the frame-to-frame change is smallest there, so the downfrequency is invisible. As the sun approaches the horizon all three fall back to full per-frame refresh, because the whole sky shifts every frame at that point. Off = full refresh at all times, at the cost of recomputing all three even at noon. Compile-time option: changing it in the GUI rebuilds the pipeline automatically, while hand edits to settings.glsl need a reload (press i).
+option.SKY_REFRESH_SUN_ANGLE_MAX_DEG=Maximum sun lag angle at noon
+option.SKY_REFRESH_SUN_ANGLE_MAX_DEG.comment=In degrees. The sky LUT is rebuilt once the sun has moved by this angle; at other times the allowance is scaled by sin(sun elevation), which keeps the relative change per rebuild constant. 0.5 deg means roughly one rebuild every 1.7 s in daytime. Lower = more responsive and more expensive; higher = cheaper but the sky around the sun starts to jump in visible steps.
+option.SKY_REFRESH_FULL_SUN_ANGLE_DEG=Grazing per-frame band
+option.SKY_REFRESH_FULL_SUN_ANGLE_DEG.comment=In degrees. Below this sun elevation the sky LUT, sky map and cloud shadow map are all rebuilt every frame. This band has to be a hard test: the per-frame sun movement at grazing angles is only (1-cos)~1.5e-8, right at fp32 resolution, so a pure threshold comparison misreads it as "not moved" and skips frames. 10 deg is the measured balance point; 20-30 deg is safer and has no effect at noon, where the elevation is far higher. 0 disables this safeguard.
+suffix.SKY_REFRESH_SUN_ANGLE_MAX_DEG=deg
+suffix.SKY_REFRESH_FULL_SUN_ANGLE_DEG=deg

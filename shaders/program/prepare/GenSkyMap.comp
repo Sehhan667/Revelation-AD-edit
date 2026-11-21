@@ -52,15 +52,19 @@ writeonly uniform image2D skyMapImg;
 void main() {
 	ivec2 tid = ivec2(gl_GlobalInvocationID.xy);
 
-	// [2026-11-14] 刷新模式由 settings.glsl 的 SKY_MAP_DOWNFREQ_REFRESH 控制。
-	// 默认：每帧全量刷新（球谐环境光每帧更新）。
+	// [2026-11-14 / 11-16] 刷新模式由 settings.glsl 的 SKY_MAP_DOWNFREQ_REFRESH 控制，
+	// 且是**动态**的：掠射时段（|sunY| < sin(SKY_REFRESH_FULL_SUN_ANGLE_DEG) ≈ 10°）退化为逐帧全量。
+	// 太阳贴近地平线时天空每帧的相对变化最大，4 帧棋盘滞后会被球谐环境光与天空反射看到；
+	// 正午/午夜则继续走 2x2 棋盘，省下 3/4 的 skyMap 计算量。
+	// 宏关闭时任何时候都逐帧全量。
 #ifdef SKY_MAP_DOWNFREQ_REFRESH
 	// 2x2 棋盘降频：每帧只写当前相位的 1/4 纹素，4 帧一轮，由历史累积补全。
 	// [2026-08-09 修复] 棋盘条件必须用 all(equal(...))：`(tid & 1) == offset` 是 bvec2，
 	// 直接放进 if 属于非法 GLSL（部分驱动行为未定义），会导致天空图写入异常 →
 	// 球谐光（skySH）退化 → 朝上面过暗/缺少天空光染色。
+	bool sunGrazing = abs(worldSunDir.y) < sin(radians(SKY_REFRESH_FULL_SUN_ANGLE_DEG));
 	ivec2 offset = checkerboardOffset2x2[frameCounter & 3];
-	bool writeTexel = all(equal(tid & 1, offset)) || worldTimeChanged;
+	bool writeTexel = sunGrazing || all(equal(tid & 1, offset)) || worldTimeChanged;
 #else
 	bool writeTexel = true;
 #endif
