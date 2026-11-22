@@ -128,7 +128,9 @@ writeonly uniform uimage2D colorimg7;
 // [2026-10-08 回退 S2] 反射信号不再写出：反光面空间的 pass 模糊方案在本机 Iris 上始终读不到结果
 // （片元 pass 的 imageStore 半分辨率写、全分辨率 MRT、pass 门控三条路都试过）。粗糙反射已回到
 // "单射线 + 源空间模糊"（lib/surface/Reflection.glsl 的 ROUGH_REFLECTION_PULL 路径）。
-// 相关缓冲（colortex11/21/22）、采样器与 program/specular/ReflectionBlur.comp 保留但**已停用**。
+// [2026-11-22 #3] 相关死链已清理：SpecularFilter.comp 与 world*/deferred30-32.csh 已删除，
+// colortex11 不再被任何 pass 写入/读取（仅 Reflection.glsl 的调试热图分支保留注释引用）。
+// 注意 colortex21/22 是 GI 降噪链的活缓冲，与本注释无关。
 
 uniform sampler2D cloudOriginTex;
 

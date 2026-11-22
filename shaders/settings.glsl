@@ -648,11 +648,9 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define OPAQUE_SPECULAR
 	#define ROUGH_REFLECTIONS_THRESHOLD 0.005 // Threshold for rough reflections. [0.0001 0.0002 0.0005 0.0007 0.001 0.002 0.005 0.007 0.01 0.02 0.05 0.07 0.1 0.2 0.5]
 
-	#define REFLECTION_FILTER // Enables reflection filter
-
-	#if RENDER_MODE == 0
-		#undef REFLECTION_FILTER
-	#endif
+	// [2026-11-22 #3] 删除孤儿宏 REFLECTION_FILTER：从未被任何代码 #ifdef 消费，
+	// 也不在任何 screen.* 列表里（只在 lang 里留了一个死条目）。反射滤波整条链
+	//（SpecularFilter.comp / deferred30-32）已停用并一并删除。
 
 	#define SPECULAR_IMPORTANCE_SAMPLING_BIAS 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 

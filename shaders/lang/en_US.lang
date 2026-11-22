@@ -483,7 +483,6 @@ option.ROUGH_REFLECTION_DIR_SAMPLES=Rough Reflection Lobe Samples
 option.ROUGH_REFLECTION_DIR_SAMPLES.comment=Rays traced per pixel inside the GGX lobe, then averaged (1 = off, keeps the old single-mirror-ray + screen-space blur). Only values > 1 can actually erase the OUTLINE of reflected objects: a single mirror ray jumps to a different hit point across an object silhouette, so screen-space blurring flattens the interior while the outline survives. Costs N traces per rough pixel; pair with Importance Sampling Bias (0 = wider lobe) to tune the amount of blur
 option.ROUGH_REFLECTION_PULL=Rough Reflection Blur Recentring
 option.ROUGH_REFLECTION_PULL.comment=How far the blur centre is pulled from the ray HIT point towards this pixel's OWN position: 0 = old behaviour (centred on the hit point - the outline of reflected objects survives); 1 = pure local neighbourhood average (outline gone, brightness and hue come from the real scene, and it costs NO extra tracing); in-between values continuously control how soft the outline is. This is the lightweight route: 1 trace + N texture taps
-option.REFLECTION_FILTER=Reflection Filter
 
 option.REFRACTION_STRENGTH=Refraction Strength
 

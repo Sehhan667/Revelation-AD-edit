@@ -491,7 +491,6 @@ option.REFLECTION_METAL_MIX=金属反射混合权重
 option.REFLECTION_METAL_MIX.comment=金属反射与纹理的混合权重（1.0=纯反射, 0.0=纯纹理）
 option.NONMETAL_REFLECTION_BRIGHTNESS=非金属反射亮度
 option.NONMETAL_REFLECTION_BRIGHTNESS.comment=增强非金属反射亮度，与未命中反射时的亮度补偿共同作用
-option.REFLECTION_FILTER=反射过滤
 
 option.REFRACTION_STRENGTH=折射强度
 
