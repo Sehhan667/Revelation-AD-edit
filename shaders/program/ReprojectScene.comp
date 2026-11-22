@@ -35,11 +35,24 @@ void main() {
     uvec2 localPos = QuadLayout16x16(gl_LocalInvocationIndex);
     ivec2 texelPos = ivec2(localPos + gl_WorkGroupID.xy * gl_WorkGroupSize.xy);
 
-	float depth = loadDepth0(texelPos << 1);
-    vec2 previousCoord = ReprojectScreenPos(vec3(texelToUv(texelPos) * 2.0, depth)).xy;
+    vec2 currentUv = texelToUv(texelPos) * 2.0;   // 本 texel 对应的全屏 uv（与原实现同款近似）
+    float depth = loadDepth0(texelPos << 1);
 
-    if (saturate(previousCoord) == previousCoord && depth > 0.56) {
-        vec3 reprojectedHistory = texture(colortex1, previousCoord).rgb;
-        imageStore(colorimg4, texelPos, vec4(reprojectedHistory, 1.0));
+    // [2026-11-22 #2 改善重投影] 反射源必须每帧对每个 texel 都写一次。
+    // 原实现只在「重投影有效 且 depth>0.56」时写，失败的 texel 就保留旧内容；
+    // 而 colortex4 左上象限是**分时复用**的：本 pass(deferred1) 写反射源 → DeferredLight 读 →
+    // 稍后 composite10 的 bloom Downsample 又把同一象限改写成泛光 tile。于是失败 texel
+    // 实际保留的是**上一帧的泛光数据**，SSR 命中该 texel 时采到泛光色（偏亮/偏色）。
+    // 改法：失败时退化为「不重投影」（采当前屏幕位置的上一帧场景色），并把手/极近像素也写掉，
+    // 保证象限内每个 texel 都是干净的反射源而不是 bloom 残值。
+    if (depth > 0.56) {
+        vec2 previousCoord = ReprojectScreenPos(vec3(currentUv, depth)).xy;
+        // 重投影出屏 ⇒ 回退到不重投影（当前屏幕位置），避免采到画外区域。
+        if (saturate(previousCoord) != previousCoord) previousCoord = currentUv;
+        imageStore(colorimg4, texelPos, vec4(texture(colortex1, previousCoord).rgb, 1.0));
+    } else {
+        // 手部 / 极近像素（depth<=0.56）：不重投影，直接采当前屏幕位置的上一帧场景色，
+        // 避免把 bloom 残值留在这里被 SSR 误采。
+        imageStore(colorimg4, texelPos, vec4(texture(colortex1, currentUv).rgb, 1.0));
     }
 }
