@@ -330,7 +330,11 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
             // 只对屏幕左上象限成立 ⇒ reflectionDist 完全错误（接触硬化、以及后续任何按命中距离
             // 加权的降噪/模糊都会拿到错距离）。clamp 是防 hitCoord == 1.0 时 texelFetch 越界。
             vec2 hitUv = clamp(hitCoord, vec2(0.0), vec2(1.0) - viewPixelSize);
-            float hitDepth = loadDepth0(uvToTexel(hitUv));
+            // [2026-11-22 #5] 深度源与 SSRT 命中判定统一用 depthtex2（不含半透明/手）。
+            // 原来这里用 loadDepth0（含半透明），隔着水/玻璃时命中点深度会被水面顶替 ⇒
+            // reflectionDist 偏小、接触硬化算错。SSRT.glsl 的命中判定本来就是 loadDepth2，
+            // 这里对齐后两者口径一致。当前 ROUGH_REFLECTIONS 默认关，此距离主要用于粗糙反射。
+            float hitDepth = loadDepth2(uvToTexel(hitUv));
             vec3 reflectViewPos = ScreenToViewPos(vec3(hitUv, hitDepth));
             reflectionDist = distance(reflectViewPos, viewPos);
 
