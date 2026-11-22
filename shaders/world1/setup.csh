@@ -7,6 +7,7 @@
 #define CLEAR_COLOR vec4(0.0)
 
 layout (local_size_x = 16, local_size_y = 16) in;
-const ivec3 workGroups = ivec3(16, 16, 1);
+// [2026-11-22 C1] skyMap(cortex5) 128²: 8×8 组 × 16 线程 = 128×128（原 16×16 对应 256²）。
+const ivec3 workGroups = ivec3(8, 8, 1);
 
 #include "/program/setup/ImageClear.comp"
