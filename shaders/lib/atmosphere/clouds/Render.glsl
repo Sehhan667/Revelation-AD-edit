@@ -266,7 +266,16 @@ void CompositeClouds(inout vec3 skyRadiance, in vec4 cloudData, in vec3 rayDir) 
         vec3 cloudPos = atmosphereViewPos + rayDir * cloudData.z;
 
         vec3 sunIlluminance = sunIrradiance * AtmosphereTransmittanceToSun(cloudPos, worldSunDir);
-        vec3 moonIlluminance = sunIrradiance * AtmosphereTransmittanceToSun(cloudPos, -worldSunDir) * moonlightMult;
+        // [2026-11-22 B2 性能] moonlightMult 由月相决定、白天也非零，原实现每个有云的
+        // texel 都会先查一次月光方向的透射率再乘这个极小数。太阳在地平线以上时这一项
+        // 物理上就该归零 —— 用与 SkyView 一致的门控（升序 edge 的 smoothstep）直接跳过
+        // 查询，省一次 AtmosphereTransmittanceToSun 纹理采样；夜间 moonVisible=1 与原值逐位一致，
+        // 晨昏带平滑过渡。⏳ 白天有云处的亮度可能有极轻微变化，需实机 A/B。
+        float moonVisible = 1.0 - smoothstep(-0.08, 0.02, worldSunDir.y);
+        vec3 moonIlluminance = vec3(0.0);
+        if (moonVisible > 0.001) {
+            moonIlluminance = sunIrradiance * AtmosphereTransmittanceToSun(cloudPos, -worldSunDir) * (moonlightMult * moonVisible);
+        }
         vec3 directIlluminance = 128.0 * (sunIlluminance + moonIlluminance);
 
         float heightFraction = saturate((length(cloudPos) - cumulusBottomRadius) * rcp(cumulusThickness));

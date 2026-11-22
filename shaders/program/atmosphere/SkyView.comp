@@ -171,7 +171,18 @@ writeonly restrict uniform image2D skyViewImg;
         const float moonAngularRadius = atan(1.7374e6 / 3.8440e8);
         const float moonSolidAngle = 6.283185307179586 * (1.0 - cos(moonAngularRadius));
         float moonSkyFactor = 0.136 * NIGHT_BRIGHTNESS * moonSolidAngle * MOON_SKY_BRIGHTNESS;
-        lum += RaymarchScattering(atmosphereViewPos, rayDir, -sunDir) * moonSkyFactor * MOON_SKY_TINT;
+        // [2026-11-22 B1 性能] moonSkyFactor 是编译期常数、白天也非零，原实现无论昼夜都对
+        // -sunDir（白天指向地下）跑一整趟 RaymarchScattering。照搬下方 Hosek 模型
+        // (RenderSkyView_Hosek 里的 moonVisible) 的门控：太阳在地平线以上时这一项归零，
+        // 只在夜间/晨昏计算 —— 白天 SkyView 重建帧少一趟 raymarch。
+        // 用升序 edge 写 smoothstep，等价于 Hosek 的 smoothstep(0.02,-0.08,x)，
+        // 但回避 GLSL 对 edge0>=edge1 的未定义行为：
+        //   sunZenithCos <= -0.08（深夜，月在天顶）→ 1；>= 0.02（白天）→ 0。
+        // ⏳ 白天/清晨天空亮度可能极轻微下降，需实机 A/B 确认。
+        float moonVisible = 1.0 - smoothstep(-0.08, 0.02, sunZenithCos);
+        if (moonVisible > 0.001) {
+            lum += RaymarchScattering(atmosphereViewPos, rayDir, -sunDir) * (moonSkyFactor * moonVisible) * MOON_SKY_TINT;
+        }
 
         lum = desaturate(lum, wetness * 0.5);
         return lum * 128.0;
