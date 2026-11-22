@@ -113,7 +113,7 @@ vec3 convexHull(
 // ----------------------------------------------------------------------------
 // 核心时序重投影函数
 // ----------------------------------------------------------------------------
-vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector, in bool isHand) {
+vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
     ivec2 texel = uvToTexel(screenCoord + taaJitter * 0.5);
     vec2 prevCoord = screenCoord - motionVector;
 
@@ -148,9 +148,6 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector, in bool isH
         // 运动越快越少混历史（像素单位；20 像素/帧 ⇒ 权重降 0.2）
         float velocityPixels = length((prevCoord - screenCoord) * viewSize);
         float blendFactor = clamp(historyWeight - velocityPixels * 0.01, 0.0, 1.0);
-        // 手/手持模型：动画是相机空间里的位移，世界重投影表达不了它（历史坐标必然错位），
-        // 所以只允许很短的历史。否则动画时手会在「当前帧颜色」和「错位历史」之间混出明暗跳。
-        if (isHand) blendFactor = min(blendFactor, 0.2);
 
         return vec4(mix(currentRGB, previousClipped, blendFactor), temporalData.a);
 
@@ -204,8 +201,6 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector, in bool isH
         // 运动时降低历史权重；下界 1.0 保证 rcp(blendWeight) <= 1，mix 不外插
         float motionPixels = length(motionVector * viewSize);
         blendWeight = max(blendWeight * (1.0 - saturate(motionPixels * 0.02)), 1.0);
-        // 同 mode 1：手部只留极短历史（世界重投影对手的动画无效）。
-        if (isHand) blendWeight = min(blendWeight, 3.0);
 
         currData = mix(perceptualWeight(prevData), perceptualWeight(currData), rcp(blendWeight));
         return vec4(YCoCgToRGB(perceptualWeightInv(currData)), temporalData.a);
@@ -219,9 +214,6 @@ void main() {
     ivec2 screenTexel = ivec2(gl_FragCoord.xy);
     float depth = loadDepth0(screenTexel);
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
-    // 手/手持模型：判据与 DeferredLight 一致（压缩深度 ∪ 不在 depthtex2 里）。
-    bool handPixel = IsHandScreenDepth(depth)
-                  || (depth < 0.96 && depth < loadDepth2(screenTexel) - 1e-6);
 
     #if RENDER_MODE == 1
         vec2 motionVector;
@@ -241,17 +233,12 @@ void main() {
         #endif
         }
 
-        // 手部：不做世界重投影（它在相机空间里动，重投影必然错位 → 历史采到背景）。
-        if (handPixel) motionVector = vec2(0.0);
-
         #ifdef MOTION_BLUR
-            // 手部像素的运动模糊要减档（手的运动矢量没有可靠的几何来源）。
-            // [2026-11-21] 判据换成 IsHandScreenDepth：26.3 的手 depth 是 0.656..0.781，`< 0.56` 不成立。
-            motionVectorOut = IsHandScreenDepth(depth) ? motionVector * 0.25 : motionVector;
+            motionVectorOut = depth < 0.56 ? motionVector * 0.25 : motionVector;
         #endif
 
         #ifdef TAA_ENABLED
-            temporalOut = TemporalReprojection(screenCoord, motionVector, handPixel);
+            temporalOut = TemporalReprojection(screenCoord, motionVector);
         #else
             temporalOut = vec4(loadSceneMain(screenTexel), 1.0);
         #endif

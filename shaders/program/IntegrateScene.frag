@@ -92,9 +92,9 @@ vec2 CalculateRefractedCoord(in ivec2 texelPos, in vec3 viewPos, in vec3 screenP
     vec3 refractedDir;
     if (waterMask) {
         vec3 viewGeometryNormal = mat3(gbufferModelView) * FetchGeometryNormal(texelPos);
-        refractedDir = refractRay(viewDir, viewNormal - viewGeometryNormal * 0.95, 1.0 / WATER_IOR);
+        refractedDir = refract(viewDir, viewNormal - viewGeometryNormal * 0.95, 1.0 / WATER_IOR);
     } else {
-        refractedDir = refractRay(viewDir, viewNormal, 1.0 / GLASS_IOR);
+        refractedDir = refract(viewDir, viewNormal, 1.0 / GLASS_IOR);
     }
 
     // 零步进屏幕空间投影折射
@@ -265,12 +265,7 @@ void main() {
     } else {
         uvec4 materialPack = loadMaterialPack(texelPos);
         uint materialID = materialPack.y;
-        // [2026-11-21] 第一人称手/手持模型即使被 Entities.frag 标成 2u（alpha<1）也不能当玻璃：
-        // 折射背景随手的动画变化，动画时就是闪。判据同 DeferredLight（压缩深度 ∪ 不在 depthtex2）。
-        float handDepth0 = loadDepth0(texelPos);
-        bool isHandPixel = IsHandScreenDepth(handDepth0)
-                        || (handDepth0 < 0.96 && handDepth0 < loadDepth2(texelPos) - 1e-6);
-        bool glassMask = materialID == 2u && !isHandPixel;
+        bool glassMask = materialID == 2u;
         #if GLASS_DEBUG == 3
             // W6③：验证「玻璃的 materialID 不是 2」。只对**按深度看确实是半透明**的像素生效
             //（loadDepth0 < loadDepth1 = 有更近的半透明面），不要用全局 true —— 那会把不透明

@@ -201,12 +201,11 @@ void main() {
         // 像素深度比不透明深度（depthtex1）更近；其余此类像素必须在这里用 gbuffer 的 albedo
         // 补合成，否则完全消失。
         float handDepthCheck = loadDepth0(texelPos);
-        // [2026-11-21] 第一人称手/手持模型：26.3 把手提交两次（solid + blending），solid 那一次
-        // 已经由 DeferredLight 完整着色。这里若再按「deferred 后的半透明实体」合成一次，
-        // 两次结果不同、谁赢取决于深度比较 ⇒ 逐帧交替 = 闪（用户判断的"深度冲突"）。
-        // 手部像素直接放行，保留 solid 那次的结果。
-        if (IsHandScreenDepth(handDepthCheck)
-            || (handDepthCheck < 0.96 && handDepthCheck < loadDepth2(texelPos) - 1e-6)) return;
+        // [2026-11-22 核心修复] 26.3 把手提交两次：solid（deferred 前，DeferredLight 完整着色）
+        // 与 blending（composite 前）。这里若再按「deferred 后的半透明实体」合成一次，
+        // 两次结果不同、谁赢取决于深度比较 ⇒ 逐帧交替 = 闪。
+        // 手部像素直接放行，只保留 solid 那次的结果。
+        if (IsHandScreenDepth(handDepthCheck)) return;
         translucentEntity = handDepthCheck < loadDepth1(texelPos);
         if (!translucentEntity) return;
     }
@@ -218,22 +217,12 @@ void main() {
         }
     #endif
 
-    // 手部：26.3（Iris 1.12）的手部投影多了 0.4375*w 的 clip 偏移，旧的 8z-3.5 反推与
-    // 0.56 阈值都失效（判据/还原见 lib/universal/Transform.glsl）。
-    // 识别同 DeferredLight：压缩深度(a) 或「不在 depthtex2 里」(b) 都算手；排除玻璃/水/粒子。
-    bool compressedHand = IsHandScreenDepth(screenPos.z);
-    bool isHandPixel = materialID != 2u && materialID != 3u && materialID != 500u
-                    && (compressedHand
-                        || (screenPos.z < 0.96 && screenPos.z < loadDepth2(texelPos) - 1e-6));
-    if (isHandPixel) {
-        if (compressedHand) screenPos.z = UncompressHandDepth(screenPos.z);
+    // [2026-11-22] 26.3 的手 depth 是 0.656..0.781，旧的 `<0.56` 反推已失效（见 Transform.glsl）。
+    if (IsHandScreenDepth(screenPos.z)) {
+        screenPos.z = UncompressHandDepth(screenPos.z);
     }
 
     vec3 viewPos = ScreenToViewPos(screenPos);
-    if (isHandPixel) {
-        // 光照位置固定到相机前方（手是相机空间的装饰几何，按世界坐标打光会随动画扫动而闪）。
-        viewPos = vec3(0.0, 0.0, -HAND_LIGHT_DIST);
-    }
     vec3 worldPos = mat3(gbufferModelViewInverse) * viewPos;
 
     float worldDistSquared = sdot(worldPos);

@@ -244,10 +244,8 @@ float DofLoadFocusViewDepth(ivec2 texelPos) {
 	#else
 		float screenDepth = loadDepth1(texelPos);
 
-		// 手部深度是压缩编码，当视距用会读成很远；判据/还原见 lib/universal/Transform.glsl。
-		// [2026-11-21] 26.3 的手 depth 是 0.656..0.781，旧的 `< 0.56` 失效。
-		if (IsHandScreenDepth(screenDepth)) {
-			screenDepth = UncompressHandDepth(screenDepth);
+		if (screenDepth < 0.56) {
+			screenDepth = screenDepth * rcp(MC_HAND_DEPTH) + (0.5 - 0.5 / MC_HAND_DEPTH);
 		}
 	#endif
 	return DofResolveFocusViewDepth(texelPos, screenDepth);

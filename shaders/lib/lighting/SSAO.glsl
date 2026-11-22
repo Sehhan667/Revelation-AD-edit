@@ -42,8 +42,7 @@ float CalculateSSAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dir)
         vec2 sampleCoord = coord + dir * radius;
         ivec2 sampleTexel = uvToTexel(sampleCoord);
         float sampleDepth = loadDepth0(sampleTexel);
-        // 手部/贴脸样本不参与：26.3 的手部 raw depth 是 0.656..0.781（见 Transform.glsl）。
-        if (IsHandScreenDepth(sampleDepth)) continue;
+        if (sampleDepth < 0.56) continue;
 
         #if defined LOD_MOD
             if (sampleDepth > 1.0 - EPS) {

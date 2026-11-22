@@ -231,11 +231,8 @@ vec4 CalculateSSILVB(vec2 fragCoord, vec3 viewPos, vec3 worldNormal, float skyli
                 if (sampleDepth > 1.0 - EPS) sampleDepth = ViewToScreenDepth(ScreenToViewDepthLod(loadDepth0Lod(sampleTexel)));
             #endif
 
-                // 排除手部及过近物体。
-                // [2026-11-21] 26.3（Iris 1.12）的手部 raw depth 从 ≤0.5625 挪到 0.656..0.781，
-                // 只比 SSILVB_HAND_DEPTH_THRESHOLD(0.56) 会让手当正常遮挡样本，且它的压缩深度
-                // 反投影会落到相机后方 ⇒ 手周围出现随手的动画闪烁的错误遮挡。
-                if (sampleDepth > screenDepthSky - EPS || sampleDepth < SSILVB_HAND_DEPTH_THRESHOLD || IsHandScreenDepth(sampleDepth)) continue;
+                // 排除手部及过近物体
+                if (sampleDepth > screenDepthSky - EPS || sampleDepth < SSILVB_HAND_DEPTH_THRESHOLD) continue;
 
                 vec3 samplePos = ScreenToViewPos(vec3(sampleUV, sampleDepth));
 
