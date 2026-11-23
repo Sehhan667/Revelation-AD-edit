@@ -339,6 +339,7 @@ option.MINIMUM_AMBIENT_BRIGHTNESS=Minimum Ambient Brightness
 
 option.AO_ENABLED=AO
 option.AO_MULTI_BOUNCE=AO Multi-bounce
+value.AO_ENABLED.VANILLA_AO=Vanilla
 
 option.SSAO_SAMPLES=SSAO Samples
 option.SSAO_STRENGTH=SSAO Strength

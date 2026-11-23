@@ -43,6 +43,12 @@ flat out uvec2 tangentPack;
 #endif
 
 out vec3 vertColor;
+// [2026-11-23] 原版 AO 由 shaders.properties 的 separateAo=true 放进顶点色 alpha
+//（gl_Color.a，1=无遮蔽）。原来这里只写 gl_Color.rgb，alpha 被丢掉 ⇒ 原版 AO 从未生效。
+// 仅在选中 VANILLA_AO 时透传，其余档位保持与原实现逐位一致（不增加 varying 读取成本）。
+#if AO_ENABLED == 3
+    out float vertAo;
+#endif
 out vec2 texCoord;
 out vec2 lightmap;
 flat out uint materialID;
@@ -74,6 +80,9 @@ uniform sampler2D tex;
 //======// Main //================================================================================//
 void main() {
     vertColor = gl_Color.rgb;
+    #if AO_ENABLED == 3
+        vertAo = gl_Color.a;
+    #endif
     texCoord = mat2(gl_TextureMatrix[0]) * gl_MultiTexCoord0.xy + gl_TextureMatrix[0][3].xy;
 
     lightmap = saturate((gl_MultiTexCoord1.xy - 8.0) * rcp(232.0));

@@ -363,6 +363,7 @@ option.MINIMUM_AMBIENT_BRIGHTNESS=基础环境光亮度
 
 option.AO_ENABLED=环境光遮蔽
 option.AO_MULTI_BOUNCE=多重散射拟合
+value.AO_ENABLED.VANILLA_AO=原版
 
 option.SSAO_SAMPLES=SSAO采样数
 option.SSAO_STRENGTH=SSAO强度

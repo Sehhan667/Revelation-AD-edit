@@ -604,7 +604,10 @@ void main() {
     }
 
     // ====== Ambient Occlusion ======
-    #if AO_ENABLED > 0 && !defined GI_ACTIVE_SSILVB
+    // [2026-11-23] 守卫改成只有 SSAO/GTAO（1/2）才进；VANILLA_AO(3) 的遮蔽已在
+    // gbuffers_terrain 乘进 albedo，这里必须走 else 保持 ao=1，否则会调用未 include 的
+    // CalculateGTAO（编译失败），并且会把原版 AO 重复算两遍。
+    #if (AO_ENABLED == 1 || AO_ENABLED == 2) && !defined GI_ACTIVE_SSILVB
         float aoVal = 1.0;
         #if AO_ENABLED == 1
             aoVal = CalculateSSAO(screenCoord, viewPos, viewNormal, SampleStbnUnitvec2(texelPos, frameCounter));

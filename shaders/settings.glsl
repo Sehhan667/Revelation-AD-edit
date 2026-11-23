@@ -574,7 +574,10 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#define OFF 0
 	#define SSAO 1
 	#define GTAO 2
-	#define AO_ENABLED GTAO // Enables ambient occlusion. [OFF SSAO GTAO]
+	// [2026-11-23] 原版 AO：由 shaders.properties 的 separateAo=true 提供的顶点色 alpha
+	// （gl_Color.a），在 gbuffers_terrain 阶段乘进 albedo；不跑 SSAO/GTAO 的屏幕空间追踪。
+	#define VANILLA_AO 3
+	#define AO_ENABLED GTAO // Enables ambient occlusion. [OFF SSAO GTAO VANILLA_AO]
 	#define AO_MULTI_BOUNCE // Enables ambient occlusion multi-bounce
 
 /* Shadows */
@@ -907,10 +910,14 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	// [2026-10-08] SSILVB/VXGI 开启时自动关掉独立的 AO：这两种模式自带屏幕空间遮蔽
 	// （SSILVB 的线性深度 AO / VXGI 的体素遮蔽），再叠一层 GTAO/SSAO 等于同一处遮蔽算两遍，
 	// 角落和缝隙会过黑，而且白付一遍采样开销。
-	// AO_ENABLED 是**值型**选项（OFF/SSAO/GTAO → 0/1/2，见本文件 AO 段），
+	// AO_ENABLED 是**值型**选项（OFF/SSAO/GTAO/VANILLA_AO → 0/1/2/3，见本文件 AO 段），
 	// 所以这里不能像 ENABLE_VOXELIZATION 那样 #undef 了事，必须重定义成 0（OFF）。
-	// 消费点统一是 `#if AO_ENABLED == 1/2` 与 `#if AO_ENABLED > 0`（DeferredLight.frag），
-	// 定义为 0 即等价于用户选 OFF。IRC(GI_MODE==3) 不在此列，仍按用户选择。
+	// 消费点统一是 `#if AO_ENABLED == 1/2`（DeferredLight.frag 的屏幕空间 AO）与
+	// `#if AO_ENABLED == 3`（gbuffers_terrain 的原版 AO），定义为 0 即等价于用户选 OFF。
+	// IRC(GI_MODE==3) 不在此列，仍按用户选择。
+	// [2026-11-23] VANILLA_AO(3) 同样在 GI（SSILVB/VXGI）开启时被屏蔽 —— 用户要求
+	// "GI 开启时也屏蔽原版 AO"：体素/屏幕空间遮蔽已在算角落暗部，再叠原版顶点 AO
+	// 会出现同一处遮蔽双重变暗。三档（SSAO/GTAO/VANILLA_AO）口径一致。
 	#if GI_MODE == 1 || GI_MODE == 2
 		#undef AO_ENABLED
 		#define AO_ENABLED 0

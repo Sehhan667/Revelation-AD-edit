@@ -66,6 +66,10 @@ flat in uvec2 tangentPack;
 #endif
 
 in vec3 vertColor;
+// [2026-11-23] 原版 AO（gl_Color.a，见 Terrain.vert 的同名说明）。仅 VANILLA_AO 档位声明/使用。
+#if AO_ENABLED == 3
+    in float vertAo;
+#endif
 in vec2 texCoord;
 in vec2 lightmap;
 flat in uint materialID;
@@ -315,6 +319,11 @@ void main() {
 
     // ---- 输出 GBuffer ----
     albedoOut = vec4(albedo.rgb * vertColor, 1.0);
+    // [2026-11-23] 原版 AO：乘进 albedo（原版就是"顶点色 × 方块亮度"的近似）。
+    // 只影响 albedo 输出，不动几何/法线；SSAO/GTAO 档位下 vertAo 不存在，逐位保持原样。
+    #if AO_ENABLED == 3
+        albedoOut.rgb *= vertAo;
+    #endif
     #ifdef WHITE_WORLD
         albedoOut = vec4(1.0);
     #endif
