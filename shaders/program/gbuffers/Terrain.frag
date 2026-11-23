@@ -105,7 +105,13 @@ uniform sampler2D tex;
 
 void main() {
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
-    float dither = BlueNoise(ivec2(gl_FragCoord.xy), frameCounter);
+    // [2026-11-23 perf-gbuffer] dither 改用 IGN（交错梯度噪声）替代 BlueNoise：
+    // 原实现每片元 `texelFetch(noisetex)` + `R1`，只服务 L344 的 lightmap 8 位量化抖动
+    // （视差分支默认关，184/195 行的用法不参与编译）。IGN 只需 3 条 ALU，值域仍是 [0,1)，
+    // 再叠黄金比例每帧旋转，保持与原实现一致的时域去相关（配合 TAA）。
+    // 收益：每片元少一次纹理采样 + 一个采样依赖（overdraw 2.47× 下被放大）；观感无变化。
+    float dither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    dither = fract(dither + float(frameCounter) * 0.6180339887498948);
 
     // [2026-10-06 视差阴影接线] 一开始就写 0（= 无自阴影），只让真正算了视差的像素覆盖它。
     // 必须「先清后写」而不是像 Block/Textured 那样在末尾写 0：Terrain 的自阴影在中间算出来，
