@@ -44,6 +44,18 @@ REBLUR 降噪链还有 **13 项标 `⏳` 等实机确认**；最老的悬案是 
 - 未覆盖：Distant Horizons（`deferred24` 只读 `depthtex0`，LOD 深度没接）、SSS 屏幕空间扩散
   （默认关）、26.3 Vulkan 未验证。
 
+**地形 early-Z 拆分（2026-11-28）**
+- 抓帧（75%+半光照，1267×712，总 16.1 ms）实测：阴影 4.85 ms(30%)、地形 5.40 ms(33%)、
+  半透明 1.54、三个全屏 post 2.02、呈现 1.08、光照 0.80+还原 0.26。**可缩放部分只有 ~45%**，
+  这就是「50% 只提升 10%」的根因；阴影对分辨率完全免疫。
+- 地形 2.26M 片元只有 0.42M 过深度测试 ⇒ 81% 是「被深度拒绝却仍着色」（`discard` 关掉 early-Z）。
+- 已改：`Terrain.frag` 三处 alpha test 包进 `#ifndef TERRAIN_SOLID`；新增三套世界的
+  `gbuffers_terrain_solid.fsh/.vsh`。已扫 jar 确认 1.10.8 与 1.12 都有 `terrain_solid`，
+  缺文件时回落 `gbuffers_terrain` ⇒ 纯增量、删掉即回退。
+- **待实机**：树叶/草/藤蔓有无整块空洞；抓帧看地形 pass `PSInvocations` 应明显下降而
+  `SamplesPassed` 基本不变；26.3（Vulkan）上确认程序被选用。
+- `shadowMapResolution` 已补 512/768 档（体素化平铺需 ≥1024，故这两档限 GI_MODE=0）。
+
 **地形 G-buffer 性能**：RenderDoc 实测（`222.rdc`，RD=2）显示该 pass 固定屏空间成本 ≈2.1 ms、
 overdraw **2.47×**（RD=12 时 4.12×）、每片元 4 次纹理采样。**档 1 已改**：`Terrain.frag` 的
 `BlueNoise()` dither 换成 IGN + 黄金比例每帧旋转（省一次 `texelFetch`）。三套自检过，**待实测**。
