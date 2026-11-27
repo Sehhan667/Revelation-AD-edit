@@ -27,7 +27,7 @@
 #define AUTHOR 0 // [0]
 #define AD 0 // [0]
 
-const int shadowMapResolution = 2048;  // [1024 1536 2048 4096 8192 16384 32768]（体素化平铺要求 ≥1024）
+const int shadowMapResolution = 2048;  // [512 768 1024 1536 2048 4096 8192 16384 32768]（体素化平铺要求 ≥1024：选 512/768 时请保持 GI_MODE=0 且关闭体素化）
 const float	shadowDistance 	  = 128.0; // [32.0 48.0 64.0 80.0 96.0 112.0 128.0 160.0 192.0 224.0 256.0 320.0 384.0 512.0 768.0 1024.0 2048.0 4096.0 8192.0 16384.0 32768.0 65536.0]
 
 const float shadowDistanceRenderMul = 1.0; // [-1.0 1.0]
@@ -769,6 +769,45 @@ const vec3 sunIrradiance = vec3(1.0, 0.949, 0.937);
 	#endif
 
 //======// Post-Processing //=====================================================================//
+
+/* Render Scale */
+	// 渲染缩放：低于 100% 时世界几何画到屏幕左下角，再由 composite6_b 升采样回全屏。
+	// 1000 = 原分辨率，全链路逐位不变（默认）；数值越低越快、越糊。
+	#define RENDER_SCALE_1000X 1000 // [500 588 600 667 750 850 900 1000]
+	#if RENDER_SCALE_1000X == 500
+		#define RENDER_SCALE 0.5
+		#define RENDER_SCALE_HALF 0.25
+	#elif RENDER_SCALE_1000X == 588
+		#define RENDER_SCALE 0.588
+		#define RENDER_SCALE_HALF 0.294
+	#elif RENDER_SCALE_1000X == 600
+		#define RENDER_SCALE 0.6
+		#define RENDER_SCALE_HALF 0.3
+	#elif RENDER_SCALE_1000X == 667
+		#define RENDER_SCALE 0.667
+		#define RENDER_SCALE_HALF 0.3335
+	#elif RENDER_SCALE_1000X == 750
+		#define RENDER_SCALE 0.75
+		#define RENDER_SCALE_HALF 0.375
+	#elif RENDER_SCALE_1000X == 850
+		#define RENDER_SCALE 0.85
+		#define RENDER_SCALE_HALF 0.425
+	#elif RENDER_SCALE_1000X == 900
+		#define RENDER_SCALE 0.9
+		#define RENDER_SCALE_HALF 0.45
+	#else
+		#define RENDER_SCALE 1.0
+		#define RENDER_SCALE_HALF 0.5
+	#endif
+
+	// 升采样模式：0 = 双线性（最便宜）；1 = FSR1 EASU（边缘自适应，更锐）
+	#define UPSCALE_MODE 1 // [0 1]
+
+	// 光照半分辨率：DeferredLight 以半分辨率算两张缓冲 —— colortex11 = 光照系数（稍后乘 albedo），
+	// colortex10 = 附加色（反射/高光/GI/天空/玻璃水面底色）。再由 deferred24 用深度感知上采样
+	// 还原到画布分辨率并乘回**全分辨率** albedo ⇒ 纹理细节不丢，软的只有光影轮廓。
+	// 默认关；关时 DeferredLight 照旧只写 colortex0，全链路逐位不变。
+	//#define LIGHTING_HALF_RES
 
 /* Depth of Field */
 	//#define DEPTH_OF_FIELD // Enables depth of field

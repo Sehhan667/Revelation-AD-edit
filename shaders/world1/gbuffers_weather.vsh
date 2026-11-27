@@ -40,4 +40,8 @@ void main() {
 
     worldPos.xz -= worldPos.y * 0.15 * (1.0 + vec2(cos(windAngle), sin(windAngle)));
 	gl_Position = diagonal4(gl_ProjectionMatrix) * transMAD(gbufferModelView, worldPos).xyzz + gl_ProjectionMatrix[3];
+
+	#if RENDER_SCALE_1000X != 1000
+		gl_Position.xy = gl_Position.xy * renderScale + (renderScale - 1.0) * gl_Position.w;
+	#endif
 }

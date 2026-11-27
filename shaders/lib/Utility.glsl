@@ -26,6 +26,7 @@
 #include "/lib/utility/SH.glsl"
 #include "/lib/utility/Offset.glsl"
 #include "/lib/utility/Load.glsl"
+#include "/lib/utility/RenderScale.glsl"
 
 //================================================================================================//
 

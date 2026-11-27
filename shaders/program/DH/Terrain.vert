@@ -53,6 +53,10 @@ void main() {
 	gl_Position = diagonal4(dhProjection) * viewPos.xyzz + dhProjection[3];
 
 	#ifdef TAA_ENABLED
-		gl_Position.xy += taaJitter * gl_Position.w;
+		gl_Position.xy += taaJitterScaled * gl_Position.w;
+	#endif
+
+	#if RENDER_SCALE_1000X != 1000
+		gl_Position.xy = gl_Position.xy * renderScale + (renderScale - 1.0) * gl_Position.w;
 	#endif
 }

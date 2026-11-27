@@ -62,7 +62,8 @@ uniform sampler2D cloudOriginTex;
 
 // 重投影函数（保持原有逻辑）
 vec3 ReprojectClouds(in vec2 coord, in float depth) {
-    vec3 cloudPos = ScreenToViewDirRaw(coord) * depth;
+    // coord 是全屏 uv（0..RENDER_SCALE）；方向重建需要缩放域 uv 0..1。
+    vec3 cloudPos = ScreenToViewDirRaw(coord / renderScale) * depth;
     cloudPos = transMAD(gbufferModelViewInverse, cloudPos); // To world space
 
     vec3 motionVector = vec3(0.0);
@@ -93,7 +94,8 @@ vec3 ReprojectClouds(in vec2 coord, in float depth) {
     cloudPos = transMAD(gbufferPreviousModelView, cloudPos); // To previous frame's view space
     cloudPos = projMAD(gbufferPreviousProjection, cloudPos) * rcp(-cloudPos.z); // To previous frame's NDC space
 
-    return cloudPos * 0.5 + 0.5;
+    // 返回全屏 uv（乘回 RENDER_SCALE），与云 buffer 的内容坐标一致。
+    return (cloudPos * 0.5 + 0.5) * vec3(renderScale, 1.0);
 }
 
 //======// Main //================================================================================//
@@ -103,7 +105,7 @@ void main() {
     frameOut = 0u;
 
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
-    vec2 currCoord = screenCoord - taaJitter * (0.5 * float(CLOUD_TAAU_SCALE));
+    vec2 currCoord = screenCoord - taaJitterScaled * (0.5 * float(CLOUD_TAAU_SCALE));
 
     // Fetch closest cloud depth (component 2 = depth)
     float cloudDepth = minOf(textureGather(cloudOriginTex, currCoord, 2));

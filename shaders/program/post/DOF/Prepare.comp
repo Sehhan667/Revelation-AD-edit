@@ -31,7 +31,7 @@
 //======// Input //===============================================================================//
 
 layout(local_size_x = 16, local_size_y = 16) in;
-const vec2 workGroupsRender = vec2(1.0, 1.0);
+const vec2 workGroupsRender = vec2(RENDER_SCALE, RENDER_SCALE);
 
 //======// Output //==============================================================================//
 
@@ -135,7 +135,7 @@ vec3 DofPropagateCoC(ivec2 texelPos, float centerDepth, float focusDepth, float 
 //======// Main //================================================================================//
 void main() {
 	ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
-	if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+	if (any(greaterThanEqual(texelPos, ivec2(scaledViewSize)))) return;
 
 	vec4 sceneData = texelFetch(colortex0, texelPos, 0);
 	float viewDepth = DofLoadViewDepth(texelPos);

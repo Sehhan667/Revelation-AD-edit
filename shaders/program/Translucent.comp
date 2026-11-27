@@ -41,14 +41,14 @@
 // 默认启用快速双线性采样以提升性能
 #define FAST_CLOUD_SKY_SAMPLING
 
-//======// Input //===============================================================================//
-
-layout (local_size_x = 16, local_size_y = 16) in;
-const vec2 workGroupsRender = vec2(1.0, 1.0);
-
 //======// Utility //=============================================================================//
 
 #include "/lib/Utility.glsl"
+
+//======// Input //===============================================================================//
+
+layout (local_size_x = 16, local_size_y = 16) in;
+const vec2 workGroupsRender = vec2(RENDER_SCALE, RENDER_SCALE);
 
 //======// Uniform //=============================================================================//
 
@@ -108,12 +108,12 @@ float CalcSunScreenVisibility() {
     // [P2 2026-09-20] 9 点 -> 5 点（十字，去掉对角线采样）：与 IntegrateScene.frag 的
     // CalcSunScreenVisibility 对齐（那边 2026-09-02 已验证"几乎无感"），每像素省 4 次深度读取。
     const float r = 0.02;
-    vec2 uvMax = vec2(1.0) - viewPixelSize;
-    float occ  = step(1.0 - 1e-4, loadDepth1(uvToTexel(sunUv)));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2( r, 0.0), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(-r, 0.0), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0,  r), vec2(0.0), uvMax))));
-    occ += step(1.0 - 1e-4, loadDepth1(uvToTexel(clamp(sunUv + vec2(0.0, -r), vec2(0.0), uvMax))));
+    vec2 uvMax = vec2(1.0) - scaledTexelSize;
+    float occ  = step(1.0 - 1e-4, loadDepth1(uvToTexelScaled(sunUv)));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexelScaled(clamp(sunUv + vec2( r, 0.0), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexelScaled(clamp(sunUv + vec2(-r, 0.0), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexelScaled(clamp(sunUv + vec2(0.0,  r), vec2(0.0), uvMax))));
+    occ += step(1.0 - 1e-4, loadDepth1(uvToTexelScaled(clamp(sunUv + vec2(0.0, -r), vec2(0.0), uvMax))));
     return edgeFade * occ * (1.0 / 5.0);
 }
 
@@ -210,7 +210,7 @@ void main() {
         if (!translucentEntity) return;
     }
 
-    vec3 screenPos = vec3(texelToUv(texelPos), loadDepth0(texelPos));
+    vec3 screenPos = vec3(texelToUvScaled(texelPos), loadDepth0(texelPos));
     #if defined LOD_MOD
         if (screenPos.z > 1.0 - EPS) {
             screenPos.z = ViewToScreenDepth(ScreenToViewDepthLod(loadDepth0Lod(texelPos)));

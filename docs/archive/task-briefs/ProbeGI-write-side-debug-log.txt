@@ -1,0 +1,102 @@
+> **已归档（2026-11-22）** — 本文件是历史快照，不再维护；其中的结论、路径、选项名可能已与现行代码不符。
+> 现行对应文档：`docs/archive/MEMO-2026-11.md` 的「Probe GI」节
+> 归档说明：当时随手写的写端调试记录，已由 MEMO 中的正式说明取代。
+
+================================================================================
+Probe GI (DDGI 风格) 写端调试记录
+日期：2026-09-03
+================================================================================
+
+【一、目标与当前症状】
+  调试对象：Probe GI 探针辐照度缓存管线（16^3 探针、rgba16f 乒乓双缓冲）。
+  DEBUG 模式 = settings.glsl 同时开 DEBUG_PROBE_QUERY + DEBUG_PROBE_PLUMBING：
+    屏幕 A/B 分屏，左半 = ProbeSampleRadiance 读缓存，右半 = 直算参考（基准，正确）。
+  当前症状：左半屏一整片亮红（始终如此）。
+  判读依据（ProbeGI.glsl 哨兵）：读回 a<0.5 → 返回亮红
+  = 缓存里所有被采样 texel 的 alpha 都不是 1.0
+  = 缓存“从未被写端写入过任何有效数据”。
+
+【二、已确证的事实（实验证据链，2026-09-03）】
+  实验 1（查询端自写自读，compute）：
+    - 在必然运行的查询端 DiffuseIndirect.comp（挂 deferred1_a）里临时加 DEBUG 代码：
+      每帧向前 4096 个探针 imageStore 纯蓝 z 向渐变(r=g=0, b=z/15, a=1)，随后同 pass 读回显示。
+    - 结果：左半屏显示“纯蓝渐变”。→ 证明：
+      1) image3D 声明/绑定 与 sampler(probeRadianceSampler / probeRadiance2Sampler) 指向同一份纹理；
+      2) 乒乓 parity（偶帧写 A / 奇帧写 B）两端一致；
+      3) compute 的 imageStore 有效，且能被 trilinear 采样正常读回。
+    - 结论：image 绑定、乒乓、读写代码全链路本身没有问题。
+
+  实验 2（撤销自写 + deferred50.enabled = true 无条件，纯读）：
+    - 移除实验 1 的自写块（查询端恢复只读），并把
+      program.world0/deferred50.enabled 由 PROBE_GI_ENABLED 临时改成 true（排除条件求值因素）。
+    - 结果：左半屏依然一整片全红。
+    - 推理：写端（ProbeUpdate.frag 的 DEBUG 分支）每帧全量写 4096 个探针、a=1.0。
+      只要 deferred50 这个 pass 被 Iris 实际 dispatch 过哪怕一帧，缓存就必然有 a=1 的 texel，
+      左半屏 trilinear 采样不可能全红。
+    - 结论：deferred50 写端 pass 从头到尾没有写入任何 texel。
+      结合实验 1（写读链路本身 OK）→ 根因不在 image 绑定 / parity / 代码逻辑，
+      而在 “deferred50 这个 pass 根本没被 Iris 调度执行”。
+
+【三、根因判断（待最终确认）】
+  最可能根因：Iris 对 deferredN 的编号支持存在上限，deferred50 超出支持范围 →
+  Iris 忽略/不调度该 pass（有 .vsh/.fsh 文件、会编译、甚至 properties 写了 enabled，
+  但不会作为 deferred 阶段被执行）。
+  佐证：pack 内被实际使用的 deferred 编号均 <= 40（1~9、20~22、30~32、40），
+  且 deferred99.csh 也在 properties 里被显式 = false（疑似同样不可用/被废弃）。
+  反例风险：若低编号也全红，则说明“fragment pass 里 imageStore 自定义 3D image”
+  这条路本身在该 Iris 版本下不生效（需转向并入查询端 compute 的路线）。
+
+【四、下一步对照实验（验证编号上限）】
+  做法：把 ProbeUpdate 写端临时挂到 deferred22（fragment，与 deferred50 同构，
+  VXGI 当前关闭、pass 空闲），唯一变量 = 编号。
+  1) shaders.properties：
+       program.world0/deferred50.enabled = false      （还原）
+       program.world0/deferred22.enabled = true       （临时，测完还原回 VOXEL_GI_ENABLED）
+  2) world0/deferred22.fsh：把 #include "/program/gi/VoxelGI.frag" 临时换成
+       #include "/program/gi/ProbeUpdate.frag"
+       （ProbeUpdate.frag 自带全部 include 依赖，deferred22.fsh 只作入口，测完还原）。
+  3) 重载着色器，观察左半屏：
+       - 变成三轴彩色渐变  → 坐实“deferred50 编号不被调度”→ 把写端正式迁到低编号可用 pass；
+       - 依然全红          → fragment 写端路线整体不成立 → 改走“并入查询端 compute 乒乓写读”方案。
+
+【五、当前未还原的临时改动（收尾时必须清理）】
+  1. settings.glsl：
+       #define PROBE_GI_ENABLED      开（保持）
+       #define DEBUG_PROBE_PLUMBING  开（调试完删除/注释）
+       #define DEBUG_PROBE_QUERY     开（调试完删除/注释）
+       VOXEL_GI_ENABLED             注释（保持关，与 Probe GI 互斥）
+  2. shaders.properties：world0/deferred50.enabled = true（原来是 PROBE_GI_ENABLED，
+     若走低编号迁移方案，deferred50.enabled 最终应 = false）
+  3. DiffuseIndirect.comp 第 79~83 行：DEBUG_PROBE_PLUMBING 下残留的
+     image3D probeRadiance / probeRadiance2 writeonly 声明（实验 1 用，自写块已删，
+     现无代码引用）→ 还原时一并删除。
+  4. ProbeUpdate.frag：DEBUG_PROBE_PLUMBING 分支把 newVal 置成三轴彩色渐变（临时诊断）。
+
+【六、关键技术要点（后续修复勿踩坑）】
+  - 时序：写端必须晚于查询端 deferred1_a（查询跨帧读上一帧已完成的缓存 + cDi 重投影补偿）。
+    deferred 编号升序执行，低编号迁移时须选 > deferred1_a 的编号。
+  - 乒乓：偶帧写 A 读 B、奇帧写 B 读 A；同一次 dispatch 内严禁对同一纹理 imageStore + 采样。
+  - 全量更新（每帧 4096 探针）优于 round-robin 轮转：轮转 + 慢 EMA 会让未初始化显存垃圾
+    （亮红区块）停留上百帧。全量 + 激进 EMA（mixA=0.1 有效 / 1.0 无效）几帧内洗净。
+  - 有效标记：alpha=1.0 表示本管线写入；查询端 a<0.5 判“从未写入”。此机制正是本次快速定位的关键。
+  - 写端用 writeonly image3D；历史经采样器从“另一块”缓冲读（不同纹理，安全）。
+  - 体素网格相机锚定：写入时历史按 gridShift = cameraPositionInt - previousCameraPositionInt 重投影。
+  - 分屏阈值必须用全分辨率 renderTexel 坐标判定（DiffuseIndirect.comp 里的历史教训）。
+  - 方向采样用纯函数 hash13，不用 STBN 纹理（compute/deferred 上下文可能未绑定 → 全朝一个方向）。
+  - 大气 LUT 在 deferred 上下文不可采样（NaN 传染），光照用 SSBO global.directIlluminance
+    与 Iris 标准 uniform（skyColor / sunIrradiance）兜底。
+  - 两个 world 变体（world-1 / world1）的写端必须显式 = false，否则每世界叠一次 EMA。
+  - 文件级约束（历史教训）：#include 行不得带尾随 // 注释；注释内不得出现 ASCII 直引号；
+    block/shaders.properties 必须纯 ASCII。
+
+【七、候选正式修复方案（对照实验确认后选一）】
+  方案 A（推荐，若编号上限坐实）：
+    把 ProbeUpdate 写端迁到低编号 fragment deferred pass（如 deferred22 双用途：
+    deferred22.fsh 内用 #ifdef VOXEL_GI_ENABLED / #ifdef PROBE_GI_ENABLED 分别 include
+    VoxelGI.frag / ProbeUpdate.frag —— Iris jcpp 支持条件 include；两功能本就互斥可共用挂点）。
+  方案 B（若 fragment imageStore 路线整体不成立）：
+    写端并入查询端 deferred1_a 的同一 compute dispatch：
+    乒乓写 B 读 A（不同纹理，同 dispatch 内无冲突），彻底摆脱“额外 pass 是否被调度”的不确定性。
+    代价：改动较大，需把 ProbeTrace 的 4096 次追踪并入 DiffuseIndirect 的 invocation 分工。
+
+================================================================================

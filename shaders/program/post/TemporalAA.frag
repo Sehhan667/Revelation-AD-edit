@@ -42,6 +42,19 @@ layout(location = 0) out vec4 temporalOut;
 #include "/lib/universal/Transform.glsl"
 #include "/lib/universal/Fetch.glsl"
 
+// 渲染缩放：TAA 统一在"缩放域 uv 0..1"工作，最终画面就是这张 uv 的放大版。
+// - screenCoord 是缩放域 uv；深度/最近片元用 uvToTexelScaled 取画布 texel
+// - 当前色从 colortex0 的画布 uv（uv * renderScale）采样，双线性放大
+// - 历史 colortex1 是放大后的全屏画面，其 uv 与缩放域 uv 一一对应，直接采样
+// - 运动矢量也是缩放域 uv 差，ReprojectScreenPos 的 NDC 方向因此是正确的
+#if RENDER_SCALE_1000X != 1000
+    #define loadInput(uv) (texture(colortex0, (uv) * renderScale).rgb)
+#else
+    #define loadInput(uv) loadSceneMain(uvToTexelScaled(uv))
+#endif
+// 历史 colortex1 是放大后的全屏画面：缩放域 uv 0..1 与它一一对应，直接采样。
+#define loadHistory(uv) (texture(colortex1, uv))
+
 //======// 共享辅助函数 //========================================================================//
 
 vec3 CrossClosestFragment(in ivec2 texelPos, in float depth) {
@@ -62,7 +75,7 @@ vec3 CrossClosestFragment(in ivec2 texelPos, in float depth) {
     closest = closest.z > d3 ? vec3(vec2(t3), d3) : closest;
     closest = closest.z > d4 ? vec3(vec2(t4), d4) : closest;
 
-    closest.xy *= viewPixelSize;
+    closest.xy *= scaledTexelSize;
     return closest;
 }
 
@@ -114,21 +127,22 @@ vec3 convexHull(
 // 核心时序重投影函数
 // ----------------------------------------------------------------------------
 vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
-    ivec2 texel = uvToTexel(screenCoord + taaJitter * 0.5);
+    // 采样 uv 保持连续（放大时靠 texture 双线性），深度/运动矢量用画布 texel。
+    vec2 sampleUv = screenCoord + taaJitterScaled * 0.5;
     vec2 prevCoord = screenCoord - motionVector;
 
     // --- 模式 1：高性能 MakeUp Fast TAA ---
     #if TAA_QUALITY_MODE == 1
-        vec3 currentRGB = YCoCgToRGB(loadSceneMain(texel));   // colortex0 存 YCoCg，转回 RGB
+        vec3 currentRGB = YCoCgToRGB(loadInput(sampleUv));   // colortex0 存 YCoCg，转回 RGB
 
         if (saturate(prevCoord) != prevCoord)
             return vec4(currentRGB, 1.0);
 
-        vec4 temporalData = texture(colortex1, prevCoord);
+        vec4 temporalData = loadHistory(prevCoord);
         vec3 previousRGB = temporalData.rgb;                  // colortex1 存 RGB
 
         // 凸包是逐通道 clamp，必须转回 RGB 再做：在 YCoCg 空间夹会把 B 挤成蓝色拖影
-        #define FETCH_NEIGHBOUR(off) YCoCgToRGB(texelFetch(colortex0, texel + (off), 0).rgb)
+        #define FETCH_NEIGHBOUR(off) YCoCgToRGB(loadInput(sampleUv + vec2(off) * scaledTexelSize))
         vec3 up    = FETCH_NEIGHBOUR(ivec2( 0,  1));
         vec3 down  = FETCH_NEIGHBOUR(ivec2( 0, -1));
         vec3 left  = FETCH_NEIGHBOUR(ivec2(-1,  0));
@@ -146,14 +160,14 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
         // 历史权重：越大越干净、拖影越长（0.9 = 当前帧占 10%）
         const float historyWeight = TAA_HISTORY_WEIGHT;
         // 运动越快越少混历史（像素单位；20 像素/帧 ⇒ 权重降 0.2）
-        float velocityPixels = length((prevCoord - screenCoord) * viewSize);
+        float velocityPixels = length((prevCoord - screenCoord) * scaledViewSize);
         float blendFactor = clamp(historyWeight - velocityPixels * 0.01, 0.0, 1.0);
 
         return vec4(mix(currentRGB, previousClipped, blendFactor), temporalData.a);
 
     // --- 模式 0：高画质 Playdead YCoCg TAA ---
     #else
-        vec3 currData = loadSceneMain(texel);
+        vec3 currData = loadInput(sampleUv);
 
         if (saturate(prevCoord) != prevCoord) 
             return vec4(YCoCgToRGB(currData), 1.0);
@@ -161,7 +175,7 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
         #ifdef TAA_SHARPEN
             vec4 temporalData = textureCatmullRomFastAntiRing(colortex1, prevCoord);
         #else
-            vec4 temporalData = texture(colortex1, prevCoord);
+            vec4 temporalData = loadHistory(prevCoord);
         #endif
 
         vec3 prevData = RGBToYCoCg(temporalData.rgb);
@@ -174,7 +188,7 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
             vec3 moment2 = currData * currData;
 
             for (uint i = 0u; i < 8u; ++i) {
-                vec3 sampleData = texelFetch(colortex0, texel + offset3x3N[i], 0).rgb;
+                vec3 sampleData = loadInput(sampleUv + vec2(offset3x3N[i]) * scaledTexelSize);
                 moment1 += sampleData;
                 moment2 += sampleData * sampleData;
             }
@@ -193,13 +207,13 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
         #endif
 
         // 次像素锐化
-        prevData = mix(prevData, currData, sdot(fract(prevCoord * viewSize) - 0.5) * 0.5);
+        prevData = mix(prevData, currData, sdot(fract(prevCoord * scaledViewSize) - 0.5) * 0.5);
 
         float blendWeight = min(++temporalData.a, TAA_MAX_ACCUM_FRAMES);
         // 对比度大时抱紧历史（抗闪烁）
         blendWeight *= 1.0 + sqr(temporalContrast) * TAA_ANTIFLICKER;
         // 运动时降低历史权重；下界 1.0 保证 rcp(blendWeight) <= 1，mix 不外插
-        float motionPixels = length(motionVector * viewSize);
+        float motionPixels = length(motionVector * scaledViewSize);
         blendWeight = max(blendWeight * (1.0 - saturate(motionPixels * 0.02)), 1.0);
 
         currData = mix(perceptualWeight(prevData), perceptualWeight(currData), rcp(blendWeight));
@@ -211,9 +225,11 @@ vec4 TemporalReprojection(in vec2 screenCoord, in vec2 motionVector) {
 void main() {
     // [2026-11-12 A5] 原来这里还有 `clearOut = vec3(0.0);`（把整张 colortex4 清 0），已随该
     // RT 一起删除 —— 见文件头 RENDERTARGETS 处的说明。
-    ivec2 screenTexel = ivec2(gl_FragCoord.xy);
-    float depth = loadDepth0(screenTexel);
+    // TAA 的 quad 是全屏（NO_SCALE），gl_FragCoord 范围是 viewSize，所以 uv 用 viewPixelSize。
+    // 画布 texel 由 uvToTexelScaled 换算（scaledViewSize = viewSize * RENDER_SCALE）。
     vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
+    ivec2 screenTexel = uvToTexelScaled(screenCoord);
+    float depth = loadDepth0(screenTexel);
 
     #if RENDER_MODE == 1
         vec2 motionVector;
@@ -234,18 +250,19 @@ void main() {
         }
 
         #ifdef MOTION_BLUR
+            // 运动矢量是缩放域 uv 差，也就是最终全屏画面的 uv 差，MotionBlur 乘 viewSize 即可。
             motionVectorOut = depth < 0.56 ? motionVector * 0.25 : motionVector;
         #endif
 
         #ifdef TAA_ENABLED
             temporalOut = TemporalReprojection(screenCoord, motionVector);
         #else
-            temporalOut = vec4(loadSceneMain(screenTexel), 1.0);
+            temporalOut = vec4(loadInput(screenCoord), 1.0);
         #endif
     #else
         // RENDER_MODE 0（离线渲染）：只在相机完全静止的帧累积，让每个像素累自己的抖动相位
-        ivec2 srcTexel = uvToTexel(screenCoord + taaJitter * 0.5);
-        temporalOut = vec4(loadSceneMain(srcTexel), 1.0);
+        vec2 srcUv = screenCoord + taaJitterScaled * 0.5;
+        temporalOut = vec4(loadInput(srcUv), 1.0);
 
         vec2 prevCoord = ReprojectScreenPos(vec3(screenCoord, depth)).xy;
         if (distance(prevCoord, screenCoord) < EPS) {

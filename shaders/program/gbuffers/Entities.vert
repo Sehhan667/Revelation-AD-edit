@@ -58,7 +58,11 @@ void main() {
     gl_Position = vec4(diagonal3(gl_ProjectionMatrix) * viewPos + gl_ProjectionMatrix[3].xyz, -viewPos.z);
 
     #ifdef TAA_ENABLED
-        gl_Position.xy += taaJitter * gl_Position.w;
+        gl_Position.xy += taaJitterScaled * gl_Position.w;
+    #endif
+
+    #if RENDER_SCALE_1000X != 1000
+        gl_Position.xy = gl_Position.xy * renderScale + (renderScale - 1.0) * gl_Position.w;
     #endif
 
     // 法线变换（一次矩阵乘法到世界空间）

@@ -37,7 +37,7 @@
 //======// Input //===============================================================================//
 
 layout(local_size_x = 16, local_size_y = 16) in;
-const vec2 workGroupsRender = vec2(1.0, 1.0);
+const vec2 workGroupsRender = vec2(RENDER_SCALE, RENDER_SCALE);
 
 //======// Output //==============================================================================//
 
@@ -252,7 +252,7 @@ float DofLoadFocusViewDepth(ivec2 texelPos) {
 }
 
 float DofFindFocusTarget() {
-	ivec2 imageEnd = ivec2(viewSize) - 1;
+	ivec2 imageEnd = ivec2(scaledViewSize) - 1;
 	ivec2 centerTexel = imageEnd >> 1;
 	float closestDepth = FP16_MAX;
 
@@ -334,7 +334,7 @@ vec3 DofMedian3x3(uvec2 localCenter, float centerCoc) {
 void main() {
 	// [2026-09-21 B4] 越界线程不提前 return：LDS tile 必须填满（中值要读邻域），
 	// 源坐标 clamp 到图像边缘即可；输出阶段再按 texelPos 边界剔除。
-	ivec2 imageEnd = ivec2(viewSize) - 1;
+	ivec2 imageEnd = ivec2(scaledViewSize) - 1;
 	ivec2 groupBase = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy) - ivec2(padRadius);
 
 	const uint sharedArea = sharedSize.x * sharedSize.y;
@@ -356,7 +356,7 @@ void main() {
 	barrier();
 
 	ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
-	if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+	if (any(greaterThanEqual(texelPos, ivec2(scaledViewSize)))) return;
 
 	uvec2 localCenter = gl_LocalInvocationID.xy + padRadius;
 	vec4 centerData = DofPostfilterLoad(localCenter);

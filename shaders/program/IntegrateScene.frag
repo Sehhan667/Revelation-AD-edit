@@ -103,7 +103,7 @@ vec2 CalculateRefractedCoord(in ivec2 texelPos, in vec3 viewPos, in vec3 screenP
     
     vec2 refractedCoord = ViewToScreenPos(viewPos + refractedDir).xy;
 
-    float refractedDepth = loadDepth1(uvToTexel(refractedCoord));
+    float refractedDepth = loadDepth1(uvToTexelScaled(refractedCoord));
     refractedCoord = mix(refractedCoord, screenPos.xy, step(refractedDepth, screenPos.z));
 
     vec2 edgeFade = smoothstep(0.8, 1.0, abs(refractedCoord * 2.0 - 1.0));
@@ -233,7 +233,7 @@ mat2x3 RaymarchWaterFog(in float skylight, in float waterDepth, in vec3 worldDir
 
 void main() {
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
-    vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
+    vec2 screenCoord = gl_FragCoord.xy * scaledTexelSize;
 
     float depth = loadDepth0(texelPos);
 
@@ -276,7 +276,7 @@ void main() {
 
         ivec2 refractedTexel = texelPos;
         if (glassMask || waterMask) {
-            refractedTexel = uvToTexel(CalculateRefractedCoord(texelPos, viewPos, screenPos, waterMask));
+            refractedTexel = uvToTexelScaled(CalculateRefractedCoord(texelPos, viewPos, screenPos, waterMask));
         }
 
         sceneColor = loadSceneMain(refractedTexel);
@@ -377,8 +377,8 @@ void main() {
     //   ② 邻域 mask（模糊后的 colortex20.a）—— 平滑边界过渡。
     // 双线性上采样（半分辨率 -> 全分辨率）。
     #ifdef SUBSURFACE_SCATTERING_DIFFUSION
-        vec4 sssSource = texture(colortex18, screenCoord);
-        vec4 sssDiffuse = texture(colortex20, screenCoord);
+        vec4 sssSource = texture(colortex18, scaleScreenUv(screenCoord));
+        vec4 sssDiffuse = texture(colortex20, scaleScreenUv(screenCoord));
         float sssGate = saturate(sssSource.a * 4.0) * saturate(sssDiffuse.a * 2.0);
         sceneColor += sssDiffuse.rgb * (SUBSURFACE_SCATTERING_BRIGHTNESS * sssGate);
     #endif

@@ -1,0 +1,46 @@
+/*
+--------------------------------------------------------------------------------
+
+	Revelation Shaders
+
+	Copyright (C) 2026 HaringPro
+	Apache License 2.0
+
+	Added for Revelation-AD-edit - a derivative of Revelation, Apache-2.0.
+	Copyright 2026 AnotherCream.
+
+	Pass: Render-scale upscale (bilinear).
+
+	The world is drawn into the lower-left RENDER_SCALE x RENDER_SCALE corner of
+	colortex0, so a plain full-screen uv sample already maps to the correct place:
+	output texel 0..viewSize -> uv 0..1 -> colortex0 texel 0..viewSize, and the
+	corner content occupies exactly the same uv range.
+
+	UPSCALE_MODE 0 = bilinear, 1 = FSR1 EASU (AMD, shaders/ffx/fsr1).
+
+--------------------------------------------------------------------------------
+*/
+
+layout(local_size_x = 16, local_size_y = 16) in;
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+
+#define FSR1_EASU_IN colortex0
+#define FSR1_EASU_OUT colorimg10
+
+writeonly restrict uniform image2D colorimg10;
+
+#include "/lib/Utility.glsl"
+#include "/lib/universal/Uniform.glsl"
+#include "/ffx/fsr1/ffx_fsr1.glsl"
+
+void main() {
+	#if UPSCALE_MODE == 0
+		ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+		vec2 uv = (vec2(texelPos) + 0.5) * viewPixelSize;
+		imageStore(colorimg10, texelPos, vec4(texture(colortex0, uv).rgb, 1.0));
+	#else
+		// 输入视口 = 画布尺寸（左下角），容器纹理 = 全屏，输出 = 全屏。
+		// FsrEasuCon 会把输入 uv 压到 0..RENDER_SCALE，正好命中左下角画布。
+		fsr1Easu(scaledViewSize, viewSize, viewSize);
+	#endif
+}

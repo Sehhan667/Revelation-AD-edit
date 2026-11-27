@@ -410,7 +410,7 @@ float ScreenSpaceShadow(in vec3 rayPos, in vec3 viewPos, in float dither, in flo
     for (uint i = 0u; i < SCREEN_SPACE_SHADOWS_SAMPLES; ++i) {
         if (saturate(rayPos.xy) != rayPos.xy || result < 1e-2) break;
 
-        ivec2 sampleTexel = uvToTexel(rayPos.xy);
+        ivec2 sampleTexel = uvToTexelScaled(rayPos.xy);
         float sampleDepth = loadDepth0(sampleTexel);
         bool hit = abs(sampleDepth - rayPos.z + diffTolerance) < diffTolerance;
 

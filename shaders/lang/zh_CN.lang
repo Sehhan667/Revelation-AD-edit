@@ -90,6 +90,7 @@ screen.WaterParams=水参数
 screen.MiscMaterials=杂项
 
 screen.FidelityFX=FidelityFX
+screen.SuperResolution=超分辨率
 screen.DoF=景深
 screen.DoF.comment=镜头虚化（散景）：给画面增加真实的焦距与光圈效果，焦内清晰、焦外模糊。
 screen.TAA=抗锯齿
@@ -648,6 +649,22 @@ value.AGX_LOOK.2=Punchy
 value.AGX_LOOK.3=自定义
 
 
+option.RENDER_SCALE_1000X=渲染缩放
+option.RENDER_SCALE_1000X.comment=低于 100% 时世界以更低分辨率渲染到屏幕左下角，再由 composite6_b 升采样回全屏：越低越快、越糊。100% = 完全关闭（默认，与改动前逐位一致）。
+value.RENDER_SCALE_1000X.1000=100%
+value.RENDER_SCALE_1000X.900=90.0%
+value.RENDER_SCALE_1000X.850=85.0%
+value.RENDER_SCALE_1000X.750=75.0%
+value.RENDER_SCALE_1000X.667=66.7%
+value.RENDER_SCALE_1000X.600=60.0%
+value.RENDER_SCALE_1000X.588=58.8%
+value.RENDER_SCALE_1000X.500=50.0%
+option.UPSCALE_MODE=升采样模式
+option.UPSCALE_MODE.comment=把左下角低分辨率画面铺回全屏的算法。双线性最便宜；FSR 1.0 的 EASU 是边缘自适应，画面更锐但有轻微锐化感。100% 档不生效。
+value.UPSCALE_MODE.0=双线性
+value.UPSCALE_MODE.1=FSR 1.0
+option.LIGHTING_HALF_RES=光照半分辨率
+option.LIGHTING_HALF_RES.comment=屏幕空间光照（阴影/AO/反射/雾）按半分辨率计算，再用深度感知上采样铺回画布分辨率并乘回全分辨率纹理色：光源与明暗过渡会略软，纹理细节不受影响。性能收益明显，建议配合实测开关。
 option.CAS_ENABLED=对比度自适应锐化(CAS)
 option.CAS_STRENGTH=CAS强度
 

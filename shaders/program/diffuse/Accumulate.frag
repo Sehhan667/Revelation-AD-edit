@@ -95,9 +95,9 @@ layout (location = 2) out vec4 fastHistory;
 
 
 void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, in float accumCap, in float giDepthGrad) {
-	// [无抖动口径] 必须用 `ScreenToViewPosRaw`（不减 `taaJitter`）。
+	// [无抖动口径] 必须用 `ScreenToViewPosRaw`（不减 `taaJitterScaled`）。
 	// 原因（实测：静止时大角度远距离的垂直墙面在橙/黄之间**平滑、长周期**来回跳）：
-	// `ScreenToViewPos` 会减掉本帧的 taaJitter，而 TAA 抖动图案本身是几十帧的平滑序列。
+	// `ScreenToViewPos` 会减掉本帧的 taaJitterScaled，而 TAA 抖动图案本身是几十帧的平滑序列。
 	// 于是本帧重建出的 `viewPos.z` / `prevViewPos.z` 带本帧抖动偏移，而历史里存的
 	// `sampleAux.z` 是**上一帧**（不同抖动相位）写下的 ⇒ 两边差值随抖动图案缓慢起伏
 	// ⇒ `maxGeometryWeight` 缓慢起伏 ⇒ 稳态累积帧数 a* = 1/(1-w) 在档位间平滑移动。
@@ -107,9 +107,9 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
     vec3 worldPos = transMAD(gbufferModelViewInverse, viewPos);
     // GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
 #ifdef VXGI_FULLRES
-    ivec2 canvasEnd = ivec2(viewSize);
+    ivec2 canvasEnd = ivec2(scaledViewSize);
 #else
-    ivec2 canvasEnd = ivec2(halfViewSize);
+    ivec2 canvasEnd = ivec2(scaledHalfViewSize);
 #endif
 
 	vec3 prevWorldPos = worldPos + (cameraPosition - previousCameraPosition) * step(0.56, screenPos.z); // To previous frame's world space
@@ -117,7 +117,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 	vec3 prevNDCPos = projMAD(gbufferPreviousProjection, prevViewPos) * rcp(-prevViewPos.z); // To previous frame's NDC space
 
 	// [2026-11-13 去掉重投影上的 TAA jitter] 这里原来写 `prevNDCPos.xy += taaJitterPrev;`。
-	// 但 GI 信号本身**不含 jitter**：DiffuseIndirect.comp 里零处用到 taaJitter，
+	// 但 GI 信号本身**不含 jitter**：DiffuseIndirect.comp 里零处用到 taaJitterScaled，
 	// trace 的屏幕位置就是像素中心（`texelToUv(renderTexel)`）。
 	// 给重投影额外加一个亚像素偏移，等于人为把 4 个历史 tap 每帧挪动 0~1 纹素：
 	//   · 静止时这是唯一还在动的量 ⇒ `maxGeometryWeight` 在几何边缘两侧来回采
@@ -129,7 +129,7 @@ void TemporalFilter(in ivec2 texelPos, in vec3 screenPos, in vec3 worldNormal, i
 	vec2 prevCoord = prevNDCPos.xy * 0.5 + 0.5;
 
     // a 默认 0（可靠）；不可靠/重投影失效路径在下方置 1
-    // 视深用 `ScreenToViewDepth(depth)`（纯投影逆变换，与 taaJitter 无关）——
+    // 视深用 `ScreenToViewDepth(depth)`（纯投影逆变换，与 taaJitterScaled 无关）——
     // 与 TemporalFilter 里无抖动的 `viewPos` 同口径。
     // 若这里写 `viewPos.z`（带抖动），下一帧的判据就会读到上一帧抖动相位的深度，
     // 造成"静止时累积帧数平滑缓慢起伏"（见 TemporalFilter 顶部注释）。
@@ -497,6 +497,19 @@ void main() {
     // 用途见 TemporalFilter 的容差：掠射面（法线近乎垂直于视线）一个纹素的视深变化可达自身深度的
     // 5%~10%，4 个历史 tap 天然偏离重投影像素 0~1 个纹素 ⇒ 固定相对容差会把它们全判成不同表面。
     float giDepthGrad = abs(dFdx(ScreenToViewDepth(depth))) + abs(dFdy(ScreenToViewDepth(depth)));
+
+    // [2026-11-27 渲染缩放] 画布外早退。本 pass 写入的是 0.5 尺寸的半分辨率缓冲，而缩放后 GI 画布
+    // 只有 scaledHalfViewSize（50% 档 = 缓冲边长的一半）⇒ 缓冲右/上 3/4 是无人读的空白
+    // （所有读者都按 canvasEnd clamp，见 TemporalFilter / SpatialUpscale）。不早退就要为这些纹素
+    // 白跑整条时域累积。必须放在 giDepthGrad 之后：导数要求一致控制流，提前 return 会让画布边界
+    // 那一圈纹素拿到未定义的梯度。1000 档 canvasEnd 恰等于缓冲尺寸，守卫恒不成立且被编译掉。
+    #if RENDER_SCALE_1000X != 1000
+        #ifdef VXGI_FULLRES
+            if (any(greaterThanEqual(texelPos, ivec2(scaledViewSize)))) return;
+        #else
+            if (any(greaterThanEqual(texelPos, ivec2(scaledHalfViewSize)))) return;
+        #endif
+    #endif
 
     // 关降噪（VOXEL_GI_DENOISE 未定义）时本 pass 仍要跑：它才是 4 相位棋盘的重建 +
     // 时域累积（DeferredLight 关降噪时读 colortex2 的累积结果，只跳过 VarianceEstimate/EAWF）。

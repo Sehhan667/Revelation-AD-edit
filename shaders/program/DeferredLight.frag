@@ -109,8 +109,21 @@
 
 //======// Output //==============================================================================//
 
-/* RENDERTARGETS: 0 */
-out vec3 sceneOut;
+#ifdef LIGHTING_HALF_RES
+    // [2026-11-27] 光照半分辨率：本 pass 画进 0.5 屏幕尺寸的缓冲，输出拆成两部分，
+    //   colortex11 = 光照系数（deferred24 里乘**全分辨率** albedo，纹理细节因此不丢）
+    //   colortex10 = 附加色（反射 / 直射高光 / 体素 GI / 天空 / 玻璃水面底色 —— 本来就是颜色）
+    // 两者都只写 lightingViewSize（= 全分辨率的一半，整张 0.5 缓冲）。关掉该选项时走下面的原写法，逐位不变。
+    // 注意：Iris 解析这张列表时**不去空格**（写成 `10, 11` 会抛 For input string: " 11"）
+    /* RENDERTARGETS: 10,11 */
+    layout(location = 0) out vec4 extraOut;
+    layout(location = 1) out vec4 lightOut;
+    // 本地累加器：与原 out 变量同名同语义，下面几百行光照代码一行都不用改
+    vec3 sceneOut;
+#else
+    /* RENDERTARGETS: 0 */
+    out vec3 sceneOut;
+#endif
 
 //======// Uniform //=============================================================================//
 
@@ -220,9 +233,26 @@ vec3 FetchVoxelDiffuseGI(in vec2 texelPos, in float viewDepth, in vec3 albedo) {
 }
 
 void main() {
-    
+
+#ifdef LIGHTING_HALF_RES
+    // [2026-11-27] 半分辨率光照：缓冲是全屏尺寸（不缩 size.buffer，避免与全屏深度附件尺寸不一致），
+    // 只写左下 lightingViewSize 区域（= 全分辨率的一半），不随渲染缩放再除一次。
+    // 一个光照纹素覆盖 lightingTexelScale 个画布纹素（100% 档 = 2，50% 档 = 1）。
+    // 有效区域外的片元没有读者，直接写 0 早退。
+    if (any(greaterThanEqual(ivec2(gl_FragCoord.xy), ivec2(lightingViewSize)))) {
+        lightOut = vec4(0.0, 0.0, 0.0, 1.0);
+        extraOut = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+    // 全分辨率 texel 取该光照纹素覆盖块的左上角（100% 档与 Accumulate 的 texelPos*2 同口径）
+    ivec2 texelPos = min(ivec2(vec2(gl_FragCoord.xy) * lightingTexelScale), ivec2(scaledViewSize) - 1);
+    vec2 screenCoord = (vec2(texelPos) + 0.5) * scaledTexelSize;
+#else
     ivec2 texelPos = ivec2(gl_FragCoord.xy);
-    vec2 screenCoord = gl_FragCoord.xy * viewPixelSize;
+    // 缩放域 uv 0..1（方向/天空/反射/AO 都需要完整屏幕 uv；全屏纹理用 texelPos 以保持 1:1）
+    vec2 screenCoord = gl_FragCoord.xy * scaledTexelSize;
+#endif
+
 
 
     vec3 screenPos = vec3(screenCoord, loadDepth0(texelPos));
@@ -298,6 +328,11 @@ void main() {
                 imageStore(colorimg18, texelPos >> 1, vec4(0.0));
             }
         #endif
+        #ifdef LIGHTING_HALF_RES
+            // 底色已是带 albedo 的最终色 ⇒ 全部进附加色，光照系数置 0（deferred24 不再乘 albedo）
+            lightOut = vec4(0.0, 0.0, 0.0, 1.0);
+            extraOut = vec4(sceneOut, 1.0);
+        #endif
         return;
     }
 
@@ -315,6 +350,10 @@ void main() {
                 imageStore(colorimg18, texelPos >> 1, vec4(0.0));
             }
         #endif
+        #ifdef LIGHTING_HALF_RES
+            lightOut = vec4(0.0, 0.0, 0.0, 1.0);
+            extraOut = vec4(sceneOut, 1.0);
+        #endif
         return;
     }
 
@@ -326,10 +365,10 @@ void main() {
 
         #ifdef CLOUDS
             #ifdef CLOUD_TAAU_ENABLED
-                vec4 cloudData = texture(cloudReconstructTex, screenCoord);
+                vec4 cloudData = texture(cloudReconstructTex, scaleScreenUv(screenCoord));
             #else
-                screenCoord += viewPixelSize * (dither - 0.5);
-                vec4 cloudData = texture(cloudOriginTex, screenCoord);
+                screenCoord += scaledTexelSize * (dither - 0.5);
+                vec4 cloudData = texture(cloudOriginTex, scaleScreenUv(screenCoord));
             #endif
             CompositeClouds(sceneOut, cloudData, worldDir);
             transmittance *= cloudData.w;
@@ -351,6 +390,11 @@ void main() {
             if (((texelPos.x & 1) == 0) && ((texelPos.y & 1) == 0)) {
                 imageStore(colorimg18, texelPos >> 1, vec4(0.0));
             }
+        #endif
+        #ifdef LIGHTING_HALF_RES
+            // 天空是自发光，不经过 albedo ⇒ 全部进附加色
+            lightOut = vec4(0.0, 0.0, 0.0, 1.0);
+            extraOut = vec4(sceneOut, 1.0);
         #endif
         return;
     }
@@ -609,10 +653,12 @@ void main() {
     // CalculateGTAO（编译失败），并且会把原版 AO 重复算两遍。
     #if (AO_ENABLED == 1 || AO_ENABLED == 2) && !defined GI_ACTIVE_SSILVB
         float aoVal = 1.0;
+        // [2026-11-27] 2x2 块共享 dither 实测更糟（块间差异变大、4x4 硬边），已回退。
+        ivec2 aoDitherTexel = texelPos;
         #if AO_ENABLED == 1
-            aoVal = CalculateSSAO(screenCoord, viewPos, viewNormal, SampleStbnUnitvec2(texelPos, frameCounter));
+            aoVal = CalculateSSAO(screenCoord, viewPos, viewNormal, SampleStbnUnitvec2(aoDitherTexel, frameCounter));
         #else
-            aoVal = CalculateGTAO(screenCoord, viewPos, viewNormal, SampleStbnVec2(texelPos, frameCounter));
+            aoVal = CalculateGTAO(screenCoord, viewPos, viewNormal, SampleStbnVec2(aoDitherTexel, frameCounter));
         #endif
         
         vec3 ao;
@@ -1086,6 +1132,11 @@ void main() {
     }
 
     // ====== 最终合成 ======
+    // [2026-11-27 LIGHTING_HALF_RES] 最终色统一拆成 lightAcc * albedo + extraAcc：
+    // lightAcc = 乘 albedo 之前的那部分（下面用 lightBefore 保存），extraAcc = 加算色。
+    // 两者只在开启半分辨率光照时被输出；关闭时下面仍按原顺序算 sceneOut（逐位不变）。
+    vec3 lightAcc = vec3(0.0);
+    vec3 extraAcc = vec3(0.0);
     if (reflectHit) {
         // 金属：反射与自身纹理混合（原路径，避免反射完全屏蔽纹理）；
         // sceneOut 已包含环境光/发光等累积，乘 albedo 即为带光照的纹理底色。
@@ -1097,14 +1148,26 @@ void main() {
             // 也会被反射吃掉 90% 底色（用户实测：「原本只能隐约看到反射的表面变成只剩反射」）。
             // 改成随 metalness 连续：metalness=1 仍是 0.9（镜面金属），0.5 只有 0.45（底色为主）。
             metalMixUsed = REFLECTION_METAL_MIX * saturate(material.metalness);
+            vec3 lightBefore = sceneOut;
             sceneOut = mix(sceneOut * albedo, reflection.rgb, metalMixUsed);
             // 底色里同样要含 GI（按保留比例），否则阴影里只剩反射
-            sceneOut += FetchVoxelDiffuseGI(vec2(texelPos), viewPos.z, albedo) * (1.0 - metalMixUsed);
+            vec3 giTerm = FetchVoxelDiffuseGI(vec2(texelPos), viewPos.z, albedo);
+            sceneOut += giTerm * (1.0 - metalMixUsed);
+            #ifdef LIGHTING_HALF_RES
+                lightAcc = lightBefore * (1.0 - metalMixUsed);
+                extraAcc = reflection.rgb * metalMixUsed + giTerm * (1.0 - metalMixUsed);
+            #endif
         } else {
             float Fd = min(FresnelDielectricN(abs(dot(worldNormal, worldDir)), 1.5), 0.5);
+            vec3 lightBefore = sceneOut;
             sceneOut = sceneOut * albedo * (1.0 - Fd) + reflection.rgb + specularDirect;
             // 电介质（冰/石英/湿面）：反射是全量叠加的，底色那部分必须有 GI 才不至于「只剩反射」
-            sceneOut += FetchVoxelDiffuseGI(vec2(texelPos), viewPos.z, albedo) * (1.0 - Fd);
+            vec3 giTerm = FetchVoxelDiffuseGI(vec2(texelPos), viewPos.z, albedo);
+            sceneOut += giTerm * (1.0 - Fd);
+            #ifdef LIGHTING_HALF_RES
+                lightAcc = lightBefore * (1.0 - Fd);
+                extraAcc = reflection.rgb + specularDirect + giTerm * (1.0 - Fd);
+            #endif
         }
     } else {
         // 反射未命中或非反射块：标准光照
@@ -1113,10 +1176,15 @@ void main() {
             material.metalness = 0.0;          // 强制转为非金属
             specularDirect = vec3(0.0);        // 去掉金属高光
         }
+        vec3 lightBefore = sceneOut;
         sceneOut *= albedo;
         material.metalness *= 0.2 * lightmap.y + 0.8;
         sceneOut *= oms(material.metalness);
         sceneOut += specularDirect;
+        #ifdef LIGHTING_HALF_RES
+            lightAcc = lightBefore * oms(material.metalness);
+            extraAcc = specularDirect;
+        #endif
         
         // 体素 GI（彩色光源）
         #ifdef GI_ACTIVE_VXGI
@@ -1179,6 +1247,10 @@ void main() {
                     // 直接把反射盖住 —— 表现就是「金属/反光物体在阴影里异常光滑、像塑料」。
                     // 按 (1 - metalness) 衰减：纯金属不再吃漫反射 GI，电介质与非金属保持原样。
                     sceneOut += voxelGI * (1.0 - metalMixUsed);
+                    #ifdef LIGHTING_HALF_RES
+                        // 体素 GI 进来时已经乘过 albedo（见 FetchVoxelDiffuseGI），属加算色
+                        extraAcc += voxelGI * (1.0 - metalMixUsed);
+                    #endif
                     #ifdef DEBUG_SUNBOUNCE_VIS
                     // [2026-10-02] 角落读数已挪到 /program/post/Final.frag（最后一 pass）——
                     // 画在这里会被"天空像素提前返回 / 曝光 / 色调映射"搅得忽深忽浅、颜色不准。
@@ -1261,6 +1333,19 @@ void main() {
 // 没有反射命中的像素保持正常画面（便于对照）。
 #if SSR_DEBUG_SOURCE_MAP != 0
     if (reflectHit) sceneOut = reflection.rgb;
+#endif
+
+#ifdef LIGHTING_HALF_RES
+    // [2026-11-27] 半分辨率光照输出：lightAcc 由 deferred24 乘全分辨率 albedo，extraAcc 直接相加。
+    lightOut = vec4(lightAcc, 1.0);
+    extraOut = vec4(extraAcc, 1.0);
+    // 调试视图（下面的 DEBUG_* 与 SSR_DEBUG_SOURCE_MAP）会直接覆盖 sceneOut：
+    // 那类读数必须原样上屏，不能被 albedo 再乘一次 ⇒ 整体当加算色输出。
+    #if defined DEBUG_VOXEL_GI || defined DEBUG_VOXEL_SKY || defined DEBUG_VOXEL_SKY_LEVEL \
+     || defined DEBUG_SUNBOUNCE_VIS || defined DEBUG_PROBE_GI_VIZ || defined DEBUG_VOXEL_RADIANCE
+        lightOut = vec4(0.0, 0.0, 0.0, 1.0);
+        extraOut = vec4(sceneOut, 1.0);
+    #endif
 #endif
 
 }

@@ -17,6 +17,9 @@ const float SSAO_MIN_RADIUS_SQ = 0.01;
 
 //================================================================================================//
 
+    // 降分辨率下 SSAO 的 goldenRotate 已经是角度旋转，单纯加步数低效，保持原采样数。
+    #define SSAO_SAMPLES_SCALED SSAO_SAMPLES
+
 float CalculateSSAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dir) {
     float viewPosZ = viewPos.z;
     float maxSqLen = viewPosZ * viewPosZ * 0.25;              // sqr(viewPosZ) * 0.25
@@ -25,7 +28,7 @@ float CalculateSSAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dir)
     // 循环内几乎所有采样都会被 diffSqLen<maxSqLen 剔除而白跑，直接判为无遮蔽。
     if (maxSqLen < SSAO_MIN_RADIUS_SQ) return 1.0;
 
-    float rSteps = 1.0 / float(SSAO_SAMPLES);
+    float rSteps = 1.0 / float(SSAO_SAMPLES_SCALED);
     float rMaxSqLen = 1.0 / maxSqLen;
     float invViewPosZ = 1.0 / viewPosZ;
     vec2 rayStep = diagonal2(gbufferProjection) * ( -rSteps * invViewPosZ );
@@ -37,10 +40,10 @@ float CalculateSSAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dir)
     float sum = 0.0;
 
     #pragma unroll
-    for (uint i = 0u; i < SSAO_SAMPLES; ++i, dir *= goldenRotate) {
+    for (uint i = 0u; i < uint(SSAO_SAMPLES_SCALED); ++i, dir *= goldenRotate) {
         radius += rayStep;
         vec2 sampleCoord = coord + dir * radius;
-        ivec2 sampleTexel = uvToTexel(sampleCoord);
+        ivec2 sampleTexel = uvToTexelScaled(sampleCoord);
         float sampleDepth = loadDepth0(sampleTexel);
         if (sampleDepth < 0.56) continue;
 

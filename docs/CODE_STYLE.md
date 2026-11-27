@@ -21,8 +21,10 @@
 | `shaders/program/**` | 真正的实现体（被 `world*/xxx.fsh/.csh` include） | 直接依赖某个 pass 的全局状态 |
 | `shaders/world*/` | pass 入口，通常只有 `#version` + `#define PASS_*` + `#include` | 逻辑 |
 | `docs/adr/` | 架构决策记录（一个决策一篇，含取舍与被否决的方案） | 流水账 |
-| `MEMO.md` | 踩坑记录与"为什么这么写"的长期备忘 | 待办 |
-| `PROGRESS_TODO.md` | 进度与**待实测清单** | 长期知识 |
+| `CONTEXT.md` | 这包是什么、链路、术语、权威来源 | 待办 |
+| `STATUS.md` | 当前病灶、进行中的假设、下一步 | 长期知识 |
+| `RULES.md` | 验证口径、操作禁忌、禁用登记 | 每次改动的细节 |
+| `docs/archive/` | 历史快照（**只读**，检索见 `MEMO-INDEX.md`） | 任何新内容 |
 
 **新功能落点**：先想清楚"属于哪个 pass、放哪个 lib 文件、选项怎么接线"，再动手。
 
@@ -35,7 +37,7 @@
 | 变量 / uniform | `camelCase` | `shadowClipPos`、`worldSunDir` |
 | pass 标记宏 | `PASS_<大写>` | `PASS_TRANSLUCENT`、`PASS_SKY_MAP` |
 | 调试开关 | `DEBUG_<大写>` | `DEBUG_SHADOW_WARP` |
-| 被禁用的 pass | 原扩展名后加 `1`（`.csh1` / `.fsh1` / `.vsh1`），并在 `MEMO.md` 登记 | `deferred1_b.csh1` |
+| 被禁用的 pass | 原扩展名后加 `1`（`.csh1` / `.fsh1` / `.vsh1`），并在 `RULES.md` 附录 A 登记 | `deferred1_b.csh1` |
 
 **禁止**：给 Iris 管理的选项改名（`shaders.properties`/`lang` 按名字索引，改名等于界面失灵）；
 用同名常量在第二个文件里重复定义（会重复定义编译失败 —— 现存 `RSM.glsl` 就是反面教材）。
@@ -82,7 +84,7 @@
 | 行注释里不能出现 `*/` | GLSL 解析器块注释状态错乱 → 报 `extraneous input '?'` | 行注释里用 `\|` 分隔目录名，别写 `world*/composite1.csh` |
 | `.lang` 必须 UTF-8 **无 BOM** | 带 BOM 时首条文案失效/乱码 | 用工具写，不要用记事本另存 |
 | 改文件要**保留原换行符** | 整文件 diff、真实警告被淹 | 见 §7 检查清单；统一目标为 LF |
-| 被禁用的 pass 改名后对工具不可见 | 忘了自己关过什么 | 在 `MEMO.md` 登记 |
+| 被禁用的 pass 改名后对工具不可见 | 忘了自己关过什么 | 在 `RULES.md` 附录 A 登记 |
 
 ## 6. pass 与缓冲区
 
@@ -122,7 +124,8 @@ python -c "…lang 是否带 BOM…"                 # 必须 False
 python -c "…#if* 与 #endif 计数…"             # 必须归零
 git status --porcelain                        # 只应出现你打算提交的文件
 ```
-> `preproc_check.js` 在 `scripts/`（已入库）。注：`rdc_analysis/` 是 RenderDoc 分析临时区（93M，被 .gitignore 忽略）。
+> `preproc_check.js` 在 `scripts/`（已入库）。注：`scripts/rdc/` 是 RenderDoc 分析脚本；
+> 抓帧文件（`.rdc`）与导出目录不入库，也不再保留（2026-11-22 起）。
 
 **功能类改动**：提交信息里写清"待实测"清单（进游戏怎么验、看什么现象、旋钮在哪）。
 
@@ -140,5 +143,6 @@ git status --porcelain                        # 只应出现你打算提交的�
 
 ## 9. 已知技术债（清理优先级）
 
-见 `docs/CODE_REVIEW_2026-09-12.md`：H1 验证工具入库 → H2 删 10 个死文件（`RSM.glsl` 优先）→
-H3 抽取阴影空间查询函数 → M1 换行符归一 → M2 补 6 条 lang → M3 补 `CONTEXT.md`。
+见 `docs/archive/reviews/CODE_REVIEW-2026-09-12.md`（已归档，部分项可能已随重构消失）：
+H1 验证工具入库 → H2 删 10 个死文件（`RSM.glsl` 优先）→ H3 抽取阴影空间查询函数 → M1 换行符归一 → M2 补 6 条 lang。
+M3「补 `CONTEXT.md`」已于 2026-11-22 完成。
