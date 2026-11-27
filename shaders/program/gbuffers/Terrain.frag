@@ -19,6 +19,16 @@
 --------------------------------------------------------------------------------
 
 */
+// [2026-11-28 early-Z] 本文件同时服务两个入口：
+//   gbuffers_terrain        —— 全部地形（cutout 等），保留 alpha test（discard）
+//   gbuffers_terrain_solid  —— 只收实心方块，定义 TERRAIN_SOLID 后**一处 discard 都没有**
+// 为什么值得拆：GLSL 里只要着色器可能 discard，驱动的 early-Z 就失效，被遮挡的片元仍会跑完
+// 整个片元着色器。抓帧（75%+半光照）实测地形 pass 2.26M 片元里只有 0.42M 通过深度测试，
+// 也就是 81% 是白发。实心方块约占地形片元的绝大多数，把它拆出去就能让 GPU 在着色前剔除。
+// 代价：没有（Iris 缺文件时会自动回落到 gbuffers_terrain；ProgramId 的 TerrainSolid 在
+// 1.10.8 与 1.12 都存在，两套实例均支持）。
+// 注意：TERRAIN_SOLID 档里也不要引入 gl_FragDepth 写入（视差深度写入档），否则 early-Z 同样失效。
+
 // 视差映射最大距离（米），超出此距离视差完全失效
 #define PARALLAX_MAX_DISTANCE 32  // [2 4 6 8 16 32 64 128 256 512 1024 2048]
 
@@ -154,7 +164,9 @@ void main() {
         if (skipNormalSpecular) {
             // 远距离：跳过导数，普通采样
             albedo = texture(tex, texCoord);
-            if (albedo.a < 0.1) { discard; return; }
+            #ifndef TERRAIN_SOLID
+                if (albedo.a < 0.1) { discard; return; }
+            #endif
         } else {
             // 近距离：计算导数与 TBN
             texGrad = mat2(dFdx(texCoord), dFdy(texCoord));
@@ -223,12 +235,16 @@ void main() {
             packedNormal = OctEncodeSnorm(tbnMatrix * normalTex.xyz);
 
             albedo = textureGrad(tex, parallaxCoord, texGrad[0], texGrad[1]);
-            if (albedo.a < 0.1) { discard; return; }
+            #ifndef TERRAIN_SOLID
+                if (albedo.a < 0.1) { discard; return; }
+            #endif
         }
 
     #else   // ---- 非视差分支 ----
         albedo = texture(tex, texCoord);
-        if (albedo.a < 0.1) { discard; return; }
+        #ifndef TERRAIN_SOLID
+            if (albedo.a < 0.1) { discard; return; }
+        #endif
 
         if (!skipNormalSpecular) {
             #if defined MC_NORMAL_MAP
