@@ -42,9 +42,9 @@ layout (local_size_x = 8, local_size_y = 8) in;
 #include "/lib/Utility.glsl"
 
 #ifdef VXGI_FULLRES
-const vec2 workGroupsRender = vec2(1.0, 1.0);
+const vec2 workGroupsRender = vec2(RENDER_SCALE, RENDER_SCALE);
 #else
-const vec2 workGroupsRender = vec2(0.5, 0.5);
+const vec2 workGroupsRender = vec2(RENDER_SCALE_HALF, RENDER_SCALE_HALF);
 #endif
 
 //======// Uniform //=============================================================================//
@@ -61,9 +61,9 @@ void main() {
     ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
 
 #ifdef VXGI_FULLRES
-    if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+    if (any(greaterThanEqual(texelPos, ivec2(scaledViewSize)))) return;
 #else
-    if (any(greaterThanEqual(texelPos, ivec2(halfViewSize)))) return;
+    if (any(greaterThanEqual(texelPos, ivec2(scaledHalfViewSize)))) return;
 #endif
 
     // colortex23 只在 NRD 模式由 GIStabilize 写入，读写都必须同层保护（语义检查 R3）。

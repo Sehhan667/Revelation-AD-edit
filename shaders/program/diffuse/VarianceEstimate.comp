@@ -31,9 +31,9 @@ layout (local_size_x = 16, local_size_y = 16) in;
 
 // 与 GI 画布同分辨率（默认半分辨率棋盘；VOXEL_GI_FULLRES 全分辨率）。须在 Utility 之后。
 #ifdef VXGI_FULLRES
-const vec2 workGroupsRender = vec2(1.0, 1.0);
+const vec2 workGroupsRender = vec2(RENDER_SCALE, RENDER_SCALE);
 #else
-const vec2 workGroupsRender = vec2(0.5, 0.5);
+const vec2 workGroupsRender = vec2(RENDER_SCALE_HALF, RENDER_SCALE_HALF);
 #endif
 
 //======// Uniform //=============================================================================//
@@ -57,9 +57,9 @@ void SharedPreload() {
     ivec2 groupBase = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy - padRadius);
     // GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
 #ifdef VXGI_FULLRES
-    ivec2 canvasEnd = ivec2(viewSize);
+    ivec2 canvasEnd = ivec2(scaledViewSize);
 #else
-    ivec2 canvasEnd = ivec2(halfViewSize);
+    ivec2 canvasEnd = ivec2(scaledHalfViewSize);
 #endif
 
     const uint sharedArea = sharedSize.x * sharedSize.y;
@@ -109,9 +109,9 @@ void main() {
     // 独立命名：main 后面还会声明 texelPos，同作用域重复声明会编译失败。
     ivec2 nrdTexel = ivec2(gl_GlobalInvocationID.xy);
     #ifdef VXGI_FULLRES
-        if (any(greaterThanEqual(nrdTexel, ivec2(viewSize)))) return;
+        if (any(greaterThanEqual(nrdTexel, ivec2(scaledViewSize)))) return;
     #else
-        if (any(greaterThanEqual(nrdTexel, ivec2(halfViewSize)))) return;
+        if (any(greaterThanEqual(nrdTexel, ivec2(scaledHalfViewSize)))) return;
     #endif
     vec4 _accum = texelFetch(colortex2, nrdTexel, 0);
     imageStore(colorimg3, nrdTexel, vec4(_accum.rgb, 0.0));

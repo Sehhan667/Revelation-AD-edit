@@ -40,6 +40,11 @@ void main() {
     gl_Position = diagonal4(gl_ProjectionMatrix) * viewPos.xyzz + gl_ProjectionMatrix[3];
 
 	#ifdef TAA_ENABLED
-		gl_Position.xy += taaJitter * gl_Position.w;
+		gl_Position.xy += taaJitterScaled * gl_Position.w;
+	#endif
+
+	// 渲染缩放：世界几何画到左下角画布
+	#if RENDER_SCALE_1000X != 1000
+		gl_Position.xy = gl_Position.xy * renderScale + (renderScale - 1.0) * gl_Position.w;
 	#endif
 }

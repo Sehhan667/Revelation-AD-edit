@@ -32,9 +32,9 @@ layout (local_size_x = 8, local_size_y = 8) in;
 #include "/lib/Utility.glsl"
 
 #ifdef VXGI_FULLRES
-const vec2 workGroupsRender = vec2(1.0, 1.0);
+const vec2 workGroupsRender = vec2(RENDER_SCALE, RENDER_SCALE);
 #else
-const vec2 workGroupsRender = vec2(0.5, 0.5);
+const vec2 workGroupsRender = vec2(RENDER_SCALE_HALF, RENDER_SCALE_HALF);
 #endif
 
 //======// Uniform //=============================================================================//
@@ -108,10 +108,10 @@ const float PREPASS_GAUSS_R[8] = float[8](1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5
 void main() {
     ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
 #ifdef VXGI_FULLRES
-    if (any(greaterThanEqual(texelPos, ivec2(viewSize)))) return;
+    if (any(greaterThanEqual(texelPos, ivec2(scaledViewSize)))) return;
     ivec2 rt = texelPos;
 #else
-    if (any(greaterThanEqual(texelPos, ivec2(halfViewSize)))) return;
+    if (any(greaterThanEqual(texelPos, ivec2(scaledHalfViewSize)))) return;
     ivec2 rt = texelPos * 2 + GI_CANVAS_PHASE;
 #endif
 
@@ -138,9 +138,9 @@ void main() {
     // 注意：image2D 只能用 imageSize()，不能用 textureSize()（后者是 sampler 的重载）。
     // 这里直接用视口尺寸，语义等价且无重载风险。
 #ifdef VXGI_FULLRES
-    ivec2 canvasEnd = ivec2(viewSize);
+    ivec2 canvasEnd = ivec2(scaledViewSize);
 #else
-    ivec2 canvasEnd = ivec2(halfViewSize);
+    ivec2 canvasEnd = ivec2(scaledHalfViewSize);
 #endif
 
     // 视锥短边在该深度处的世界尺寸（官方 GetFrustumSize）：几何权重的归一化尺度。

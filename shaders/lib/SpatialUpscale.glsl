@@ -12,7 +12,7 @@ ivec2 GICanvasCoord(in ivec2 texelPos) {
 #else
     // [2026-11-10 2.5] 奇数分辨率：画布宽 = trunc(viewWidth/2)，而 (viewWidth-1)>>1 会等于画布宽
     // ⇒ 最右/最下那一列 texelFetch 越界（读到未定义内容 = 黑边/串色）。统一在这里夹住。
-    return min(texelPos >> 1, ivec2(halfViewSize) - 1);
+    return min(texelPos >> 1, ivec2(scaledHalfViewSize) - 1);
 #endif
 }
 // [FIX 2026-08-06] 用简单 #if defined 控制（原复合条件 `#if defined SVGF_ENABLED &&
@@ -57,9 +57,9 @@ ivec2 GICanvasCoord(in ivec2 texelPos) {
 vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in float viewDepth) {
     ivec2 halfPos = GICanvasCoord(texelPos);
 #ifdef VXGI_FULLRES
-    ivec2 texelEnd = ivec2(viewSize) - 2;
+    ivec2 texelEnd = ivec2(scaledViewSize) - 2;
 #else
-    ivec2 texelEnd = ivec2(halfViewEnd) - 1;
+    ivec2 texelEnd = ivec2(scaledHalfViewSize) - 1;
 #endif
 
     vec3 centerCol = texelFetch(srcTex, halfPos, 0).rgb;
@@ -74,7 +74,7 @@ vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in float vi
     // 十字采样偏移（4 邻域，保持基本的方向覆盖）
     const ivec2 offsets[4] = ivec2[](ivec2(1,0), ivec2(-1,0), ivec2(0,1), ivec2(0,-1));
     // 全分辨率 guide：中心像素的几何法线（世界空间，与 tap 同源）
-    vec3 centerN = FetchGeometryNormal(clamp(texelPos, ivec2(0), ivec2(viewSize) - 1));
+    vec3 centerN = FetchGeometryNormal(clamp(texelPos, ivec2(0), ivec2(scaledViewSize) - 1));
     float invDepth = rcp(max(-viewDepth, 0.001));
 
     for (int i = 0; i < 4; ++i) {
@@ -85,9 +85,9 @@ vec3 UpscaleDiffuseIndirectFrom(sampler2D srcTex, in ivec2 texelPos, in float vi
         // 半分辨率：画布纹素 (x,y) 的信号取自屏幕 (2x, 2y)（画布相位固定 0，见 lib/utility/Offset.glsl）；
         // 全分辨率模式（VXGI_FULLRES）下画布纹素**就是**屏幕纹素，不能再 ×2。
 #ifdef VXGI_FULLRES
-        ivec2 tapScreen = clamp(samplePos, ivec2(0), ivec2(viewSize) - 1);
+        ivec2 tapScreen = clamp(samplePos, ivec2(0), ivec2(scaledViewSize) - 1);
 #else
-        ivec2 tapScreen = clamp(samplePos * 2, ivec2(0), ivec2(viewSize) - 1);
+        ivec2 tapScreen = clamp(samplePos * 2, ivec2(0), ivec2(scaledViewSize) - 1);
 #endif
         float tapZ = ScreenToViewDepth(loadDepth0(tapScreen));
         vec3 tapN = FetchGeometryNormal(tapScreen);

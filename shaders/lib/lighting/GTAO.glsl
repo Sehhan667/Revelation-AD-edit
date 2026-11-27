@@ -26,8 +26,8 @@ void SampleHorizonCosOptimized(
     vec2 uvNeg = coord - offset;
 
     // 向量化纹理抓取，增加显存读取的连续性
-    float dPos = loadDepth0(uvToTexel(uvPos));
-    float dNeg = loadDepth0(uvToTexel(uvNeg));
+    float dPos = loadDepth0(uvToTexelScaled(uvPos));
+    float dNeg = loadDepth0(uvToTexelScaled(uvNeg));
 
     // Early-out：如果两侧都在第一人称手臂/极近距离内，直接跳过计算
     if (dPos < 0.56 && dNeg < 0.56) return;
@@ -39,8 +39,8 @@ void SampleHorizonCosOptimized(
         bool lodPos = dPos > (1.0 - EPS);
         bool lodNeg = dNeg > (1.0 - EPS);
 
-        dPos = lodPos ? loadDepth0Lod(uvToTexel(uvPos)) : dPos;
-        dNeg = lodNeg ? loadDepth0Lod(uvToTexel(uvNeg)) : dNeg;
+        dPos = lodPos ? loadDepth0Lod(uvToTexelScaled(uvPos)) : dPos;
+        dNeg = lodNeg ? loadDepth0Lod(uvToTexelScaled(uvNeg)) : dNeg;
 
         posV = (lodPos ? ScreenToViewPosLod(vec3(uvPos, dPos)) : ScreenToViewPos(vec3(uvPos, dPos))) - viewPos;
         negV = (lodNeg ? ScreenToViewPosLod(vec3(uvNeg, dNeg)) : ScreenToViewPos(vec3(uvNeg, dNeg))) - viewPos;
@@ -75,6 +75,17 @@ void SampleHorizonCosOptimized(
     cHorizonCos.y = dNeg < 0.56 ? cHorizonCos.y : max(sHorizonCos.y, cHorizonCos.y);
 }
 
+#if RENDER_SCALE_1000X != 1000
+    // 降分辨率：画布像素 1/4，采样预算改投「角度维」（slices ×2 + 方向 ×2）。
+    // GTAO_SLICES=1 时只积分一条轴，单纯加方向采样压不住方差；角度覆盖才有效。
+    // 2 slice × 4 dir × 2 侧 = 16，与像素数 1/4 抵消，总成本与 1000 档持平。
+    #define GTAO_SLICES_SCALED (GTAO_SLICES * 2)
+    #define GTAO_DIRECTION_SAMPLES_SCALED (GTAO_DIRECTION_SAMPLES * 2)
+#else
+    #define GTAO_SLICES_SCALED GTAO_SLICES
+    #define GTAO_DIRECTION_SAMPLES_SCALED GTAO_DIRECTION_SAMPLES
+#endif
+
 float CalculateGTAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dither) {
     float viewDistance = sdot(viewPos);
     float norm = inversesqrt(viewDistance);
@@ -82,8 +93,8 @@ float CalculateGTAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dith
 
     vec3 viewDir = viewPos * -norm;
 
-    const float rSliceCount = 1.0 / float(GTAO_SLICES);
-    const float rSampleCount = 1.0 / float(GTAO_DIRECTION_SAMPLES);
+    const float rSliceCount = 1.0 / float(GTAO_SLICES_SCALED);
+    const float rSampleCount = 1.0 / float(GTAO_DIRECTION_SAMPLES_SCALED);
 
     // 预计算旋转矩阵和角度
     float sliceAngle = PI * rSliceCount;
@@ -100,7 +111,7 @@ float CalculateGTAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dith
     float visibility = 0.0;
 
     #pragma unroll
-    for (uint slice = 0u; slice < GTAO_SLICES; ++slice) {
+    for (uint slice = 0u; slice < uint(GTAO_SLICES_SCALED); ++slice) {
         vec3 directionV = vec3(sliceDir, 0.0);
         vec3 orthoDirectionV = directionV - dot(directionV, viewDir) * viewDir;
         vec3 axisV = cross(directionV, viewDir);
@@ -120,7 +131,7 @@ float CalculateGTAO(in vec2 coord, in vec3 viewPos, in vec3 normal, in vec2 dith
         vec2 offset = stepDir * dither.y;
 
         #pragma unroll
-        for (uint samp = 0u; samp < GTAO_DIRECTION_SAMPLES; ++samp) {
+        for (uint samp = 0u; samp < uint(GTAO_DIRECTION_SAMPLES_SCALED); ++samp) {
             // 一次调用处理正反两个方向，减少循环开销
             SampleHorizonCosOptimized(coord, offset, viewPos, viewDir, falloff, rFalloffDiff, cHorizonCos);
             offset += stepDir;

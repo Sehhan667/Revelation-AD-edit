@@ -65,8 +65,8 @@ bool ScreenSpaceRaytrace(in vec3 viewPos, in vec3 viewDir, in float dither, in u
     rayDir *= minOf((step(0.0, rayDir) - origin) / rayDir);
 
     // 转换到像素空间，避免宽高比失真
-    rayDir.xy *= viewSize;
-    origin.xy *= viewSize;
+    rayDir.xy *= scaledViewSize;
+    origin.xy *= scaledViewSize;
 
     float rSteps = 1.0 / float(steps);
     float invDirZ = rcp(abs(rayDir.z));
@@ -108,7 +108,7 @@ bool ScreenSpaceRaytrace(in vec3 viewPos, in vec3 viewDir, in float dither, in u
         vec3 rayPos = origin + rayDir * t;
 
         // 超出像素空间边界则失败
-        if (clamp(rayPos.xy, vec2(0.0), viewSize - 1.0) != rayPos.xy) break;
+        if (clamp(rayPos.xy, vec2(0.0), scaledViewSize - 1.0) != rayPos.xy) break;
 
         // 命中天空处理
         if (rayPos.z >= screenDepthSky) {
@@ -192,7 +192,7 @@ bool ScreenSpaceRaytrace(in vec3 viewPos, in vec3 viewDir, in float dither, in u
     #endif
 
     // 从像素空间转回屏幕空间坐标 [0,1]
-    screenPos.xy *= viewPixelSize;
+    screenPos.xy *= scaledTexelSize;
 
     return hit;
 }

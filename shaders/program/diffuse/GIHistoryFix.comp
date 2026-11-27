@@ -52,9 +52,9 @@ layout (local_size_x = 8, local_size_y = 8) in;
 #include "/lib/Utility.glsl"
 
 #ifdef VXGI_FULLRES
-const vec2 workGroupsRender = vec2(1.0, 1.0);
+const vec2 workGroupsRender = vec2(RENDER_SCALE, RENDER_SCALE);
 #else
-const vec2 workGroupsRender = vec2(0.5, 0.5);
+const vec2 workGroupsRender = vec2(RENDER_SCALE_HALF, RENDER_SCALE_HALF);
 #endif
 
 //======// Uniform //=============================================================================//
@@ -123,10 +123,10 @@ void main() {
     ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
 
 #ifdef VXGI_FULLRES
-    ivec2 canvasEnd = ivec2(viewSize);
+    ivec2 canvasEnd = ivec2(scaledViewSize);
     ivec2 rt = texelPos;
 #else
-    ivec2 canvasEnd = ivec2(halfViewSize);
+    ivec2 canvasEnd = ivec2(scaledHalfViewSize);
     ivec2 rt = texelPos * 2 + GI_CANVAS_PHASE;
 #endif
     if (any(greaterThanEqual(texelPos, canvasEnd))) return;

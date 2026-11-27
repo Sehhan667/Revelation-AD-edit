@@ -15,6 +15,11 @@
 #define cloudReconstructTex			colortex9
 #define cloudReconstructImg			colorimg9
 
+// 缩放域坐标（画布 uv 0..1 <-> 画布 texel）。使用处必须 include 过 Uniform.glsl，
+// 因为 scaledViewSize / scaledTexelSize 是 shaders.properties 定义的自定义 uniform。
+#define uvToTexelScaled(coord) 		ivec2((coord) * scaledViewSize)
+#define texelToUvScaled(texel) 		((vec2(texel) + 0.5) * scaledTexelSize)
+
 #if defined LOD_MOD
 	#define loadDepth0Lod(texel) 	texelFetch(lodDepthTex0, texel, 0).x
 	#define loadDepth1Lod(texel)	texelFetch(lodDepthTex1, texel, 0).x

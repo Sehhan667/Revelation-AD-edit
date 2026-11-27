@@ -90,6 +90,7 @@ screen.WaterParams=Water Parameters
 screen.MiscMaterials=Miscellaneous
 
 screen.FidelityFX=FidelityFX
+screen.SuperResolution=Super Resolution
 screen.DoF=DoF
 screen.DoF.comment=Lens blur (bokeh): adds realistic focal length and aperture to the frame - in-focus areas stay sharp, out-of-focus areas blur.
 screen.TAA=TAA
@@ -639,6 +640,22 @@ value.AGX_LOOK.2=Punchy
 value.AGX_LOOK.3=Custom
 
 
+option.RENDER_SCALE_1000X=Render Scale
+option.RENDER_SCALE_1000X.comment=Below 100% the world renders at a lower resolution into the bottom-left corner and is upscaled back to full screen by composite6_b. Lower is faster and blurrier. 100% disables the feature entirely (default, bit-identical to before).
+value.RENDER_SCALE_1000X.1000=100%
+value.RENDER_SCALE_1000X.900=90.0%
+value.RENDER_SCALE_1000X.850=85.0%
+value.RENDER_SCALE_1000X.750=75.0%
+value.RENDER_SCALE_1000X.667=66.7%
+value.RENDER_SCALE_1000X.600=60.0%
+value.RENDER_SCALE_1000X.588=58.8%
+value.RENDER_SCALE_1000X.500=50.0%
+option.UPSCALE_MODE=Upscale Mode
+option.UPSCALE_MODE.comment=Algorithm used to stretch the low-resolution image back to full screen. Bilinear is cheapest; FSR 1.0 EASU is edge-adaptive and sharper. Has no effect at 100%.
+value.UPSCALE_MODE.0=Bilinear
+value.UPSCALE_MODE.1=FSR 1.0
+option.LIGHTING_HALF_RES=Half-Resolution Lighting
+option.LIGHTING_HALF_RES.comment=Screen-space lighting (shadows, AO, reflections, fog) is computed at half resolution, then upsampled back to canvas resolution with a depth-aware filter and multiplied by the full-resolution albedo. Light and shading transitions get slightly softer; texture detail is unaffected. Big performance win - A/B test it.
 option.CAS_ENABLED=Contrast-Adaptive Sharpening
 option.CAS_STRENGTH=CAS Strength
 

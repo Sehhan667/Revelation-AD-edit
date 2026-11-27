@@ -28,9 +28,18 @@
 	const int 	colortex7Format 			= RGBA16UI;
 	const int 	colortex8Format 			= RGBA16_SNORM;
 	const int 	colortex9Format 			= RGBA16F;
-	// [2026-11-12] colortex10 已随击杀特效（kill-ripple）整条删除：它只被 composite5(HurtTimer)
+	// [2026-11-12] colortex10 原是击杀特效（kill-ripple）的缓冲：它只被 composite5(HurtTimer)
 	// 写、被 Final 的 #ifdef KILL_RIPPLE 段读，而那条链默认关、打开还会因为内部常量被注释掉而
-	// 编译失败。实体受击故障的帧级门控现在走 SSBO 的 global.hurtEntitySeen，不再需要这个缓冲。
+	// 编译失败。实体受击故障的帧级门控现在走 SSBO 的 global.hurtEntitySeen，不再需要它。
+	// [2026-11-27 render scale] 因此回收为升采样输出（composite6_b 写，TAA 读）。
+	const int 	colortex10Format 			= RGBA16F;
+	// [2026-11-27 LIGHTING_HALF_RES] 原反射信号缓冲，SpecularFilter 死链清理后已无读者
+	// （见 DeferredLight.frag 顶部注释）。现在回收为光照半分辨率的「光照系数」缓冲：
+	// DeferredLight 写、deferred24(LightingResolve) 读。RGBA16F 是 26.3 Vulkan 的保证格式。
+	// 只在选项开启时声明：关闭时 Iris 不会为它分配任何显存。
+#ifdef LIGHTING_HALF_RES
+	const int 	colortex11Format 			= RGBA16F;
+#endif
 	// [2026-11-12 试验结论] 法线回到 colortex8（水下看水面时折射/反射要读它，移除 c8 会异常），
 	// c12 因此只剩 .x：>0 = 水面水深/255，-1 = 玻璃哨兵，0 = 非半透明（每帧清 0）⇒ 用 R16F。
 	const int 	colortex12Format 			= R16F;
@@ -104,6 +113,10 @@
 	const bool	colortex7Clear				= true;
 	const bool	colortex8Clear				= false;
 	const bool	colortex9Clear				= false;
+	const bool	colortex10Clear				= false;
+#ifdef LIGHTING_HALF_RES
+	const bool	colortex11Clear				= false;
+#endif
 	const bool 	colortex12Clear				= true;
 	const bool 	colortex13Clear				= false;
 	const bool 	colortex14Clear				= false;
@@ -152,6 +165,8 @@
 	|	colortex7	|   rgba16ui        |	Full res  	|	Material data
 	|	colortex8	|   rgba16_snorm    |	Full res  	|	Normal data
 	|	colortex9	|   rgba16f     	|	Full res	|	Cloud history
+	|	colortex10	|   rgba16f     	|	Full res	|	Render scale upscale output (composite6_b -> TAA); LIGHTING_HALF_RES: additive lighting color (deferred20 -> deferred24)
+	|	colortex11	|   rgba16f     	|	Full res	|	LIGHTING_HALF_RES: lighting coefficient (multiplied by full-res albedo in deferred24)
 	|	colortex12	|   r16f          	|	Full res	|	Water data: x = depth/255 (water) or -1 (glass); normals live in colortex8
 	|	colortex13	|   r8i	        	|	Full res  	|	Cloud frame index
 	|	colortex14	|   rgba16f         |	Half res	|	Encoded normal, linear depth, disocclusion(a)

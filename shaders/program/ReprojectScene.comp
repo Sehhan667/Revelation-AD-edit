@@ -35,8 +35,10 @@ void main() {
     uvec2 localPos = QuadLayout16x16(gl_LocalInvocationIndex);
     ivec2 texelPos = ivec2(localPos + gl_WorkGroupID.xy * gl_WorkGroupSize.xy);
 
-    vec2 currentUv = texelToUv(texelPos) * 2.0;   // 本 texel 对应的全屏 uv（与原实现同款近似）
-    float depth = loadDepth0(texelPos << 1);
+    // currentUv 必须是缩放域 uv 0..1（ReprojectScreenPos 内部按 NDC 处理）。
+    // 反射源仍写在 colortex4 的左下 0.5 象限（texelPos 是半屏 dispatch 坐标）。
+    vec2 currentUv = texelToUv(texelPos) * 2.0;
+    float depth = loadDepth0(ivec2(vec2(texelPos) * 2.0 * renderScale));
 
     // [2026-11-22 #2 改善重投影] 反射源必须每帧对每个 texel 都写一次。
     // 原实现只在「重投影有效 且 depth>0.56」时写，失败的 texel 就保留旧内容；

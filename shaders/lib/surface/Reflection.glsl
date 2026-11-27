@@ -325,7 +325,7 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
             // [2026-10-08 P0-2] 深度与视图位置必须用**屏幕**坐标（depthtex0 是全分辨率、全屏），
             // 只有采样 colortex4 才需要 ×0.5 —— 它的左上象限是半分辨率画布（ReprojectScene.comp
             // 用 workGroupsRender=0.5 写入）。
-            // 原代码把象限坐标一路用到深度读取与 viewPos 重建上：uvToTexel(hitCoord*0.5) 取到了
+            // 原代码把象限坐标一路用到深度读取与 viewPos 重建上：uvToTexelScaled(hitCoord*0.5) 取到了
             // 屏幕坐标一半处的深度，ScreenToViewPos(vec3(hitCoord*0.5, d)) 的 ndc = hitCoord-1 ∈ [-1,0]
             // 只对屏幕左上象限成立 ⇒ reflectionDist 完全错误（接触硬化、以及后续任何按命中距离
             // 加权的降噪/模糊都会拿到错距离）。clamp 是防 hitCoord == 1.0 时 texelFetch 越界。
@@ -334,7 +334,7 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
             // 原来这里用 loadDepth0（含半透明），隔着水/玻璃时命中点深度会被水面顶替 ⇒
             // reflectionDist 偏小、接触硬化算错。SSRT.glsl 的命中判定本来就是 loadDepth2，
             // 这里对齐后两者口径一致。当前 ROUGH_REFLECTIONS 默认关，此距离主要用于粗糙反射。
-            float hitDepth = loadDepth2(uvToTexel(hitUv));
+            float hitDepth = loadDepth2(uvToTexelScaled(hitUv));
             vec3 reflectViewPos = ScreenToViewPos(vec3(hitUv, hitDepth));
             reflectionDist = distance(reflectViewPos, viewPos);
 
@@ -375,8 +375,8 @@ vec4 CalculateSpecularReflections(Material material, uint materialID, vec3 world
                 float scaleMod = clamp(ROUGH_REFLECTION_BLUR_STRENGTH / 20.0, 0.5, 2.0);
                 float blurRadiusPx = max(0.8 * rayLenPx * roughT * contactHardening,
                                          mix(0.06, 0.30, roughT) * length(viewSize)) * scaleMod;
-                // colortex4 是半分辨率象限画布：1 个全屏像素 = 0.5 画布 UV ⇒ 换算时乘 0.5
-                vec2 blurRadiusUv = vec2(blurRadiusPx) * viewPixelSize * 0.5;
+                // colortex4 是半分辨率象限画布：1 个画布像素 = scaledTexelSize ⇒ 换算时乘 0.5
+                vec2 blurRadiusUv = vec2(blurRadiusPx) * scaledTexelSize * 0.5;
                 // 上限：0.2 画布 UV = 全屏 40%；再大所有抽样点会被 clamp 到画布边缘、退化成一圈边缘色
                 blurRadiusUv = min(blurRadiusUv, vec2(0.2));
                 debugBlurRadiusPx = blurRadiusPx;   // 供 SSR_DEBUG_SOURCE_MAP 诊断读取

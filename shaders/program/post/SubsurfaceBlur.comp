@@ -51,10 +51,14 @@
 // 深度权重衰减（每方块）
 #define SSS_BLUR_DEPTH_FALLOFF 1.5
 
+//======// Utility //=============================================================================//
+
+#include "/lib/Utility.glsl"
+
 //======// Input //=============================================================================//
 
 layout (local_size_x = 16, local_size_y = 16) in;
-const vec2 workGroupsRender = vec2(1.0, 1.0);
+const vec2 workGroupsRender = vec2(RENDER_SCALE_HALF, RENDER_SCALE_HALF);
 
 #ifdef SSS_BLUR_HORIZONTAL
     layout (rgba16f) readonly  uniform image2D colorimg18; // SSS 源项（半分辨率；rgb 已乘 mask，a = mask）
@@ -69,10 +73,6 @@ const vec2 workGroupsRender = vec2(1.0, 1.0);
     #define SSS_OUT_IMAGE colorimg20
     #define SSS_OFFSET(off) ivec2(0, off)
 #endif
-
-//======// Utility //=============================================================================//
-
-#include "/lib/Utility.glsl"
 
 //======// Uniform //=============================================================================//
 
@@ -98,7 +98,7 @@ void main() {
 
     // 世界半径 -> 半分辨率像素
     float tanHalfFovY = rcp(gbufferProjection[1][1]);
-    float worldPerHalfPixel = 2.0 * tanHalfFovY * centerDepth * rcp(max(viewSize.y * 0.5, 1.0));
+    float worldPerHalfPixel = 2.0 * tanHalfFovY * centerDepth * rcp(max(scaledHalfViewSize.y, 1.0));
     float radiusPixels = clamp(SUBSURFACE_SCATTERING_RADIUS * SSS_BLUR_RADIUS_SCALE * rcp(max(worldPerHalfPixel, EPS)),
                                0.0, SSS_BLUR_MAX_PIXELS);
     float stepTexels = radiusPixels / float(SSS_BLUR_TAPS - 1);

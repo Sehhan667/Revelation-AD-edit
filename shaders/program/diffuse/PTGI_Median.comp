@@ -32,9 +32,9 @@ layout (local_size_x = 8, local_size_y = 8) in;
 
 // 与 GI 画布同分辨率（默认半分辨率棋盘；VOXEL_GI_FULLRES 全分辨率）。须在 Utility 之后。
 #ifdef VXGI_FULLRES
-const vec2 workGroupsRender = vec2(1.0, 1.0);
+const vec2 workGroupsRender = vec2(RENDER_SCALE, RENDER_SCALE);
 #else
-const vec2 workGroupsRender = vec2(0.5, 0.5);
+const vec2 workGroupsRender = vec2(RENDER_SCALE_HALF, RENDER_SCALE_HALF);
 #endif
 
 //======// Image //===============================================================================//
@@ -56,9 +56,9 @@ void main() {
 	ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
 	// GI 画布尺寸（半分辨率 = 屏幕一半；全分辨率 = 屏幕）
 #ifdef VXGI_FULLRES
-	ivec2 canvasEnd = ivec2(viewSize);
+	ivec2 canvasEnd = ivec2(scaledViewSize);
 #else
-	ivec2 canvasEnd = ivec2(halfViewSize);
+	ivec2 canvasEnd = ivec2(scaledHalfViewSize);
 #endif
 
 	vec4 center = imageLoad(colorimg3, texel);

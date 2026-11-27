@@ -42,7 +42,7 @@ const vec2 dofHexVertices[7] = vec2[7](
 
 float DofCoCScale(float focusDepth) {
 	float focusRange = maxEps(focusDepth - dofFocalLength);
-	return dofApertureRadius * dofFocalLength * viewSize.x * rcp(DOF_SENSOR_WIDTH * focusRange);
+	return dofApertureRadius * dofFocalLength * scaledViewSize.x * rcp(DOF_SENSOR_WIDTH * focusRange);
 }
 
 float DofCoCRadius(float viewDepth, float focusDepth, float cocScale, float maxBlurRadius) {
