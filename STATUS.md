@@ -54,6 +54,13 @@ REBLUR 降噪链还有 **13 项标 `⏳` 等实机确认**；最老的悬案是 
   缺文件时回落 `gbuffers_terrain` ⇒ 纯增量、删掉即回退。
 - **待实机**：树叶/草/藤蔓有无整块空洞；抓帧看地形 pass `PSInvocations` 应明显下降而
   `SamplesPassed` 基本不变；26.3（Vulkan）上确认程序被选用。
+- **实测（earlyz.rdc，1.21.11）**：地形 pass `PSInvocations` 2,262,085 → **1,386,237（−39%）**，
+  `SamplesPassed` 418,797 → 417,265（不变）⇒ early-Z 确实生效、程序被正确选用。
+  但耗时只从 5.40 → 5.10 ms（−6%）：`discard` 本来就在 albedo 采样后立刻 return，被剔掉的
+  片元原本也只花一次纹理采样 ⇒ 之前「81% 跑完整个 shader」的说法过头了，实际是「多做一次
+  采样 + 少量 ALU」。残余超额片元（PS/采样 3.3×）主要来自 **cutout 层（树叶/草）**，它们必须
+  保留 discard，early-Z 对它们无效；要再挖只能上深度预通道（Iris 无 pass 级预通道）。
+  ⇒ 地形这条路边际收益到此为止，保留本次改动（零风险 + 约 0.3 ms）。
 - `shadowMapResolution` 已补 512/768 档（体素化平铺需 ≥1024，故这两档限 GI_MODE=0）。
 
 **地形 G-buffer 性能**：RenderDoc 实测（`222.rdc`，RD=2）显示该 pass 固定屏空间成本 ≈2.1 ms、
